@@ -179,6 +179,7 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
 
     let mut cmd = Command::new(&config.command);
     let mut working_dir: Option<&Path> = None;
+    let wine_args = normalize_args_for_wine_process(&config.args);
     match config.command_mode {
         WineCommandMode::ExeWithArgs => {
             if config.wallpaper_exe.is_empty() {
@@ -192,7 +193,7 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
                 return Err(anyhow!("Wallpaper executable does not exist: {}", exe_path.display()));
             }
             working_dir = exe_path.parent();
-            cmd.arg(&config.wallpaper_exe).args(&config.args);
+            cmd.arg(&config.wallpaper_exe).args(&wine_args);
             if should_force_borderless(config) {
                 cmd.arg("-borderless");
             }
@@ -201,7 +202,7 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
             if !config.wallpaper_exe.trim().is_empty() {
                 working_dir = Path::new(&config.wallpaper_exe).parent();
             }
-            cmd.args(&config.args);
+            cmd.args(&wine_args);
         }
     }
 
@@ -227,6 +228,35 @@ fn spawn_child(config: &WineConfig) -> Result<Child> {
     cmd.spawn().with_context(|| {
         format!("failed to spawn wine command '{}' for {}", config.command, config.wallpaper_exe)
     })
+}
+
+fn normalize_args_for_wine_process(args: &[String]) -> Vec<String> {
+    let mut normalized = args.to_vec();
+    let mut index = 0;
+
+    while index + 1 < normalized.len() {
+        if normalized[index] == "-file" {
+            normalized[index + 1] = wine_path_arg(&normalized[index + 1]);
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+
+    normalized
+}
+
+fn wine_path_arg(value: &str) -> String {
+    if is_windows_path(value) || value.contains("://") || !value.starts_with('/') {
+        return value.to_string();
+    }
+
+    format!("Z:{}", value.replace('/', "\\"))
+}
+
+fn is_windows_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    matches!(bytes.get(1), Some(b':')) || value.starts_with("\\\\")
 }
 
 fn maybe_disable_wine_x11_window_decorations(config: &WineConfig) -> Result<()> {
@@ -374,4 +404,31 @@ fn is_process_alive(pid: i32) -> bool {
     }
     let err = io::Error::last_os_error();
     err.raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_args_for_wine_process;
+
+    #[test]
+    fn normalize_file_arg_to_wine_path() {
+        let args = vec![
+            "-control".to_string(),
+            "openWallpaper".to_string(),
+            "-file".to_string(),
+            "/home/user/workshop/827982449/project.json".to_string(),
+        ];
+
+        let normalized = normalize_args_for_wine_process(&args);
+
+        assert_eq!(
+            normalized,
+            vec![
+                "-control",
+                "openWallpaper",
+                "-file",
+                r"Z:\home\user\workshop\827982449\project.json",
+            ]
+        );
+    }
 }
