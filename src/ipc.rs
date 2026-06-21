@@ -58,6 +58,21 @@ pub enum RuntimeLoopExit {
     Reconfigure,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackState {
+    Playing,
+    Paused,
+}
+
+impl PlaybackState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Playing => "playing",
+            Self::Paused => "paused",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ControlRequest {
     Command(ControlCommand),

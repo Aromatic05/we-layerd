@@ -15,7 +15,7 @@ use crate::{
     config::{Config, IsolationMode, RuntimeMode, RuntimeWallpaperType},
     display_isolation,
     gnome::{self, RegisteredWindow, ResolvedBackend},
-    ipc::{self, ControlCommand, RuntimeLoopExit},
+    ipc::{self, ControlCommand, PlaybackState, RuntimeLoopExit},
     wayland,
     wine::launcher::{spawn_transient_command, WineProcessHandle},
     wm_visibility::DebugWindowVisibility,
@@ -42,6 +42,8 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         &runtime_cfg.capture,
     );
     let handler_visibility = debug_visibility.clone();
+    let handler_tx = control_tx.clone();
+    let handler_runtime_state = runtime_state.clone();
     let switch_tx = control_tx.clone();
 
     let _control_server = ipc::ControlServer::start(
@@ -71,7 +73,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                 handler_visibility.show()?;
                 Ok(true)
             }
-            _ => Ok(false),
+            _ => handle_playback_control_command(cmd, &handler_tx, &handler_runtime_state),
         },
         {
             let runtime_cfg_toml = runtime_cfg_toml.clone();
@@ -92,6 +94,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                         state.begin_switch(&next_runtime_cfg);
                     }
                     switch_wallpaper(&next_cfg)?;
+                    switch_tx
+                        .send(ControlCommand::Resume)
+                        .context("failed to resume runtime after wallpaper switch")?;
                     if let Ok(mut guard) = runtime_cfg_toml.lock() {
                         *guard = next_runtime_cfg.to_toml_pretty()?;
                     }
@@ -257,6 +262,7 @@ struct RuntimeState {
     backend: ResolvedBackend,
     kind: RuntimeKind,
     phase: RuntimePhase,
+    playback: PlaybackState,
     generation: u64,
     target: Option<RuntimeTarget>,
     video_file: Option<String>,
@@ -270,6 +276,7 @@ impl RuntimeState {
             backend: gnome::resolve_backend(cfg),
             kind: RuntimeKind::Idle,
             phase: RuntimePhase::Idle,
+            playback: PlaybackState::Playing,
             generation: 0,
             target: None,
             video_file: None,
@@ -284,6 +291,7 @@ impl RuntimeState {
         self.desired = DesiredRuntime::from_config(cfg);
         self.kind = RuntimeKind::Idle;
         self.phase = RuntimePhase::Starting;
+        self.playback = PlaybackState::Playing;
         self.target = None;
         self.video_file = None;
         self.error = None;
@@ -302,6 +310,7 @@ impl RuntimeState {
         self.desired = DesiredRuntime::from_config(cfg);
         self.kind = RuntimeKind::Window;
         self.phase = RuntimePhase::Running;
+        self.playback = PlaybackState::Playing;
         self.video_file = None;
         self.error = None;
     }
@@ -352,9 +361,14 @@ impl RuntimeState {
         }
         self.kind = RuntimeKind::Idle;
         self.phase = RuntimePhase::Idle;
+        self.playback = PlaybackState::Playing;
         self.target = None;
         self.video_file = None;
         self.error = None;
+    }
+
+    fn mark_playback(&mut self, playback: PlaybackState) {
+        self.playback = playback;
     }
 
     fn fail(&mut self, generation: u64, error: String) {
@@ -371,6 +385,7 @@ impl RuntimeState {
             format!("backend = \"{}\"", backend_name(self.backend)),
             format!("kind = \"{}\"", self.kind.as_str()),
             format!("phase = \"{}\"", self.phase.as_str()),
+            format!("playback = \"{}\"", self.playback.as_str()),
             format!("generation = {}", self.generation),
             format!("desired_kind = \"{}\"", self.desired.kind.as_str()),
         ];
@@ -648,6 +663,26 @@ fn run_video_native(
     )
 }
 
+fn handle_playback_control_command(
+    cmd: ControlCommand,
+    control_tx: &mpsc::Sender<ControlCommand>,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+) -> Result<bool> {
+    let playback = match cmd {
+        ControlCommand::Pause => PlaybackState::Paused,
+        ControlCommand::Resume => PlaybackState::Playing,
+        _ => return Ok(false),
+    };
+
+    control_tx
+        .send(cmd)
+        .with_context(|| format!("failed to forward {} command to runtime", cmd.as_str()))?;
+    if let Ok(mut state) = runtime_state.lock() {
+        state.mark_playback(playback);
+    }
+    Ok(true)
+}
+
 pub fn doctor() -> Result<()> {
     let cfg = Config::default();
     for key in ["WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"] {
@@ -754,14 +789,14 @@ fn install_runtime_ctrlc_handler(
 #[cfg(test)]
 mod tests {
     use super::{
-        can_hot_switch_between, request_runtime_shutdown, RuntimeMode, RuntimePhase, RuntimeState,
-        RuntimeWallpaperType,
+        can_hot_switch_between, handle_playback_control_command, request_runtime_shutdown,
+        RuntimeMode, RuntimePhase, RuntimeState, RuntimeWallpaperType,
     };
     use std::sync::atomic::AtomicBool;
 
     use crate::{
         config::{Config, IsolationMode, RuntimeConfig},
-        ipc::ControlCommand,
+        ipc::{ControlCommand, PlaybackState},
     };
 
     #[test]
@@ -823,6 +858,52 @@ mod tests {
 
         assert_eq!(state.generation, current_generation);
         assert_eq!(state.phase, RuntimePhase::Starting);
+    }
+
+    #[test]
+    fn playback_status_reports_pause_state() {
+        let cfg = Config::default();
+        let mut state = RuntimeState::new(&cfg);
+        let generation = state.begin_session(&cfg);
+        state.mark_running_window(generation, None);
+
+        state.mark_playback(PlaybackState::Paused);
+
+        assert_eq!(state.playback, PlaybackState::Paused);
+        assert!(state.render_status_toml().contains("playback = \"paused\""));
+    }
+
+    #[test]
+    fn playback_control_forwards_command_and_updates_status() {
+        let cfg = Config::default();
+        let runtime_state = std::sync::Arc::new(std::sync::Mutex::new(RuntimeState::new(&cfg)));
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        assert!(
+            handle_playback_control_command(ControlCommand::Pause, &tx, &runtime_state).unwrap()
+        );
+        assert_eq!(rx.try_recv().expect("pause command"), ControlCommand::Pause);
+        assert_eq!(runtime_state.lock().expect("runtime state").playback, PlaybackState::Paused);
+
+        assert!(
+            handle_playback_control_command(ControlCommand::Resume, &tx, &runtime_state).unwrap()
+        );
+        assert_eq!(rx.try_recv().expect("resume command"), ControlCommand::Resume);
+        assert_eq!(runtime_state.lock().expect("runtime state").playback, PlaybackState::Playing);
+    }
+
+    #[test]
+    fn hot_switch_finishes_in_playing_state_after_pause() {
+        let cfg = switchable_scene_config();
+        let mut state = RuntimeState::new(&cfg);
+        let generation = state.begin_session(&cfg);
+        state.mark_running_window(generation, None);
+        state.mark_playback(PlaybackState::Paused);
+
+        state.begin_switch(&cfg);
+        state.finish_hot_switch(&cfg);
+
+        assert_eq!(state.playback, PlaybackState::Playing);
     }
 
     fn switchable_scene_config() -> Config {
