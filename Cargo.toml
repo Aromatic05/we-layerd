@@ -27,9 +27,10 @@ thiserror = "2.0"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+we-renderer = { path = "crates/we-renderer" }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wgpu = "0.20"
 x11rb = { version = "0.13", features = ["composite", "xfixes", "damage", "shm"] }

@@ -5733,6 +5733,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+ "we-renderer",
  "wgpu 0.20.1",
  "x11rb",
  "zbus 4.4.0",
