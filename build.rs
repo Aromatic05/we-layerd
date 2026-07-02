@@ -41,7 +41,7 @@ fn main() {
             .arg(&upstream_root)
             .arg("-B")
             .arg(&build_root)
-            .arg("-DCMAKE_BUILD_TYPE=RelWithDebInfo"),
+            .arg("-DCMAKE_BUILD_TYPE=Release"),
         "configure upstream wallpaper-engine-renderer",
     );
 
@@ -53,6 +53,11 @@ fn main() {
             .arg("wallpaper-engine-renderer")
             .arg("--parallel"),
         "build upstream wallpaper-engine-renderer",
+    );
+
+    run(
+        Command::new("strip").arg(&built_library),
+        "strip upstream wallpaper-engine-renderer",
     );
 
     if !built_library.exists() {
