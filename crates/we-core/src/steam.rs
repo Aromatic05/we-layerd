@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, env, fs, path::PathBuf};
+use std::{env, path::PathBuf};
 
 const STEAM_COMMON_PATHS: &[&str] = &[
     ".local/share/Steam/steamapps/common",
@@ -13,12 +13,6 @@ const STEAM_WORKSHOP_PATHS: &[&str] = &[
 ];
 
 pub const WALLPAPER_ENGINE_APP_ID: u32 = 431960;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProtonInstall {
-    pub name: String,
-    pub proton_path: PathBuf,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WallpaperEngineInstallState {
@@ -104,99 +98,6 @@ pub fn discover_wallpaper_engine_app_dir() -> Option<PathBuf> {
 pub fn default_config_path() -> Option<PathBuf> {
     let home = env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".config/we-layerd/config.toml"))
-}
-
-pub fn discover_proton_installs() -> Vec<ProtonInstall> {
-    let mut found = Vec::new();
-    let mut seen = BTreeSet::new();
-
-    for common_root in steam_common_roots() {
-        if let Ok(entries) = fs::read_dir(&common_root) {
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if !dir.is_dir() {
-                    continue;
-                }
-                let proton = dir.join("proton");
-                if !proton.is_file() {
-                    continue;
-                }
-                let name = dir
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| "Proton".to_string());
-                if seen.insert(proton.clone()) {
-                    found.push(ProtonInstall { name, proton_path: proton });
-                }
-            }
-        }
-
-        let Some(steamapps_root) = common_root.parent() else {
-            continue;
-        };
-        let Some(steam_root) = steamapps_root.parent() else {
-            continue;
-        };
-        let compat_root = steam_root.join("compatibilitytools.d");
-        if let Ok(entries) = fs::read_dir(&compat_root) {
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if !dir.is_dir() {
-                    continue;
-                }
-                let proton = dir.join("proton");
-                if !proton.is_file() {
-                    continue;
-                }
-                let name = dir
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| "Proton".to_string());
-                if seen.insert(proton.clone()) {
-                    found.push(ProtonInstall { name, proton_path: proton });
-                }
-            }
-        }
-    }
-
-    found.sort_by(|a, b| a.name.cmp(&b.name));
-    found
-}
-
-pub fn discover_wine_commands() -> Vec<String> {
-    let mut candidates = BTreeSet::new();
-    candidates.insert("wine".to_string());
-    candidates.insert("wine64".to_string());
-    candidates.insert("wine-staging".to_string());
-
-    let Some(path_os) = env::var_os("PATH") else {
-        return candidates.into_iter().collect();
-    };
-    for dir in env::split_paths(&path_os) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if name == "wine"
-                || name == "wine64"
-                || name == "wine-staging"
-                || name.starts_with("wine-")
-            {
-                candidates.insert(name.to_string());
-            }
-        }
-    }
-
-    candidates.into_iter().collect()
 }
 
 fn steam_common_roots() -> Vec<PathBuf> {
