@@ -1,94 +1,72 @@
 # 配置
 
 复制示例配置：
+
 ```bash
 cp config.example.toml ~/.config/we-layerd/config.toml
 ```
 
-关键字段：
-- `wine.wallpaper_exe`：Wallpaper Engine 可执行文件路径。
-- `wine.args`：scene/web 模式启动参数（`openWallpaper`）。
-- `runtime`：`wine_layerd` 或 `video_native`。
-- `runtime.video_file`：当 `runtime.mode = "video_native"` 时必填。
-- 可按需调整 `capture` 匹配规则。
+## 必填字段
 
-可选 cgroup 配置：
 ```toml
-[cgroup]
-enabled = false
-mode = "detect"      # detect | limit_wine
-memory_max = "max"   # 可选，如 "2147483648"
-cpu_max = "max 100000" # 可选，如 "50000 100000"
+[renderer]
+library_path = "/home/USER/.local/bin/lib/libwallpaper-engine-renderer.so"
+source = "/path/to/Steam/steamapps/workshop/content/431960/<wallpaper-id>"
+assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 ```
 
-硬隔离调试窗口：
-```toml
-[isolation]
-mode = "gamescope_headless" # none | gamescope_headless
-command = "gamescope"
-width = 2560
-height = 1600
-startup_timeout_secs = 10
-```
-- `none`：Wine 窗口仍在宿主 XWayland/Niri 中，`hide_debug_window` 负责移动或隐藏它。
-- `gamescope_headless`：启动一个无窗口 gamescope，Wine 连接 gamescope 内部 XWayland，we-layerd 也从该内部 `DISPLAY` 抓 XComposite。此时 Niri 不会枚举到 Wallpaper Engine 窗口，用户主动切工作区或打开 overview 也看不到它。
-- `width`/`height` 可省略；省略时优先使用 `wine.args` 中的 `-width` / `-height`，再退回到 1920x1080。
+- `renderer.library_path`：`libwallpaper-engine-renderer.so` 的路径
+- `renderer.source`：workshop 壁纸目录，不是视频文件，也不是 Wallpaper Engine 的 CLI 参数
+- `renderer.assets_path`：Wallpaper Engine 的 `assets/` 目录
 
-调试窗口隐藏配置：
+## 通用设置
+
 ```toml
 [general]
-hide_debug_window = true
-hidden_workspace_name = "top"
+backend = "layer_shell"
+interactive = true
+show_fps = false
+fps_report_interval_secs = 1
+scale_mode = "cover"
 ```
-`hidden_workspace_name` 的行为：
-- Hyprland：作为 special workspace 名称（`special:<name>`）。
-- sway：使用 scratchpad 机制。
-- niri：作为目标工作区标识；`top` 表示最上/第一个工作区。
-在 niri 下隐藏顺序是先 `move-window-to-workspace`，再 `move-window-to-floating`。
-如果启用 `isolation.mode = "gamescope_headless"`，宿主 WM 隐藏逻辑会跳过，因为真实 Wine 窗口已经不在宿主窗口树里。
 
-niri 启动尺寸：
-- niri 的默认平铺行为可能让 Wallpaper Engine 调试窗口初始为半屏。
-- 不要在窗口打开后通过 IPC 动作二次改尺寸，这可能导致黑屏。
-- 请在 niri 配置中使用 `window-rule`，并且只用 `match app-id="WE-DEBUG-WINDOW"`。
+- `backend`：当前使用 `layer_shell`
+- `interactive`：为 `false` 时会设置空 input region，让壁纸不阻挡桌面鼠标交互
+- `show_fps`：保留 FPS 统计开关
+- `scale_mode`：`fit`、`cover`、`stretch`
 
-后端选择：
+## Renderer 设置
+
 ```toml
-[general]
-backend = "auto" # auto | layer_shell | gnome_shell
-```
-- `auto`：当 `XDG_CURRENT_DESKTOP` 指示为 GNOME 时使用 `gnome_shell`，否则使用 `layer_shell`（例如 KDE Plasma）。
-- `layer_shell`：始终使用原生 Wayland 背景渲染。
-- `gnome_shell`：要求 GNOME Shell 扩展提供 D-Bus 桥接。
-
-GNOME 扩展：
-```toml
-[gnome]
-extension_dbus_name = "io.github.weLayerd.Gnome"
-```
-请将 [contrib/gnome-shell-extension/we-layerd@aromatic](../contrib/gnome-shell-extension/we-layerd@aromatic)
-安装到 `~/.local/share/gnome-shell/extensions/`，并在启动 `we-layerd` 前于 GNOME Extensions 中启用。
-当 `runtime.mode = "video_native"` 且后端为 GNOME 时，扩展还会启动仓库内置的 `gjs` + Gtk 4 视频渲染器，并将其 clone 到桌面背景。
-
-niri 配置示例：
-```kdl
-window-rule {
-    match app-id="WE-DEBUG-WINDOW"
-    open-floating false
-    open-maximized-to-edges true
-    open-focused false
-}
-```
-可通过以下命令确认匹配字段：
-```bash
-niri msg -j windows
+[renderer]
+cache_path = "~/.cache/we-layerd/renderer"
+prefer_dmabuf = true
+allow_shm_fallback = true
+fps = 60
+speed = 1.0
+volume = 1.0
+muted = false
 ```
 
-Wine / Proton 启动配置：
-```toml
-[wine]
-command = "wine"
-command_mode = "exe_with_args" # exe_with_args | command_only
-```
-- `exe_with_args`：执行 `command wallpaper_exe ...args`（Wine 模式）。
-- `command_only`：执行 `command ...args`（Proton 模式，使用 `proton run ...`）。
+- `cache_path`：renderer 缓存目录
+- `prefer_dmabuf`：优先使用 DMA-BUF
+- `allow_shm_fallback`：DMA-BUF 不可用时允许退回 SHM
+- `fps`：传给 renderer 的目标更新频率
+- `speed`、`volume`、`muted`：直接传给 renderer ABI 的 source 参数
+
+## 动态库查找顺序
+
+如果 `renderer.library_path` 指向的文件不存在，`we-layerd` 会按以下顺序继续查找：
+
+1. `~/.local/bin/lib/libwallpaper-engine-renderer.so`
+2. `target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so`
+3. 可执行文件旁边的 `../lib/libwallpaper-engine-renderer.so`
+4. `/usr/local/lib`、`/usr/local/lib64`、`/usr/lib`、`/usr/lib64`
+
+## GUI 输出
+
+`we-gui` 现在只生成 renderer-native 配置：
+
+- 将 `renderer.source` 写成选中的 workshop 壁纸目录
+- 从 Wallpaper Engine 安装目录推导 `renderer.assets_path`
+- 不再生成 Wine、Proton、X11 capture、video-native 或 `openWallpaper` 参数
