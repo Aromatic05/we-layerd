@@ -1,72 +1,41 @@
 # we-layerd（中文文档）
 
-`we-layerd` 是一个在 Linux 合成器上运行 Wallpaper Engine 的 Rust 守护进程。
+`we-layerd` 是一个基于 Rust 的 Wallpaper Engine Wayland 守护进程，当前主路径使用原生 `wallpaper-engine-renderer` 动态库。
 
 ## 功能
-- Wine 模式：启动 `wallpaper64.exe`，捕获 XWayland/X11 画面，渲染到 Wayland layer-shell。
-- GNOME 模式：通过 GNOME Shell 扩展注册 Wallpaper Engine 的 XWayland 窗口，或直接通过扩展桥接播放原生视频壁纸。
-- 桌面环境支持：KDE Plasma 与 GNOME Shell。
-- 原生视频模式：使用 FFmpeg + `wgpu` 播放视频壁纸。
-- Windows 启动器模式：支持 Wine / Proton（自动扫描 Steam 下 Proton 版本）。
-- GUI 程序 `we-gui`：壁纸浏览、配置编辑、托盘控制、运行状态查看。
-- 运行时控制命令：`stop`、`pause`、`resume`、`reload`、`status`、`hide-window`、`show-window`。
-- 单实例守护进程锁（同一用户不可重复启动）。
-- 可选 cgroup 监控/限制。
 
-## 依赖
-- 构建依赖：Rust 工具链（`cargo`、`rustc`）、`pkg-config`（`pkgconf`）。
-- 运行依赖：
-  - 已支持的桌面环境：
-    - KDE Plasma（Wayland 下通过 layer-shell 模式）。
-    - GNOME Shell 45+（通过仓库内置的扩展桥接 scene/web 与原生视频壁纸）。
-  - 支持 `zwlr_layer_shell_v1` 的 Wayland 合成器（niri / Hyprland / sway 等）。
-  - XWayland/X11 与 XComposite 扩展（Wine 窗口捕获需要）。
-  - Vulkan/GL 运行环境（`wgpu`）。
-  - FFmpeg 库与头文件（`libavformat`、`libavcodec`、`libavutil`、`libswscale`）。
-  - Wine 与 Wallpaper Engine 可执行文件。
-  - `gjs` 与 Gtk 4（GNOME 原生视频模式需要）。
-  - cgroup v2（仅在启用 cgroup 功能时需要）。
+- 构建并使用仓库内的 `wallpaper-engine-renderer` git submodule
+- 通过 Wayland layer-shell 展示壁纸
+- 支持 DMA-BUF / SHM 帧呈现
+- 将指针输入转发给交互壁纸
+- 每个 output 一个 renderer session
+- 提供 `we-gui` 图形界面与托盘控制
+- 支持 `stop`、`pause`、`resume`、`reload`、`status`
 
-Arch Linux 依赖示例：
-```bash
-sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr xdotool
-```
 ## 构建
-构建发布版二进制：
+
 ```bash
-cargo build --release -p we-layerd -p we-gui
+git submodule update --init --recursive
+cargo build --workspace
 ```
 
-安装到 `PATH`（示例：`~/.local/bin`）：
-```bash
-install -Dm755 target/release/we-layerd ~/.local/bin/we-layerd
-install -Dm755 target/release/we-gui ~/.local/bin/we-gui
+构建 `we-layerd` 时会顺带构建上游动态库，并放到：
+
+```text
+target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so
+~/.local/bin/lib/libwallpaper-engine-renderer.so
 ```
 
 ## 配置
-配置细节请见 [CONFIGURATION.zh-CN.md](./CONFIGURATION.zh-CN.md)，包含：
-- 配置文件初始化
-- 后端选择
-- GNOME 扩展安装
-- niri 窗口规则
-- Wine / Proton 启动模式
-- 可选 cgroup 配置
 
-## 使用
-确保 `we-layerd` / `we-gui` 在 `PATH` 后：
+复制示例配置：
 
-启动 GUI：
 ```bash
-we-gui
+cp config.example.toml ~/.config/we-layerd/config.toml
 ```
 
-直接启动守护进程：
-```bash
-we-layerd run --config ~/.config/we-layerd/config.toml
-```
+配置细节见：
 
-更多文档：
 - [CONFIGURATION.zh-CN.md](./CONFIGURATION.zh-CN.md)
 - [ADVANCED.zh-CN.md](./ADVANCED.zh-CN.md)
 - [TROUBLESHOOTING.zh-CN.md](./TROUBLESHOOTING.zh-CN.md)
-- [ARCHITECTURE.md](./ARCHITECTURE.md)

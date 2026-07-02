@@ -15,8 +15,6 @@ we-layerd ctl pause
 we-layerd ctl resume
 we-layerd ctl reload
 we-layerd ctl status
-we-layerd ctl hide-window
-we-layerd ctl show-window
 ```
 
 其他命令：
@@ -25,10 +23,4 @@ we-layerd doctor
 we-layerd print-config --config ~/.config/we-layerd/config.toml
 ```
 
-## cgroup
-
-- Linux cgroup v2 是可选能力，只有在配置里启用 cgroup 功能时才需要。
-- `detect` 会让 `we-layerd` 自动选择运行时策略。
-- `limit_wine` 用于对 Wine 进程树施加显式限制。
-
-具体配置块见 [CONFIGURATION.zh-CN.md](./CONFIGURATION.zh-CN.md)。
+具体配置块见 [CONFIGURATION.zh-CN.md](./CONFIGURATION.zh-CN.md)；当前主路径已经是 renderer-native 配置。
