@@ -246,8 +246,16 @@ fn run_runtime_loop(
     if cfg.renderer.source.trim().is_empty() {
         return Err(anyhow!("renderer.source is required"));
     }
+
+    let mut cfg = cfg.clone();
     if cfg.renderer.assets_path.trim().is_empty() {
-        return Err(anyhow!("renderer.assets_path is required"));
+        cfg.renderer.assets_path = we_core::steam::discover_wallpaper_engine_assets()
+            .map(|p| p.display().to_string())
+            .ok_or_else(|| {
+                anyhow!(
+                    "renderer.assets_path is empty and Wallpaper Engine assets directory was not found; set assets_path in config"
+                )
+            })?;
     }
 
     if shutdown_requested.load(Ordering::Relaxed) {
@@ -256,6 +264,7 @@ fn run_runtime_loop(
 
     info!(
         source = %cfg.renderer.source,
+        assets_path = %cfg.renderer.assets_path,
         library_path = %cfg.renderer.library_path,
         "starting renderer-native runtime"
     );
@@ -266,7 +275,7 @@ fn run_runtime_loop(
 
     match cfg.general.backend {
         Backend::LayerShell => {
-            wayland::renderer_layer::run_renderer_background_surface(cfg, control_rx)
+            wayland::renderer_layer::run_renderer_background_surface(&cfg, control_rx)
         }
     }
 }

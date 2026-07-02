@@ -22,6 +22,7 @@ thiserror = "2.0"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+we-core = { path = "crates/we-core" }
 we-renderer = { path = "crates/we-renderer" }
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
