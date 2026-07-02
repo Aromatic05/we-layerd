@@ -1,16 +1,8 @@
 mod app;
-mod cgroup;
 mod cli;
 mod config;
-mod display_isolation;
-mod gnome;
 mod ipc;
 mod logging;
-mod video;
-mod wayland;
-mod wine;
-mod wm_visibility;
-mod x11;
 
 use anyhow::Result;
 use clap::Parser;
@@ -35,8 +27,6 @@ fn main() -> Result<()> {
             ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
             ControlAction::Resume => ipc::send_command(ControlCommand::Resume),
             ControlAction::Reload => ipc::send_command(ControlCommand::Reload),
-            ControlAction::HideWindow => ipc::send_command(ControlCommand::HideWindow),
-            ControlAction::ShowWindow => ipc::send_command(ControlCommand::ShowWindow),
             ControlAction::Status => {
                 println!("{}", ipc::request_running_config()?);
                 Ok(())

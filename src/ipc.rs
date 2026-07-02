@@ -21,8 +21,6 @@ pub enum ControlCommand {
     Resume,
     Reload,
     Reconfigure,
-    HideWindow,
-    ShowWindow,
 }
 
 impl ControlCommand {
@@ -33,8 +31,6 @@ impl ControlCommand {
             Self::Resume => "resume",
             Self::Reload => "reload",
             Self::Reconfigure => "reconfigure",
-            Self::HideWindow => "hide-window",
-            Self::ShowWindow => "show-window",
         }
     }
 
@@ -44,8 +40,6 @@ impl ControlCommand {
             "pause" => Some(Self::Pause),
             "resume" => Some(Self::Resume),
             "reload" => Some(Self::Reload),
-            "hide-window" => Some(Self::HideWindow),
-            "show-window" => Some(Self::ShowWindow),
             _ => None,
         }
     }
@@ -56,21 +50,6 @@ pub enum RuntimeLoopExit {
     Stop,
     RestartCurrent,
     Reconfigure,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlaybackState {
-    Playing,
-    Paused,
-}
-
-impl PlaybackState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Playing => "playing",
-            Self::Paused => "paused",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

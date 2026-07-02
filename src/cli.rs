@@ -17,7 +17,7 @@ pub enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// Switch scene/web wallpaper on a running daemon without restarting Wine
+    /// Reconfigure a running daemon with a new renderer-native config
     Switch {
         /// Path to TOML config file
         #[arg(long)]
@@ -45,6 +45,4 @@ pub enum ControlAction {
     Resume,
     Reload,
     Status,
-    HideWindow,
-    ShowWindow,
 }

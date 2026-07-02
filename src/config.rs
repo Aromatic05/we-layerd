@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -8,56 +8,28 @@ pub struct Config {
     #[serde(default)]
     pub general: GeneralConfig,
     #[serde(default)]
-    pub gnome: GnomeConfig,
-    #[serde(default)]
-    pub wine: WineConfig,
-    #[serde(default)]
-    pub capture: CaptureConfig,
-    #[serde(default)]
-    pub runtime: Option<RuntimeConfig>,
-    #[serde(default)]
-    pub cgroup: CgroupConfig,
-    #[serde(default)]
-    pub isolation: IsolationConfig,
+    pub renderer: RendererConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
     #[serde(default)]
     pub backend: Backend,
-    #[serde(default = "default_fps")]
-    pub fps_limit: u32,
-    #[serde(default = "default_restart_wine")]
-    pub restart_wine_on_exit: bool,
-    #[serde(default = "default_refind_window")]
-    pub refind_window_on_capture_error: bool,
+    #[serde(default = "default_interactive")]
+    pub interactive: bool,
     #[serde(default)]
     pub show_fps: bool,
     #[serde(default = "default_fps_report_interval_secs")]
     pub fps_report_interval_secs: u64,
     #[serde(default)]
     pub scale_mode: ScaleMode,
-    #[serde(default = "default_hide_debug_window")]
-    pub hide_debug_window: bool,
-    #[serde(default = "default_hidden_workspace_name")]
-    pub hidden_workspace_name: String,
-    #[serde(default)]
-    pub disable_debug_window_input: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
     #[default]
-    Auto,
     LayerShell,
-    GnomeShell,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GnomeConfig {
-    #[serde(default = "default_gnome_extension_dbus_name")]
-    pub extension_dbus_name: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,136 +42,30 @@ pub enum ScaleMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WineConfig {
-    #[serde(default = "default_wine_cmd")]
-    pub command: String,
+pub struct RendererConfig {
+    #[serde(default = "default_renderer_library_path")]
+    pub library_path: String,
     #[serde(default)]
-    pub command_mode: WineCommandMode,
+    pub source: String,
     #[serde(default)]
-    pub args: Vec<String>,
+    pub assets_path: String,
+    #[serde(default = "default_renderer_cache_path")]
+    pub cache_path: String,
+    #[serde(default = "default_prefer_dmabuf")]
+    pub prefer_dmabuf: bool,
+    #[serde(default = "default_allow_shm_fallback")]
+    pub allow_shm_fallback: bool,
+    #[serde(default = "default_renderer_fps")]
+    pub fps: u32,
+    #[serde(default = "default_renderer_speed")]
+    pub speed: f32,
+    #[serde(default = "default_renderer_volume")]
+    pub volume: f32,
     #[serde(default)]
-    pub wallpaper_exe: String,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
+    pub muted: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WineCommandMode {
-    #[default]
-    ExeWithArgs,
-    CommandOnly,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct IsolationConfig {
-    #[serde(default)]
-    pub mode: IsolationMode,
-    #[serde(default = "default_isolation_command")]
-    pub command: String,
-    #[serde(default)]
-    pub width: Option<u32>,
-    #[serde(default)]
-    pub height: Option<u32>,
-    #[serde(default = "default_isolation_startup_timeout_secs")]
-    pub startup_timeout_secs: u64,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum IsolationMode {
-    #[default]
-    None,
-    GamescopeHeadless,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CaptureConfig {
-    #[serde(default)]
-    pub wm_class_contains: Option<String>,
-    #[serde(default)]
-    pub title_contains: Option<String>,
-    #[serde(default)]
-    pub net_wm_pid: Option<u32>,
-    #[serde(default)]
-    pub debug_save_frame_png: Option<String>,
-    #[serde(default)]
-    pub output_window_map: BTreeMap<String, u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeConfig {
-    #[serde(default)]
-    pub mode: RuntimeMode,
-    #[serde(default)]
-    pub wallpaper_type: RuntimeWallpaperType,
-    #[serde(default)]
-    pub video_file: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RuntimeMode {
-    VideoNative,
-    #[default]
-    WineLayerd,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RuntimeWallpaperType {
-    Video,
-    Scene,
-    Web,
-    #[default]
-    Unknown,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CgroupConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub mode: CgroupMode,
-    #[serde(default)]
-    pub memory_max: Option<String>,
-    #[serde(default)]
-    pub cpu_max: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CgroupMode {
-    #[default]
-    Detect,
-    LimitWine,
-}
-
-fn default_fps() -> u32 {
-    30
-}
-
-fn default_gnome_extension_dbus_name() -> String {
-    "io.github.weLayerd.Gnome".to_string()
-}
-
-fn default_wine_cmd() -> String {
-    "wine".to_string()
-}
-
-fn default_isolation_command() -> String {
-    "gamescope".to_string()
-}
-
-fn default_isolation_startup_timeout_secs() -> u64 {
-    10
-}
-
-fn default_restart_wine() -> bool {
-    true
-}
-
-fn default_refind_window() -> bool {
+fn default_interactive() -> bool {
     true
 }
 
@@ -207,76 +73,60 @@ fn default_fps_report_interval_secs() -> u64 {
     1
 }
 
-fn default_hide_debug_window() -> bool {
+fn default_renderer_library_path() -> String {
+    "libwallpaper-engine-renderer.so".to_string()
+}
+
+fn default_renderer_cache_path() -> String {
+    "~/.cache/we-layerd/renderer".to_string()
+}
+
+fn default_prefer_dmabuf() -> bool {
     true
 }
 
-fn default_hidden_workspace_name() -> String {
-    "top".to_string()
+fn default_allow_shm_fallback() -> bool {
+    true
+}
+
+fn default_renderer_fps() -> u32 {
+    60
+}
+
+fn default_renderer_speed() -> f32 {
+    1.0
+}
+
+fn default_renderer_volume() -> f32 {
+    1.0
 }
 
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             backend: Backend::default(),
-            fps_limit: default_fps(),
-            restart_wine_on_exit: default_restart_wine(),
-            refind_window_on_capture_error: default_refind_window(),
+            interactive: default_interactive(),
             show_fps: false,
             fps_report_interval_secs: default_fps_report_interval_secs(),
             scale_mode: ScaleMode::default(),
-            hide_debug_window: default_hide_debug_window(),
-            hidden_workspace_name: default_hidden_workspace_name(),
-            disable_debug_window_input: false,
         }
     }
 }
 
-impl Default for GnomeConfig {
-    fn default() -> Self {
-        Self { extension_dbus_name: default_gnome_extension_dbus_name() }
-    }
-}
-
-impl Default for WineConfig {
+impl Default for RendererConfig {
     fn default() -> Self {
         Self {
-            command: default_wine_cmd(),
-            command_mode: WineCommandMode::ExeWithArgs,
-            args: Vec::new(),
-            wallpaper_exe: String::new(),
-            env: BTreeMap::new(),
+            library_path: default_renderer_library_path(),
+            source: String::new(),
+            assets_path: String::new(),
+            cache_path: default_renderer_cache_path(),
+            prefer_dmabuf: default_prefer_dmabuf(),
+            allow_shm_fallback: default_allow_shm_fallback(),
+            fps: default_renderer_fps(),
+            speed: default_renderer_speed(),
+            volume: default_renderer_volume(),
+            muted: false,
         }
-    }
-}
-
-impl Default for IsolationConfig {
-    fn default() -> Self {
-        Self {
-            mode: IsolationMode::None,
-            command: default_isolation_command(),
-            width: None,
-            height: None,
-            startup_timeout_secs: default_isolation_startup_timeout_secs(),
-        }
-    }
-}
-
-impl Default for CaptureConfig {
-    fn default() -> Self {
-        Self {
-            wm_class_contains: Some("wallpaper".to_string()),
-            title_contains: None,
-            net_wm_pid: None,
-            debug_save_frame_png: None,
-            output_window_map: BTreeMap::new(),
-        }
-    }
-}
-
-impl Default for CgroupConfig {
-    fn default() -> Self {
-        Self { enabled: false, mode: CgroupMode::Detect, memory_max: None, cpu_max: None }
     }
 }
 
@@ -300,27 +150,33 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, IsolationMode};
+    use super::{Backend, Config, ScaleMode};
 
     #[test]
-    fn default_config_has_expected_fps() {
+    fn default_config_uses_renderer_native_defaults() {
         let cfg = Config::default();
-        assert_eq!(cfg.general.fps_limit, 30);
+        assert_eq!(cfg.general.backend, Backend::LayerShell);
+        assert!(cfg.general.interactive);
+        assert_eq!(cfg.general.scale_mode, ScaleMode::Cover);
+        assert_eq!(cfg.renderer.library_path, "libwallpaper-engine-renderer.so");
+        assert_eq!(cfg.renderer.fps, 60);
+        assert!(cfg.renderer.prefer_dmabuf);
+        assert!(cfg.renderer.allow_shm_fallback);
     }
 
     #[test]
-    fn isolation_config_accepts_gamescope_headless() {
+    fn config_accepts_renderer_block() {
         let raw = r#"
-            [isolation]
-            mode = "gamescope_headless"
-            width = 2560
-            height = 1600
+            [renderer]
+            source = "/tmp/workshop/item"
+            assets_path = "/tmp/wallpaper_engine/assets"
+            muted = true
         "#;
 
-        let cfg: Config = toml::from_str(raw).expect("valid isolation config");
+        let cfg: Config = toml::from_str(raw).expect("valid renderer config");
 
-        assert_eq!(cfg.isolation.mode, IsolationMode::GamescopeHeadless);
-        assert_eq!(cfg.isolation.width, Some(2560));
-        assert_eq!(cfg.isolation.height, Some(1600));
+        assert_eq!(cfg.renderer.source, "/tmp/workshop/item");
+        assert_eq!(cfg.renderer.assets_path, "/tmp/wallpaper_engine/assets");
+        assert!(cfg.renderer.muted);
     }
 }
