@@ -40,8 +40,6 @@ struct App {
     selected_id: Option<String>,
     config_path: PathBuf,
     runtime_child: Option<Child>,
-    selected_type: Option<WallpaperType>,
-    selected_video_file: Option<PathBuf>,
     viewport_width: f32,
     layerd_available: bool,
     launch_settings: LaunchSettings,
@@ -122,14 +120,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             };
 
             app.selected_id = Some(entry.id.clone());
-            app.selected_type = Some(entry.ty);
-            app.selected_video_file = entry.source_file.clone();
-            let cfg = build_config(
-                &app.launch_settings,
-                entry.ty,
-                &entry.project_json,
-                entry.source_file.as_deref(),
-            );
+            let cfg = build_config(&app.launch_settings, &entry.project_json);
             let _ = save_config(&app.config_path, &cfg);
             Task::none()
         }
@@ -140,7 +131,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
 
             persist_current_config(app);
 
-            if can_hot_switch(app.selected_type) && try_switch_runtime(&app.config_path) {
+            if can_hot_switch(app.selected_id.is_some()) && try_switch_runtime(&app.config_path) {
                 return Task::none();
             }
 
@@ -613,8 +604,6 @@ impl App {
                 selected_id: None,
                 config_path,
                 runtime_child: None,
-                selected_type: None,
-                selected_video_file: None,
                 viewport_width: 1280.0,
                 layerd_available: command_exists_in_path("we-layerd"),
                 launch_settings,
@@ -801,12 +790,7 @@ fn persist_current_config(app: &App) {
         return;
     };
 
-    let cfg = build_config(
-        &app.launch_settings,
-        entry.ty,
-        &entry.project_json,
-        entry.source_file.as_deref(),
-    );
+    let cfg = build_config(&app.launch_settings, &entry.project_json);
     let _ = save_config(&app.config_path, &cfg);
 }
 
@@ -1006,8 +990,8 @@ fn command_exists_in_path(name: &str) -> bool {
     false
 }
 
-fn can_hot_switch(selected_type: Option<WallpaperType>) -> bool {
-    selected_type.is_some()
+fn can_hot_switch(has_selection: bool) -> bool {
+    has_selection
 }
 
 fn try_switch_runtime(config_path: &Path) -> bool {

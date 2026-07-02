@@ -70,7 +70,7 @@ impl ControlRequest {
             return Some(Self::SwitchConfig(PathBuf::from(path)));
         }
         let normalized = trimmed.to_ascii_lowercase();
-        if normalized == "status" || normalized == "show-config" {
+        if normalized == "status" {
             return Some(Self::Status);
         }
         ControlCommand::parse(&normalized).map(Self::Command)

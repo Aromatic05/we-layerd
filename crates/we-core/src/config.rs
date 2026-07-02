@@ -3,8 +3,6 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::wallpaper::WallpaperType;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -227,12 +225,7 @@ impl Default for LaunchSettings {
     }
 }
 
-pub fn build_config(
-    settings: &LaunchSettings,
-    _wallpaper_type: WallpaperType,
-    project_json: &Path,
-    _video_file: Option<&Path>,
-) -> AppConfig {
+pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();
     cfg.general.show_fps = settings.show_fps;
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
@@ -299,7 +292,6 @@ mod tests {
     };
 
     use super::{build_config, load_launch_settings, LaunchSettings};
-    use crate::wallpaper::WallpaperType;
 
     fn unique_temp_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -316,12 +308,7 @@ mod tests {
             "/steam/steamapps/common/wallpaper_engine/wallpaper64.exe".to_string();
         settings.fps_limit = 144;
 
-        let cfg = build_config(
-            &settings,
-            WallpaperType::Scene,
-            Path::new("/tmp/item/project.json"),
-            None,
-        );
+        let cfg = build_config(&settings, Path::new("/tmp/item/project.json"));
 
         assert_eq!(cfg.renderer.source, "/tmp/item");
         assert_eq!(cfg.renderer.assets_path, "/steam/steamapps/common/wallpaper_engine/assets");
