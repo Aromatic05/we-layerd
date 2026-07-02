@@ -5739,6 +5739,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "we-renderer"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "thiserror 2.0.18",
+ "we-renderer-sys",
+]
+
+[[package]]
+name = "we-renderer-sys"
+version = "0.1.0"
+dependencies = [
+ "libloading 0.8.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"

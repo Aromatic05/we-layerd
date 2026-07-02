@@ -1,0 +1,8 @@
+[package]
+name = "we-renderer-sys"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libloading = "0.8"
+thiserror = "2.0"

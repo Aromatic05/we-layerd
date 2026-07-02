@@ -1,0 +1,9 @@
+[package]
+name = "we-renderer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+thiserror = "2.0"
+we-renderer-sys = { path = "../we-renderer-sys" }

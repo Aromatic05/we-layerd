@@ -6,6 +6,8 @@ edition = "2021"
 [workspace]
 members = [
     "crates/we-core",
+    "crates/we-renderer-sys",
+    "crates/we-renderer",
     "apps/we-gui",
 ]
 resolver = "2"
