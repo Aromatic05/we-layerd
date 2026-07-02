@@ -1007,7 +1007,7 @@ fn command_exists_in_path(name: &str) -> bool {
 }
 
 fn can_hot_switch(selected_type: Option<WallpaperType>) -> bool {
-    matches!(selected_type, Some(WallpaperType::Scene | WallpaperType::Web))
+    selected_type.is_some()
 }
 
 fn try_switch_runtime(config_path: &Path) -> bool {
