@@ -12,6 +12,7 @@ use tracing::{info, warn};
 use crate::{
     config::{Backend, Config},
     ipc::{self, ControlCommand, RuntimeLoopExit},
+    wayland,
 };
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
@@ -90,7 +91,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             state.begin_session(&next_cfg)
         };
 
-        let exit = match run_placeholder_runtime_loop(
+        let exit = match run_runtime_loop(
             &next_cfg,
             &shutdown_requested,
             &runtime_state,
@@ -235,7 +236,7 @@ fn backend_name(backend: Backend) -> &'static str {
     }
 }
 
-fn run_placeholder_runtime_loop(
+fn run_runtime_loop(
     cfg: &Config,
     shutdown_requested: &AtomicBool,
     runtime_state: &Arc<Mutex<RuntimeState>>,
@@ -256,28 +257,16 @@ fn run_placeholder_runtime_loop(
     info!(
         source = %cfg.renderer.source,
         library_path = %cfg.renderer.library_path,
-        "starting renderer-native placeholder runtime"
+        "starting renderer-native runtime"
     );
 
     if let Ok(mut state) = runtime_state.lock() {
         state.mark_running(generation);
     }
 
-    loop {
-        match control_rx.recv().context("runtime control channel closed")? {
-            ControlCommand::Stop => return Ok(RuntimeLoopExit::Stop),
-            ControlCommand::Pause => {
-                if let Ok(mut state) = runtime_state.lock() {
-                    state.mark_paused();
-                }
-            }
-            ControlCommand::Resume => {
-                if let Ok(mut state) = runtime_state.lock() {
-                    state.mark_resumed();
-                }
-            }
-            ControlCommand::Reload => return Ok(RuntimeLoopExit::RestartCurrent),
-            ControlCommand::Reconfigure => return Ok(RuntimeLoopExit::Reconfigure),
+    match cfg.general.backend {
+        Backend::LayerShell => {
+            wayland::renderer_layer::run_renderer_background_surface(cfg, control_rx)
         }
     }
 }
@@ -413,7 +402,7 @@ mod tests {
         let (_tx, rx) = std::sync::mpsc::channel();
         let stop = AtomicBool::new(false);
 
-        let err = super::run_placeholder_runtime_loop(&cfg, &stop, &state, 1, &rx)
+        let err = super::run_runtime_loop(&cfg, &stop, &state, 1, &rx)
             .expect_err("missing source should fail");
 
         assert_eq!(err.to_string(), "renderer.source is required");
