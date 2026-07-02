@@ -1,46 +1,18 @@
 [general]
-backend = "auto" # auto | layer_shell | gnome_shell
-fps_limit = 30
-restart_wine_on_exit = true
-refind_window_on_capture_error = true
+backend = "layer_shell"
+interactive = true
 show_fps = false
 fps_report_interval_secs = 1
-hide_debug_window = true
-hidden_workspace_name = "top"
+scale_mode = "cover"
 
-[isolation]
-mode = "none" # none | gamescope_headless
-command = "gamescope"
-# width = 2560
-# height = 1600
-startup_timeout_secs = 10
-
-[gnome]
-extension_dbus_name = "io.github.weLayerd.Gnome"
-
-[wine]
-command = "wine"
-command_mode = "exe_with_args"
-args = []
-wallpaper_exe = "/home/aromatic/.local/share/Steam/steamapps/common/wallpaper_engine/wallpaper64.exe"
-
-[capture]
-wm_class_contains = "wallpaper"
-# 如果 wine 参数含 -playInWindow，会自动从该参数推断标题关键字
-# title_contains = "Wallpaper Engine 1"
-# net_wm_pid = 12345
-# debug_save_frame_png = "/tmp/we-layerd-capture.png"
-
-[capture.output_window_map]
-# "output-42" = 123456
-
-[runtime]
-mode = "wine_layerd"
-wallpaper_type = "scene"
-# video_file = "/path/to/video.mp4"
-
-[cgroup]
-enabled = false
-mode = "detect" # detect | limit_wine
-# memory_max = "2147483648" # bytes or "max"
-# cpu_max = "50000 100000"  # quota period, or "max 100000"
+[renderer]
+library_path = "/home/USER/.local/bin/lib/libwallpaper-engine-renderer.so"
+source = "/path/to/Steam/steamapps/workshop/content/431960/<wallpaper-id>"
+assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
+cache_path = "~/.cache/we-layerd/renderer"
+prefer_dmabuf = true
+allow_shm_fallback = true
+fps = 60
+speed = 1.0
+volume = 1.0
+muted = false

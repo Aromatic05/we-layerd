@@ -1,78 +1,76 @@
 # we-layerd
 
-`we-layerd` is a Rust daemon for running Wallpaper Engine on Linux compositors.
+`we-layerd` is a Rust daemon for running Wallpaper Engine wallpapers on Wayland through the native `wallpaper-engine-renderer` library.
 
-Chinese documentation: [docs/README.zh-CN.md](./docs/README.zh-CN.md)
+## What it does
 
-## Features
-- Wine mode: launch `wallpaper64.exe`, capture XWayland/X11 output, render to Wayland layer-shell.
-- GNOME mode: register the Wallpaper Engine XWayland window with a GNOME Shell extension, or render native video wallpaper through the bundled GNOME bridge.
-- Desktop environment support: KDE Plasma and GNOME Shell.
-- Native video mode: FFmpeg + `wgpu` pipeline.
-- Windows launcher mode: Wine / Proton (Proton auto-discovery from Steam paths).
-- GUI companion (`we-gui`) with tray controls.
-- Runtime control commands: `stop`, `pause`, `resume`, `reload`, `status`, `hide-window`, `show-window`.
-- Single-instance daemon lock per user.
-- Optional cgroup monitor/limit support.
-
-## Dependencies
-- Rust toolchain (`cargo`, `rustc`) for building.
-- `pkg-config` (`pkgconf`) for native library detection during build.
-- Supported desktop environments:
-  - KDE Plasma (via layer-shell mode on Wayland).
-  - GNOME Shell 45+ (via the bundled GNOME Shell extension bridge for Wine scenes/web and native video).
-- Wayland compositor with `zwlr_layer_shell_v1` for layer-shell mode (target: niri; should also work on Hyprland/sway).
-- GNOME Shell 45+ for GNOME window-bridge mode, plus the bundled extension from [contrib/gnome-shell-extension](./contrib/gnome-shell-extension).
-- `gjs` with Gtk 4 support for GNOME native video mode.
-- XWayland/X11 for Wine render window capture.
-- `gamescope` for optional headless display isolation.
-- X11 Composite extension.
-- Vulkan/GL stack usable by `wgpu`.
-- FFmpeg libraries and headers (`libavformat`, `libavcodec`, `libavutil`, `libswscale`).
-- Wine + Wallpaper Engine executable (`wallpaper64.exe` or `wallpaper32.exe`).
-- Linux cgroup v2 (optional, only when cgroup feature is enabled in config).
-
-Example packages (Arch Linux):
-```bash
-sudo pacman -S --needed rustup pkgconf ffmpeg libx11 libxcomposite libxfixes libxdamage libxrender vulkan-icd-loader wine wlr-randr gamescope
-```
+- Builds and uses `wallpaper-engine-renderer` as a git submodule
+- Presents renderer output through Wayland layer-shell
+- Supports DMA-BUF and SHM frame presentation
+- Forwards pointer input to interactive wallpapers
+- Runs one renderer session per output
+- Ships a GUI companion, `we-gui`, for workshop browsing and config generation
 
 ## Build
-Build release binaries:
+
+The repository vendors `wallpaper-engine-renderer` as a git submodule:
+
 ```bash
-cargo build --release -p we-layerd -p we-gui
+git submodule update --init --recursive
+cargo build --workspace
 ```
 
-Install binaries to a directory in `PATH` (example: `~/.local/bin`):
+During `cargo build`, `we-layerd` also builds the upstream renderer library from:
+
+```text
+third_party/wallpaper-engine-renderer
+```
+
+and stages it in both of these locations:
+
+```text
+target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so
+~/.local/bin/lib/libwallpaper-engine-renderer.so
+```
+
+`we-layerd` and `we-gui` prefer `~/.local/bin/lib/libwallpaper-engine-renderer.so`, then the staged `target/...` copy, then standard system library paths.
+
+## Install binaries
+
 ```bash
 install -Dm755 target/release/we-layerd ~/.local/bin/we-layerd
 install -Dm755 target/release/we-gui ~/.local/bin/we-gui
 ```
 
 ## Config
-See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for:
-- config file setup
-- backend selection
-- GNOME extension setup
-- niri sizing rules
-- Wine / Proton launch modes
-- optional cgroup config
 
-## Usage
-After `we-layerd`/`we-gui` are in `PATH`:
+Start from:
 
-Start GUI:
 ```bash
-we-gui
+cp config.example.toml ~/.config/we-layerd/config.toml
 ```
 
-Start daemon directly:
+The important paths are:
+
+- `renderer.library_path`
+- `renderer.source`
+- `renderer.assets_path`
+- `renderer.cache_path`
+
+See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for the config model.
+
+## Runtime commands
+
 ```bash
-we-layerd run --config ~/.config/we-layerd/config.toml
+we-layerd ctl stop
+we-layerd ctl pause
+we-layerd ctl resume
+we-layerd ctl reload
+we-layerd ctl status
 ```
 
-More docs:
+## More docs
+
 - [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
-- [docs/ADVANCED.md](./docs/ADVANCED.md)
-- [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)

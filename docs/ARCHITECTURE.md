@@ -1,24 +1,75 @@
 # Architecture
 
+## Runtime path
+
+```text
+renderer dynamic library
+-> renderer session
+-> acquire dmabuf/shm frame
+-> Wayland layer-shell present
+-> pointer input forwarding
+-> IPC control
+```
+
+`we-layerd` no longer launches Wallpaper Engine through Wine and no longer captures X11 windows.
+
 ## Workspace layout
 
-- `we-layerd` (root crate): Linux runtime daemon (Wayland + X11 + Wine).
-  - Single-instance process lock (`flock`).
-  - IPC control server (`ctl stop/pause/resume/reload/status`).
-  - Optional cgroup runtime monitor/limiter (`detect` / `limit_wine`).
-- `crates/we-core`: Cross-platform shared library.
-  - Steam / workshop path discovery.
-  - Wallpaper metadata parsing (`project.json` type/title).
-  - Preview image detection.
-  - Shared config model used by GUI to generate daemon config.
-- `apps/we-gui`: Iced GUI app.
-  - Scan workshop wallpapers using `we-core`.
-  - Present wallpaper list and metadata.
-  - Generate `~/.config/we-layerd/config.toml`.
-  - Tray lifecycle + runtime controls (play/switch, stop, pause, resume, exit).
-  - Settings panel (resolution/fps/path/cgroup settings + runtime status polling).
+- `we-layerd` (root crate)
+  - daemon entrypoint
+  - config loading
+  - IPC control server
+  - Wayland renderer runtime
+  - build integration for the renderer submodule
 
-## Notes
+- `crates/we-renderer-sys`
+  - raw ABI mapping for `wallpaper/abi/WeRenderer.h`
+  - dynamic symbol loading
 
-- `we-core` is intended to compile on macOS for GUI-first development.
-- Keep runtime Linux-specific integrations in `we-layerd` crate.
+- `crates/we-renderer`
+  - safe Rust wrapper for renderer sessions
+  - frame ownership and fd duplication
+  - input event encoding
+
+- `crates/we-core`
+  - shared config model
+  - Steam/workshop discovery
+  - wallpaper metadata scanning
+
+- `apps/we-gui`
+  - workshop browser
+  - renderer-native config generation
+  - daemon lifecycle and tray controls
+
+## Wayland runtime
+
+The active runtime is centered in:
+
+- `src/wayland/frame_present.rs`
+- `src/wayland/renderer_layer.rs`
+
+Current behavior:
+
+- one renderer session per output
+- one layer-shell surface per output
+- one presenter path that supports DMA-BUF and SHM
+- pointer input routing to the focused output session
+
+## Renderer source of truth
+
+Layer-shell behavior is intentionally aligned with:
+
+```text
+third_party/wallpaper-engine-renderer/standalone_layer_view/layerwallpaper.cpp
+```
+
+The key reference flow is:
+
+```text
+onRegistryGlobal
+-> initWayland
+-> onLayerSurfaceConfigure
+-> createBufferForFrame
+-> presentFrame
+-> main loop
+```
