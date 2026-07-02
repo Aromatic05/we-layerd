@@ -15,8 +15,8 @@ use wayland_client::{
     globals::GlobalListContents,
     protocol::{
         wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_output, wl_output::WlOutput,
-        wl_region::WlRegion, wl_registry, wl_seat::WlSeat, wl_shm::WlShm, wl_shm_pool::WlShmPool,
-        wl_surface::WlSurface,
+        wl_pointer, wl_pointer::WlPointer, wl_region::WlRegion, wl_registry, wl_seat::WlSeat,
+        wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface,
     },
     Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
 };
@@ -36,7 +36,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
         Anchor, Event as LayerSurfaceEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1,
     },
 };
-use we_renderer::{RenderConfig, RendererLibrary, Session, Source};
+use we_renderer::{InputEvent, RenderConfig, RendererLibrary, Session, Source};
 
 use crate::{
     config::Config,
@@ -63,6 +63,10 @@ struct RendererLayerState {
     output_mode_height: u32,
     fallback_width: u32,
     fallback_height: u32,
+    pointer_x: f64,
+    pointer_y: f64,
+    pending_input_events: Vec<InputEvent>,
+    _pointer: Option<WlPointer>,
 }
 
 impl RendererLayerState {
@@ -80,6 +84,10 @@ impl RendererLayerState {
             output_mode_height: 0,
             fallback_width: 1920,
             fallback_height: 1080,
+            pointer_x: 0.0,
+            pointer_y: 0.0,
+            pending_input_events: Vec::new(),
+            _pointer: None,
         }
     }
 
@@ -101,6 +109,16 @@ impl RendererLayerState {
             (logical_height as f64 * scale).round().max(1.0) as u32,
         )
     }
+
+    fn normalized_pointer(&self) -> Option<(f32, f32)> {
+        if self.logical_width == 0 || self.logical_height == 0 {
+            return None;
+        }
+        Some((
+            (self.pointer_x / self.logical_width as f64) as f32,
+            (self.pointer_y / self.logical_height as f64) as f32,
+        ))
+    }
 }
 
 struct RendererRuntime {
@@ -109,6 +127,7 @@ struct RendererRuntime {
     state: RendererLayerState,
     compositor: WlCompositor,
     surface: WlSurface,
+    _seat: Option<WlSeat>,
     _output: Option<WlOutput>,
     viewport: Option<WpViewport>,
     _fractional_scale: Option<WpFractionalScaleV1>,
@@ -135,6 +154,7 @@ pub fn run_renderer_background_surface(
         globals.bind(&qh, 1..=5, ()).context("failed to bind zwlr_layer_shell_v1")?;
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).context("failed to bind wl_shm")?;
     let dmabuf = globals.bind::<ZwpLinuxDmabufV1, _, _>(&qh, 3..=4, ()).ok();
+    let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=5, ()).ok();
     let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
     let fractional_scale_manager =
         globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()).ok();
@@ -194,12 +214,14 @@ pub fn run_renderer_background_surface(
     session.play().context("failed to start renderer session")?;
 
     let presenter = FramePresenter::new(compositor_version, dmabuf, Some(shm));
+    let seat_available = seat.is_some();
     let mut runtime = RendererRuntime {
         event_queue,
         qh,
         state: RendererLayerState::new(cfg.general.interactive),
         compositor,
         surface,
+        _seat: seat,
         _output: output,
         viewport,
         _fractional_scale: fractional_scale,
@@ -210,6 +232,9 @@ pub fn run_renderer_background_surface(
         paused: false,
     };
     runtime.state.compositor_version = compositor_version;
+    if !seat_available {
+        info!("wl_seat unavailable; pointer forwarding disabled");
+    }
     runtime.apply_input_region()?;
     runtime.surface.commit();
 
@@ -238,6 +263,14 @@ pub fn run_renderer_background_surface(
                 Some(exit) => return Ok(exit),
                 None => {}
             }
+        }
+
+        let input_events = std::mem::take(&mut runtime.state.pending_input_events);
+        for event in input_events {
+            runtime
+                .session
+                .send_input_event(event)
+                .context("failed to forward input event to renderer")?;
         }
 
         runtime.configure_session_if_needed(cfg)?;
@@ -462,6 +495,109 @@ impl Dispatch<WpFractionalScaleV1, ()> for RendererLayerState {
     }
 }
 
+impl Dispatch<WlSeat, ()> for RendererLayerState {
+    fn event(
+        state: &mut Self,
+        seat: &WlSeat,
+        event: wayland_client::protocol::wl_seat::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_seat::Event::Capabilities { capabilities } = event {
+            let has_pointer = matches!(
+                capabilities,
+                WEnum::Value(value)
+                    if value.contains(wayland_client::protocol::wl_seat::Capability::Pointer)
+            );
+            if has_pointer && state._pointer.is_none() {
+                state._pointer = Some(seat.get_pointer(qh, ()));
+            } else if !has_pointer {
+                state._pointer = None;
+            }
+        }
+    }
+}
+
+impl Dispatch<WlPointer, ()> for RendererLayerState {
+    fn event(
+        state: &mut Self,
+        _proxy: &WlPointer,
+        event: wl_pointer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if !state.interactive {
+            return;
+        }
+
+        match event {
+            wl_pointer::Event::Enter { surface_x, surface_y, .. }
+            | wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+                state.pointer_x = surface_x;
+                state.pointer_y = surface_y;
+                if let Some((x, y)) = state.normalized_pointer() {
+                    state.pending_input_events.push(InputEvent::PointerMove { x, y });
+                }
+            }
+            wl_pointer::Event::Button { button, state: button_state, .. } => {
+                let Some((x, y)) = state.normalized_pointer() else {
+                    return;
+                };
+                let mapped_button = match button {
+                    0x110 => 0,
+                    0x111 => 1,
+                    0x112 => 2,
+                    _ => button as i32,
+                };
+                match button_state {
+                    WEnum::Value(wl_pointer::ButtonState::Pressed) => {
+                        state.pending_input_events.push(InputEvent::PointerDown {
+                            x,
+                            y,
+                            button: mapped_button,
+                        });
+                    }
+                    WEnum::Value(wl_pointer::ButtonState::Released) => {
+                        state.pending_input_events.push(InputEvent::PointerUp {
+                            x,
+                            y,
+                            button: mapped_button,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            wl_pointer::Event::Axis { axis, value, .. } => {
+                let Some((x, y)) = state.normalized_pointer() else {
+                    return;
+                };
+                let mut delta_x = 0;
+                let mut delta_y = 0;
+                match axis {
+                    WEnum::Value(wl_pointer::Axis::VerticalScroll) => {
+                        delta_y = value.round() as i32
+                    }
+                    WEnum::Value(wl_pointer::Axis::HorizontalScroll) => {
+                        delta_x = value.round() as i32
+                    }
+                    _ => {}
+                }
+                if delta_x != 0 || delta_y != 0 {
+                    state.pending_input_events.push(InputEvent::PointerWheel {
+                        x,
+                        y,
+                        delta_x,
+                        delta_y,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Dispatch<WlBuffer, BufferState> for RendererLayerState {
     fn event(
         _state: &mut Self,
@@ -500,7 +636,6 @@ delegate_noop!(RendererLayerState: ignore ZwpLinuxBufferParamsV1);
 delegate_noop!(RendererLayerState: ignore WpViewporter);
 delegate_noop!(RendererLayerState: ignore WpViewport);
 delegate_noop!(RendererLayerState: ignore WpFractionalScaleManagerV1);
-delegate_noop!(RendererLayerState: ignore WlSeat);
 
 #[cfg(test)]
 mod tests {
