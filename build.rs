@@ -56,7 +56,9 @@ fn main() {
     );
 
     run(
-        Command::new("strip").arg(&built_library),
+        Command::new("strip")
+            .arg("--strip-unneeded")
+            .arg(&built_library),
         "strip upstream wallpaper-engine-renderer",
     );
 
