@@ -72,7 +72,7 @@ pub struct RendererConfig {
 
 #[derive(Debug, Clone)]
 pub struct LaunchSettings {
-    pub wallpaper_exe: String,
+    pub assets_path: String,
     pub workshop_path: String,
     pub renderer_library_path: String,
     pub renderer_cache_path: String,
@@ -173,7 +173,7 @@ impl Default for AppConfig {
 impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
-            wallpaper_exe: String::new(),
+            assets_path: String::new(),
             workshop_path: String::new(),
             renderer_library_path: default_renderer_library_path(),
             renderer_cache_path: default_renderer_cache_path(),
@@ -198,18 +198,8 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.allow_shm_fallback = settings.allow_shm_fallback;
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
-    cfg.renderer.assets_path = derive_assets_path(&settings.wallpaper_exe);
+    cfg.renderer.assets_path = settings.assets_path.clone();
     cfg
-}
-
-fn derive_assets_path(wallpaper_exe: &str) -> String {
-    let exe_path = Path::new(wallpaper_exe);
-    exe_path
-        .parent()
-        .map(|parent| parent.join("assets"))
-        .unwrap_or_else(|| Path::new("assets").to_path_buf())
-        .display()
-        .to_string()
 }
 
 pub fn save_config(path: &Path, config: &AppConfig) -> Result<()> {
@@ -238,23 +228,13 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     settings.prefer_dmabuf = cfg.renderer.prefer_dmabuf;
     settings.allow_shm_fallback = cfg.renderer.allow_shm_fallback;
     settings.workshop_path = derive_workshop_root(&cfg.renderer.source);
-    settings.wallpaper_exe = derive_wallpaper_exe(&cfg.renderer.assets_path);
+    settings.assets_path = cfg.renderer.assets_path.clone();
     Ok(settings)
 }
 
 fn derive_workshop_root(source: &str) -> String {
     let source_path = Path::new(source);
     source_path.parent().map(|path| path.display().to_string()).unwrap_or_default()
-}
-
-fn derive_wallpaper_exe(assets_path: &str) -> String {
-    let assets = Path::new(assets_path);
-    assets
-        .parent()
-        .map(|parent| parent.join("wallpaper64.exe"))
-        .unwrap_or_else(|| Path::new("wallpaper64.exe").to_path_buf())
-        .display()
-        .to_string()
 }
 
 #[cfg(test)]
@@ -278,8 +258,7 @@ mod tests {
     #[test]
     fn build_config_writes_renderer_native_source_and_assets() {
         let mut settings = LaunchSettings::default();
-        settings.wallpaper_exe =
-            "/steam/steamapps/common/wallpaper_engine/wallpaper64.exe".to_string();
+        settings.assets_path = "/steam/steamapps/common/wallpaper_engine/assets".to_string();
         settings.fps_limit = 144;
         settings.interactive = false;
         settings.scale_mode = ScaleMode::Fit;
@@ -329,7 +308,7 @@ muted = false
         assert!(!settings.prefer_dmabuf);
         assert!(settings.allow_shm_fallback);
         assert_eq!(settings.workshop_path, "/tmp/workshop/content/431960");
-        assert_eq!(settings.wallpaper_exe, "/opt/wallpaper_engine/wallpaper64.exe");
+        assert_eq!(settings.assets_path, "/opt/wallpaper_engine/assets");
 
         let _ = fs::remove_file(path);
     }
