@@ -1,174 +1,74 @@
-use std::{env, fmt, process::Command};
+use std::fmt;
 
 use iced::{
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
     Background, Border, Color, Element, Fill, Theme,
 };
+use we_core::config::ScaleMode;
 
 use crate::Message;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolutionOption {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl fmt::Display for ResolutionOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} x {}", self.width, self.height)
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct UiSettings {
     pub wallpaper_exe: String,
-    pub executable_variant: ExecutableVariantOption,
     pub workshop_path: String,
-    pub launcher_mode: LauncherModeOption,
-    pub wine_command: String,
-    pub proton_path: String,
+    pub renderer_library_path: String,
+    pub renderer_cache_path: String,
+    pub prefer_dmabuf: bool,
+    pub allow_shm_fallback: bool,
+    pub interactive: bool,
     pub fps_limit: String,
     pub show_fps: bool,
-    pub isolation_mode: IsolationModeOption,
-    pub isolation_command: String,
-    pub isolation_width: String,
-    pub isolation_height: String,
-    pub isolation_startup_timeout_secs: String,
-    pub borderless: bool,
-    pub hide_debug_window: bool,
-    pub disable_debug_window_input: bool,
-    pub hidden_workspace_name: String,
-    pub selected_resolution: Option<ResolutionOption>,
-    pub cgroup_enabled: bool,
-    pub cgroup_mode: CgroupModeOption,
-    pub cgroup_memory_max: String,
-    pub cgroup_cpu_max: String,
+    pub scale_mode: ScaleModeOption,
     pub status_text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutableVariantOption {
-    Wallpaper64,
-    Wallpaper32,
+pub enum ScaleModeOption {
+    Fit,
+    Cover,
+    Stretch,
 }
 
-impl ExecutableVariantOption {
-    pub const fn filename(self) -> &'static str {
+impl fmt::Display for ScaleModeOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Wallpaper64 => "wallpaper64.exe",
-            Self::Wallpaper32 => "wallpaper32.exe",
+            Self::Fit => write!(f, "Fit"),
+            Self::Cover => write!(f, "Cover"),
+            Self::Stretch => write!(f, "Stretch"),
         }
     }
 }
 
-impl fmt::Display for ExecutableVariantOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.filename())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LauncherModeOption {
-    Wine,
-    Proton,
-}
-
-impl fmt::Display for LauncherModeOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Wine => write!(f, "Wine"),
-            Self::Proton => write!(f, "Proton"),
+impl From<ScaleMode> for ScaleModeOption {
+    fn from(value: ScaleMode) -> Self {
+        match value {
+            ScaleMode::Fit => Self::Fit,
+            ScaleMode::Cover => Self::Cover,
+            ScaleMode::Stretch => Self::Stretch,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LauncherChoice {
-    pub label: String,
-    pub value: String,
-}
-
-impl fmt::Display for LauncherChoice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.label)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CgroupModeOption {
-    Detect,
-    LimitWine,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IsolationModeOption {
-    None,
-    GamescopeHeadless,
-}
-
-impl fmt::Display for IsolationModeOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::None => write!(f, "Disabled"),
-            Self::GamescopeHeadless => write!(f, "Gamescope Headless"),
+impl From<ScaleModeOption> for ScaleMode {
+    fn from(value: ScaleModeOption) -> Self {
+        match value {
+            ScaleModeOption::Fit => Self::Fit,
+            ScaleModeOption::Cover => Self::Cover,
+            ScaleModeOption::Stretch => Self::Stretch,
         }
     }
 }
 
-impl fmt::Display for CgroupModeOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Detect => write!(f, "Detect (observe self + wine)"),
-            Self::LimitWine => write!(f, "Limit Wine only"),
-        }
-    }
-}
-
-pub fn build_settings_overlay<'a>(
-    ui_settings: &'a UiSettings,
-    supported_resolutions: &'a [ResolutionOption],
-    wine_commands: &'a [LauncherChoice],
-    proton_versions: &'a [LauncherChoice],
-) -> Element<'a, Message> {
+pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Message> {
     let wallpaper_path_display = format_path_for_display(&ui_settings.wallpaper_exe, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
+    let library_path_display = format_path_for_display(&ui_settings.renderer_library_path, 64);
+    let cache_path_display = format_path_for_display(&ui_settings.renderer_cache_path, 64);
 
-    let mut content = column![
+    let content = column![
         text("Settings").size(26),
-        text("Windows Launcher").size(14),
-        pick_list(
-            vec![LauncherModeOption::Wine, LauncherModeOption::Proton],
-            Some(ui_settings.launcher_mode),
-            Message::LauncherModeSelected,
-        )
-        .padding(10),
-        text("Wine Command").size(14),
-        pick_list(
-            wine_commands.to_vec(),
-            pick_selected_choice(wine_commands, &ui_settings.wine_command),
-            Message::WineCommandSelected,
-        )
-        .placeholder("Select Wine command")
-        .padding(10),
-        text("Proton Version").size(14),
-        pick_list(
-            proton_versions.to_vec(),
-            pick_selected_choice(proton_versions, &ui_settings.proton_path),
-            Message::ProtonVersionSelected,
-        )
-        .placeholder("Select Proton version")
-        .padding(10),
-        text_input("/path/to/proton", &ui_settings.proton_path)
-            .on_input(Message::ProtonPathChanged)
-            .padding(10),
         text("Wallpaper Engine Path").size(14),
-        text("Executable Variant").size(14),
-        pick_list(
-            vec![ExecutableVariantOption::Wallpaper64, ExecutableVariantOption::Wallpaper32],
-            Some(ui_settings.executable_variant),
-            Message::ExecutableVariantSelected,
-        )
-        .padding(10),
         row![
             text_input("/path/to/wallpaper64.exe", &ui_settings.wallpaper_exe)
                 .on_input(Message::WallpaperExeChanged)
@@ -190,255 +90,106 @@ pub fn build_settings_overlay<'a>(
         ]
         .spacing(10),
         text(workshop_path_display).size(12),
+        text("Renderer Library").size(14),
+        text_input("libwallpaper-engine-renderer.so", &ui_settings.renderer_library_path)
+            .on_input(Message::RendererLibraryPathChanged)
+            .padding(10),
+        text(library_path_display).size(12),
+        text("Renderer Cache Path").size(14),
+        text_input("~/.cache/we-layerd/renderer", &ui_settings.renderer_cache_path)
+            .on_input(Message::RendererCachePathChanged)
+            .padding(10),
+        text(cache_path_display).size(12),
         text("Frame Rate Limit (FPS)").size(14),
-        text_input("30", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding(10),
+        text_input("60", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding(10),
+        text("Scale Mode").size(14),
+        pick_list(
+            vec![ScaleModeOption::Fit, ScaleModeOption::Cover, ScaleModeOption::Stretch],
+            Some(ui_settings.scale_mode),
+            Message::ScaleModeSelected,
+        )
+        .padding(10),
+        checkbox(ui_settings.interactive)
+            .label("Enable wallpaper input")
+            .on_toggle(Message::InteractiveToggled),
         checkbox(ui_settings.show_fps)
             .label("Show realtime FPS")
             .on_toggle(Message::ShowFpsToggled),
-        text("Display Isolation").size(18),
-        pick_list(
-            vec![IsolationModeOption::None, IsolationModeOption::GamescopeHeadless],
-            Some(ui_settings.isolation_mode),
-            Message::IsolationModeSelected,
-        )
-        .padding(10),
-        text("Isolation Command").size(14),
-        text_input("gamescope", &ui_settings.isolation_command)
-            .on_input(Message::IsolationCommandChanged)
-            .padding(10),
-        text("Isolation Width").size(14),
-        text_input("blank = wallpaper width", &ui_settings.isolation_width)
-            .on_input(Message::IsolationWidthChanged)
-            .padding(10),
-        text("Isolation Height").size(14),
-        text_input("blank = wallpaper height", &ui_settings.isolation_height)
-            .on_input(Message::IsolationHeightChanged)
-            .padding(10),
-        text("Isolation Startup Timeout (secs)").size(14),
-        text_input("10", &ui_settings.isolation_startup_timeout_secs)
-            .on_input(Message::IsolationStartupTimeoutChanged)
-            .padding(10),
-        text("`gamescope_headless` keeps the Wine/X11 window off the host compositor window tree.")
-            .size(12),
-        checkbox(ui_settings.borderless)
-            .label("Open scene/web wallpaper window as borderless")
-            .on_toggle(Message::BorderlessToggled),
-        checkbox(ui_settings.hide_debug_window)
-            .label("Hide WE debug window automatically")
-            .on_toggle(Message::HideDebugWindowToggled),
-        checkbox(ui_settings.disable_debug_window_input)
-            .label("Disable WE debug window mouse input (click-through)")
-            .on_toggle(Message::DisableDebugWindowInputToggled),
-        text("Hidden Workspace").size(14),
-        text_input("top", &ui_settings.hidden_workspace_name)
-            .on_input(Message::HiddenWorkspaceNameChanged)
-            .padding(10),
-        text("Use `top` for niri first workspace; on Hyprland this is the special workspace name.")
-            .size(12),
-        text("Resolution").size(14),
-        pick_list(
-            supported_resolutions.to_vec(),
-            ui_settings.selected_resolution.clone(),
-            Message::ResolutionSelected,
-        )
-        .placeholder("Choose a resolution")
-        .padding(10),
-        text("Cgroup").size(18),
-        checkbox(ui_settings.cgroup_enabled)
-            .label("Enable cgroup metrics / limits")
-            .on_toggle(Message::CgroupEnabledToggled),
+        checkbox(ui_settings.prefer_dmabuf)
+            .label("Prefer DMA-BUF presentation")
+            .on_toggle(Message::PreferDmabufToggled),
+        checkbox(ui_settings.allow_shm_fallback)
+            .label("Allow SHM fallback")
+            .on_toggle(Message::AllowShmFallbackToggled),
+        text("Runtime Status").size(18),
+        container(text(&ui_settings.status_text).size(14))
+            .padding(12)
+            .width(Fill)
+            .style(status_box_style),
     ]
     .spacing(10);
 
-    if ui_settings.cgroup_enabled {
-        content = content
-            .push(text("Cgroup Mode").size(14))
-            .push(
-                pick_list(
-                    vec![CgroupModeOption::Detect, CgroupModeOption::LimitWine],
-                    Some(ui_settings.cgroup_mode),
-                    Message::CgroupModeSelected,
-                )
-                .padding(10),
-            )
-            .push(text("Memory Limit (memory.max)").size(14))
-            .push(
-                text_input("e.g. 2147483648 or max", &ui_settings.cgroup_memory_max)
-                    .on_input(Message::CgroupMemoryMaxChanged)
-                    .padding(10),
-            )
-            .push(text("CPU Limit (cpu.max)").size(14))
-            .push(
-                text_input("e.g. 50000 100000 or max 100000", &ui_settings.cgroup_cpu_max)
-                    .on_input(Message::CgroupCpuMaxChanged)
-                    .padding(10),
-            )
-            .push(
-                row![
-                    text("Runtime Status").size(14),
-                    button(text("Refresh")).on_press(Message::RefreshStatus),
-                ]
-                .spacing(10),
-            )
-            .push(
-                container(text(&ui_settings.status_text).size(12))
-                    .width(Fill)
-                    .padding(10)
-                    .style(status_panel_style),
-            );
-    }
-
-    let card_content = scrollable(content);
-
-    let card =
-        container(card_content).width(760).height(620).padding(16).style(settings_card_style);
-
-    container(card)
-        .width(Fill)
+    container(scrollable(content).height(Fill))
+        .width(420)
         .height(Fill)
-        .center_x(Fill)
-        .center_y(Fill)
-        .padding(20)
-        .style(settings_overlay_bg_style)
+        .padding(18)
+        .style(settings_overlay_style)
         .into()
 }
 
-pub fn detect_supported_resolutions() -> Vec<ResolutionOption> {
-    let mut values = parse_wlrandr_resolutions();
-    if values.is_empty() {
-        values = parse_xrandr_resolutions();
+fn format_path_for_display(path: &str, limit: usize) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return String::new();
     }
-    if values.is_empty() {
-        values.push(ResolutionOption { width: 1920, height: 1080 });
-    }
-    values.sort_by_key(|v| (v.width, v.height));
-    values.dedup();
-    values
-}
-
-pub fn pick_initial_resolution(
-    supported: &[ResolutionOption],
-    width: u32,
-    height: u32,
-) -> Option<ResolutionOption> {
-    supported.iter().find(|r| r.width == width && r.height == height).cloned()
-}
-
-fn parse_xrandr_resolutions() -> Vec<ResolutionOption> {
-    let Ok(output) = Command::new("xrandr").arg("--query").output() else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    parse_resolutions_from_text(String::from_utf8_lossy(&output.stdout).as_ref())
-}
-
-fn parse_wlrandr_resolutions() -> Vec<ResolutionOption> {
-    let Ok(output) = Command::new("wlr-randr").output() else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    parse_resolutions_from_text(String::from_utf8_lossy(&output.stdout).as_ref())
-}
-
-fn parse_resolutions_from_text(raw: &str) -> Vec<ResolutionOption> {
-    let mut result = Vec::new();
-    for line in raw.lines() {
-        let line = line.trim();
-        for token in line.split_whitespace() {
-            let Some((w, h)) = token.split_once('x') else {
-                continue;
-            };
-            if let (Ok(width), Ok(height)) = (w.parse::<u32>(), h.parse::<u32>()) {
-                if width >= 640 && height >= 360 {
-                    result.push(ResolutionOption { width, height });
-                }
-            }
-        }
-    }
-    result
-}
-
-fn pick_selected_choice(choices: &[LauncherChoice], value: &str) -> Option<LauncherChoice> {
-    choices.iter().find(|c| c.value == value).cloned()
-}
-
-fn format_path_for_display(path: &str, max_chars: usize) -> String {
-    let mut rendered = path.to_string();
-    if let Ok(home) = env::var("HOME") {
-        if rendered.starts_with(&home) {
-            rendered = rendered.replacen(&home, "~", 1);
-        }
-    }
-    if rendered.chars().count() <= max_chars {
-        return rendered;
+    if trimmed.chars().count() <= limit {
+        return trimmed.to_string();
     }
 
-    let keep_head = max_chars.saturating_sub(3) / 2;
-    let keep_tail = max_chars.saturating_sub(3) - keep_head;
-    let head: String = rendered.chars().take(keep_head).collect();
-    let tail: String =
-        rendered.chars().rev().take(keep_tail).collect::<String>().chars().rev().collect();
-    format!("{head}...{tail}")
+    let head_len = limit / 2;
+    let tail_len = limit.saturating_sub(head_len + 1);
+    let head = trimmed.chars().take(head_len).collect::<String>();
+    let tail =
+        trimmed.chars().rev().take(tail_len).collect::<String>().chars().rev().collect::<String>();
+    format!("{head}…{tail}")
 }
 
-fn settings_overlay_bg_style(theme: &Theme) -> container::Style {
+fn settings_overlay_style(theme: &Theme) -> container::Style {
     let is_light = matches!(theme, Theme::Light);
     container::Style {
         background: Some(Background::Color(if is_light {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.45)
+            Color::from_rgba(0.98, 0.98, 0.98, 0.98)
         } else {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.45)
-        })),
-        ..Default::default()
-    }
-}
-
-fn settings_card_style(theme: &Theme) -> container::Style {
-    let is_light = matches!(theme, Theme::Light);
-    container::Style {
-        background: Some(Background::Color(if is_light {
-            Color::from_rgb8(247, 250, 255)
-        } else {
-            Color::from_rgb8(26, 30, 34)
-        })),
-        text_color: Some(if is_light { Color::from_rgb8(20, 27, 34) } else { Color::WHITE }),
-        border: Border {
-            radius: 16.0.into(),
-            width: 1.0,
-            color: if is_light {
-                Color::from_rgba8(58, 94, 132, 0.25)
-            } else {
-                Color::from_rgba8(180, 210, 255, 0.18)
-            },
-        },
-        shadow: iced::Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.25),
-            blur_radius: 18.0,
-            offset: iced::Vector::new(0.0, 6.0),
-        },
-        ..Default::default()
-    }
-}
-
-fn status_panel_style(theme: &Theme) -> container::Style {
-    let is_light = matches!(theme, Theme::Light);
-    container::Style {
-        background: Some(Background::Color(if is_light {
-            Color::from_rgb8(236, 242, 249)
-        } else {
-            Color::from_rgb8(20, 24, 28)
+            Color::from_rgba(0.08, 0.08, 0.08, 0.96)
         })),
         border: Border {
             radius: 12.0.into(),
             width: 1.0,
             color: if is_light {
-                Color::from_rgba8(70, 110, 155, 0.28)
+                Color::from_rgba(0.0, 0.0, 0.0, 0.08)
             } else {
-                Color::from_rgba8(160, 198, 241, 0.2)
+                Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+            },
+        },
+        ..Default::default()
+    }
+}
+
+fn status_box_style(theme: &Theme) -> container::Style {
+    let is_light = matches!(theme, Theme::Light);
+    container::Style {
+        background: Some(Background::Color(if is_light {
+            Color::from_rgba(0.95, 0.97, 0.99, 1.0)
+        } else {
+            Color::from_rgba(0.12, 0.14, 0.16, 1.0)
+        })),
+        border: Border {
+            radius: 8.0.into(),
+            width: 1.0,
+            color: if is_light {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+            } else {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.06)
             },
         },
         ..Default::default()

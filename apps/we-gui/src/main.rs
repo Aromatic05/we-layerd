@@ -10,16 +10,9 @@ use iced::{
     widget::{button, column, container, image, row, scrollable, stack, svg, text},
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
-use settings_panel::{
-    build_settings_overlay, detect_supported_resolutions, pick_initial_resolution,
-    CgroupModeOption, ExecutableVariantOption, IsolationModeOption, LauncherChoice,
-    LauncherModeOption, ResolutionOption, UiSettings,
-};
+use settings_panel::{build_settings_overlay, ScaleModeOption, UiSettings};
 use we_core::{
-    config::{
-        build_config, load_launch_settings, save_config, CgroupMode, IsolationMode, LaunchSettings,
-        WindowsLauncher,
-    },
+    config::{build_config, load_launch_settings, save_config, LaunchSettings, ScaleMode},
     steam::{self, WallpaperEngineInstallState},
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };
@@ -45,9 +38,6 @@ struct App {
     launch_settings: LaunchSettings,
     ui_settings: UiSettings,
     show_settings: bool,
-    supported_resolutions: Vec<ResolutionOption>,
-    wine_commands: Vec<LauncherChoice>,
-    proton_versions: Vec<LauncherChoice>,
     install_notice: Option<String>,
     tray: Option<tray::TrayController>,
     main_window_id: Option<window::Id>,
@@ -63,33 +53,19 @@ enum Message {
     StopPressed,
     SettingsPressed,
     WallpaperExeChanged(String),
-    ExecutableVariantSelected(ExecutableVariantOption),
     WorkshopPathChanged(String),
-    LauncherModeSelected(LauncherModeOption),
-    WineCommandSelected(LauncherChoice),
-    ProtonVersionSelected(LauncherChoice),
-    ProtonPathChanged(String),
+    RendererLibraryPathChanged(String),
+    RendererCachePathChanged(String),
     PickWallpaperExe,
     PickWorkshopPath,
     WallpaperExePicked(Option<PathBuf>),
     WorkshopPathPicked(Option<PathBuf>),
     FpsLimitChanged(String),
+    InteractiveToggled(bool),
     ShowFpsToggled(bool),
-    IsolationModeSelected(IsolationModeOption),
-    IsolationCommandChanged(String),
-    IsolationWidthChanged(String),
-    IsolationHeightChanged(String),
-    IsolationStartupTimeoutChanged(String),
-    BorderlessToggled(bool),
-    HideDebugWindowToggled(bool),
-    DisableDebugWindowInputToggled(bool),
-    HiddenWorkspaceNameChanged(String),
-    ResolutionSelected(settings_panel::ResolutionOption),
-    CgroupEnabledToggled(bool),
-    CgroupModeSelected(CgroupModeOption),
-    CgroupMemoryMaxChanged(String),
-    CgroupCpuMaxChanged(String),
-    RefreshStatus,
+    ScaleModeSelected(ScaleModeOption),
+    PreferDmabufToggled(bool),
+    AllowShmFallbackToggled(bool),
     StatusLoaded(Result<String, String>),
     StatusTick,
     WindowResized(Size),
@@ -164,16 +140,6 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::WallpaperExeChanged(value) => {
             app.ui_settings.wallpaper_exe = value;
-            app.ui_settings.executable_variant =
-                infer_executable_variant(&app.ui_settings.wallpaper_exe);
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::ExecutableVariantSelected(value) => {
-            app.ui_settings.executable_variant = value;
-            if let Some(parent) = Path::new(&app.ui_settings.wallpaper_exe).parent() {
-                app.ui_settings.wallpaper_exe = parent.join(value.filename()).display().to_string();
-            }
             sync_launch_settings(app);
             Task::none()
         }
@@ -188,23 +154,13 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::LauncherModeSelected(value) => {
-            app.ui_settings.launcher_mode = value;
+        Message::RendererLibraryPathChanged(value) => {
+            app.ui_settings.renderer_library_path = value;
             sync_launch_settings(app);
             Task::none()
         }
-        Message::WineCommandSelected(value) => {
-            app.ui_settings.wine_command = value.value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::ProtonVersionSelected(value) => {
-            app.ui_settings.proton_path = value.value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::ProtonPathChanged(value) => {
-            app.ui_settings.proton_path = value;
+        Message::RendererCachePathChanged(value) => {
+            app.ui_settings.renderer_cache_path = value;
             sync_launch_settings(app);
             Task::none()
         }
@@ -225,8 +181,6 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::WallpaperExePicked(path) => {
             if let Some(path) = path {
                 app.ui_settings.wallpaper_exe = path.display().to_string();
-                app.ui_settings.executable_variant =
-                    infer_executable_variant(&app.ui_settings.wallpaper_exe);
                 sync_launch_settings(app);
             }
             Task::none()
@@ -247,82 +201,31 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             sync_launch_settings(app);
             Task::none()
         }
+        Message::InteractiveToggled(value) => {
+            app.ui_settings.interactive = value;
+            sync_launch_settings(app);
+            Task::none()
+        }
         Message::ShowFpsToggled(value) => {
             app.ui_settings.show_fps = value;
             sync_launch_settings(app);
             Task::none()
         }
-        Message::IsolationModeSelected(value) => {
-            app.ui_settings.isolation_mode = value;
+        Message::ScaleModeSelected(value) => {
+            app.ui_settings.scale_mode = value;
             sync_launch_settings(app);
             Task::none()
         }
-        Message::IsolationCommandChanged(value) => {
-            app.ui_settings.isolation_command = value;
+        Message::PreferDmabufToggled(value) => {
+            app.ui_settings.prefer_dmabuf = value;
             sync_launch_settings(app);
             Task::none()
         }
-        Message::IsolationWidthChanged(value) => {
-            app.ui_settings.isolation_width = value;
+        Message::AllowShmFallbackToggled(value) => {
+            app.ui_settings.allow_shm_fallback = value;
             sync_launch_settings(app);
             Task::none()
         }
-        Message::IsolationHeightChanged(value) => {
-            app.ui_settings.isolation_height = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::IsolationStartupTimeoutChanged(value) => {
-            app.ui_settings.isolation_startup_timeout_secs = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::BorderlessToggled(value) => {
-            app.ui_settings.borderless = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::HideDebugWindowToggled(value) => {
-            app.ui_settings.hide_debug_window = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::DisableDebugWindowInputToggled(value) => {
-            app.ui_settings.disable_debug_window_input = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::HiddenWorkspaceNameChanged(value) => {
-            app.ui_settings.hidden_workspace_name = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::ResolutionSelected(value) => {
-            app.ui_settings.selected_resolution = Some(value);
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::CgroupEnabledToggled(value) => {
-            app.ui_settings.cgroup_enabled = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::CgroupModeSelected(value) => {
-            app.ui_settings.cgroup_mode = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::CgroupMemoryMaxChanged(value) => {
-            app.ui_settings.cgroup_memory_max = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::CgroupCpuMaxChanged(value) => {
-            app.ui_settings.cgroup_cpu_max = value;
-            sync_launch_settings(app);
-            Task::none()
-        }
-        Message::RefreshStatus => Task::perform(fetch_runtime_status(), Message::StatusLoaded),
         Message::StatusLoaded(result) => {
             app.ui_settings.status_text = match result {
                 Ok(text) => text,
@@ -457,16 +360,8 @@ fn view(app: &App, _window: window::Id) -> Element<'_, Message> {
         Some(warning.into())
     };
 
-    let settings_overlay: Option<Element<'_, Message>> = if app.show_settings {
-        Some(build_settings_overlay(
-            &app.ui_settings,
-            &app.supported_resolutions,
-            &app.wine_commands,
-            &app.proton_versions,
-        ))
-    } else {
-        None
-    };
+    let settings_overlay: Option<Element<'_, Message>> =
+        if app.show_settings { Some(build_settings_overlay(&app.ui_settings)) } else { None };
 
     match (runtime_warning, settings_overlay) {
         (Some(w), Some(s)) => stack![content, w, s, floating].into(),
@@ -536,66 +431,17 @@ impl App {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
         }
-        let supported_resolutions = detect_supported_resolutions();
-        let wine_commands = steam::discover_wine_commands()
-            .into_iter()
-            .map(|v| LauncherChoice { label: v.clone(), value: v })
-            .collect::<Vec<_>>();
-        let proton_versions = steam::discover_proton_installs()
-            .into_iter()
-            .map(|p| LauncherChoice { label: p.name, value: p.proton_path.display().to_string() })
-            .collect::<Vec<_>>();
-        if let Some(first) = wine_commands.first() {
-            launch_settings.wine_command = first.value.clone();
-        }
-        if let Some(first) = proton_versions.first() {
-            launch_settings.proton_path = Some(first.value.clone());
-        }
-        let selected_resolution = pick_initial_resolution(
-            &supported_resolutions,
-            launch_settings.width,
-            launch_settings.height,
-        );
         let ui_settings = UiSettings {
             wallpaper_exe: launch_settings.wallpaper_exe.clone(),
-            executable_variant: infer_executable_variant(&launch_settings.wallpaper_exe),
             workshop_path: launch_settings.workshop_path.clone(),
-            launcher_mode: match launch_settings.launcher {
-                WindowsLauncher::Wine => LauncherModeOption::Wine,
-                WindowsLauncher::Proton => LauncherModeOption::Proton,
-            },
-            wine_command: launch_settings.wine_command.clone(),
-            proton_path: launch_settings.proton_path.clone().unwrap_or_default(),
+            renderer_library_path: launch_settings.renderer_library_path.clone(),
+            renderer_cache_path: launch_settings.renderer_cache_path.clone(),
+            prefer_dmabuf: launch_settings.prefer_dmabuf,
+            allow_shm_fallback: launch_settings.allow_shm_fallback,
+            interactive: launch_settings.interactive,
             fps_limit: launch_settings.fps_limit.to_string(),
             show_fps: launch_settings.show_fps,
-            isolation_mode: match launch_settings.isolation_mode {
-                IsolationMode::None => IsolationModeOption::None,
-                IsolationMode::GamescopeHeadless => IsolationModeOption::GamescopeHeadless,
-            },
-            isolation_command: launch_settings.isolation_command.clone(),
-            isolation_width: launch_settings
-                .isolation_width
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-            isolation_height: launch_settings
-                .isolation_height
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-            isolation_startup_timeout_secs: launch_settings
-                .isolation_startup_timeout_secs
-                .to_string(),
-            borderless: launch_settings.borderless,
-            hide_debug_window: launch_settings.hide_debug_window,
-            disable_debug_window_input: launch_settings.disable_debug_window_input,
-            hidden_workspace_name: launch_settings.hidden_workspace_name.clone(),
-            selected_resolution,
-            cgroup_enabled: launch_settings.cgroup_enabled,
-            cgroup_mode: match launch_settings.cgroup_mode {
-                CgroupMode::Detect => CgroupModeOption::Detect,
-                CgroupMode::LimitWine => CgroupModeOption::LimitWine,
-            },
-            cgroup_memory_max: launch_settings.cgroup_memory_max.clone().unwrap_or_default(),
-            cgroup_cpu_max: launch_settings.cgroup_cpu_max.clone().unwrap_or_default(),
+            scale_mode: ScaleModeOption::from(launch_settings.scale_mode),
             status_text: "status unavailable: daemon is not running".to_string(),
         };
         (
@@ -609,9 +455,6 @@ impl App {
                 launch_settings,
                 ui_settings,
                 show_settings: false,
-                supported_resolutions,
-                wine_commands,
-                proton_versions,
                 install_notice,
                 tray: tray::TrayController::new().ok(),
                 main_window_id: None,
@@ -731,51 +574,17 @@ fn make_wallpaper_card<'a>(
 fn sync_launch_settings_from_ui(ui_settings: &UiSettings, launch_settings: &mut LaunchSettings) {
     launch_settings.wallpaper_exe = ui_settings.wallpaper_exe.clone();
     launch_settings.workshop_path = ui_settings.workshop_path.clone();
-    launch_settings.launcher = match ui_settings.launcher_mode {
-        LauncherModeOption::Wine => WindowsLauncher::Wine,
-        LauncherModeOption::Proton => WindowsLauncher::Proton,
-    };
-    launch_settings.wine_command = ui_settings.wine_command.clone();
-    launch_settings.proton_path = non_empty_trimmed(&ui_settings.proton_path);
+    launch_settings.renderer_library_path = ui_settings.renderer_library_path.clone();
+    launch_settings.renderer_cache_path = ui_settings.renderer_cache_path.clone();
+    launch_settings.prefer_dmabuf = ui_settings.prefer_dmabuf;
+    launch_settings.allow_shm_fallback = ui_settings.allow_shm_fallback;
+    launch_settings.interactive = ui_settings.interactive;
     launch_settings.show_fps = ui_settings.show_fps;
-    launch_settings.isolation_mode = match ui_settings.isolation_mode {
-        IsolationModeOption::None => IsolationMode::None,
-        IsolationModeOption::GamescopeHeadless => IsolationMode::GamescopeHeadless,
-    };
-    launch_settings.isolation_command = if ui_settings.isolation_command.trim().is_empty() {
-        "gamescope".to_string()
-    } else {
-        ui_settings.isolation_command.trim().to_string()
-    };
-    launch_settings.isolation_width = parse_optional_u32(&ui_settings.isolation_width);
-    launch_settings.isolation_height = parse_optional_u32(&ui_settings.isolation_height);
-    if let Ok(v) = ui_settings.isolation_startup_timeout_secs.trim().parse::<u64>() {
-        launch_settings.isolation_startup_timeout_secs = v.max(1);
-    }
-    launch_settings.borderless = ui_settings.borderless;
-    launch_settings.play_in_window_title = "WE-DEBUG-WINDOW".to_string();
-    launch_settings.wm_class_contains =
-        infer_wm_class(ui_settings.launcher_mode, ui_settings.executable_variant).to_string();
-    launch_settings.x = 0;
-    launch_settings.y = 0;
+    launch_settings.scale_mode = ScaleMode::from(ui_settings.scale_mode);
 
     if let Ok(v) = ui_settings.fps_limit.parse::<u32>() {
         launch_settings.fps_limit = v.clamp(1, 360);
     }
-    if let Some(res) = &ui_settings.selected_resolution {
-        launch_settings.width = res.width;
-        launch_settings.height = res.height;
-    }
-    launch_settings.cgroup_enabled = ui_settings.cgroup_enabled;
-    launch_settings.cgroup_mode = match ui_settings.cgroup_mode {
-        CgroupModeOption::Detect => CgroupMode::Detect,
-        CgroupModeOption::LimitWine => CgroupMode::LimitWine,
-    };
-    launch_settings.cgroup_memory_max = non_empty_trimmed(&ui_settings.cgroup_memory_max);
-    launch_settings.cgroup_cpu_max = non_empty_trimmed(&ui_settings.cgroup_cpu_max);
-    launch_settings.hide_debug_window = ui_settings.hide_debug_window;
-    launch_settings.disable_debug_window_input = ui_settings.disable_debug_window_input;
-    launch_settings.hidden_workspace_name = ui_settings.hidden_workspace_name.clone();
 }
 
 fn sync_launch_settings(app: &mut App) {
@@ -807,47 +616,6 @@ async fn fetch_runtime_status() -> Result<String, String> {
         }
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
-}
-
-fn non_empty_trimmed(input: &str) -> Option<String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn parse_optional_u32(input: &str) -> Option<u32> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        trimmed.parse::<u32>().ok().filter(|value| *value > 0)
-    }
-}
-
-fn infer_executable_variant(path: &str) -> ExecutableVariantOption {
-    let lower = Path::new(path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if lower == "wallpaper32.exe" {
-        ExecutableVariantOption::Wallpaper32
-    } else {
-        ExecutableVariantOption::Wallpaper64
-    }
-}
-
-fn infer_wm_class(launcher: LauncherModeOption, variant: ExecutableVariantOption) -> &'static str {
-    match launcher {
-        LauncherModeOption::Proton => "steam_proton",
-        LauncherModeOption::Wine => match variant {
-            ExecutableVariantOption::Wallpaper64 => "wallpaper64",
-            ExecutableVariantOption::Wallpaper32 => "wallpaper32",
-        },
     }
 }
 
@@ -924,39 +692,24 @@ fn detect_system_theme() -> Theme {
 #[cfg(test)]
 mod tests {
     use super::{
-        infer_executable_variant,
-        settings_panel::{
-            CgroupModeOption, IsolationModeOption, LauncherModeOption, ResolutionOption, UiSettings,
-        },
+        settings_panel::{ScaleModeOption, UiSettings},
         sync_launch_settings_from_ui,
     };
-    use we_core::config::{IsolationMode, LaunchSettings};
+    use we_core::config::{LaunchSettings, ScaleMode};
 
     #[test]
     fn sync_launch_settings_copies_workshop_path_from_ui() {
         let ui_settings = UiSettings {
             wallpaper_exe: "/tmp/wallpaper32.exe".to_string(),
-            executable_variant: infer_executable_variant("/tmp/wallpaper32.exe"),
             workshop_path: "/tmp/workshop/content/431960".to_string(),
-            launcher_mode: LauncherModeOption::Wine,
-            wine_command: "wine".to_string(),
-            proton_path: String::new(),
+            renderer_library_path: "/opt/libwallpaper-engine-renderer.so".to_string(),
+            renderer_cache_path: "~/.cache/we-layerd/test".to_string(),
+            prefer_dmabuf: false,
+            allow_shm_fallback: true,
+            interactive: false,
             fps_limit: "144".to_string(),
             show_fps: true,
-            isolation_mode: IsolationModeOption::GamescopeHeadless,
-            isolation_command: "gamescope-custom".to_string(),
-            isolation_width: "2560".to_string(),
-            isolation_height: "1600".to_string(),
-            isolation_startup_timeout_secs: "12".to_string(),
-            borderless: true,
-            hide_debug_window: true,
-            disable_debug_window_input: false,
-            hidden_workspace_name: "top".to_string(),
-            selected_resolution: Some(ResolutionOption { width: 1920, height: 1080 }),
-            cgroup_enabled: false,
-            cgroup_mode: CgroupModeOption::Detect,
-            cgroup_memory_max: String::new(),
-            cgroup_cpu_max: String::new(),
+            scale_mode: ScaleModeOption::Stretch,
             status_text: String::new(),
         };
         let mut launch_settings = LaunchSettings::default();
@@ -965,13 +718,12 @@ mod tests {
 
         assert_eq!(launch_settings.workshop_path, "/tmp/workshop/content/431960");
         assert_eq!(launch_settings.wallpaper_exe, "/tmp/wallpaper32.exe");
-        assert_eq!(launch_settings.width, 1920);
-        assert_eq!(launch_settings.height, 1080);
-        assert_eq!(launch_settings.isolation_mode, IsolationMode::GamescopeHeadless);
-        assert_eq!(launch_settings.isolation_command, "gamescope-custom");
-        assert_eq!(launch_settings.isolation_width, Some(2560));
-        assert_eq!(launch_settings.isolation_height, Some(1600));
-        assert_eq!(launch_settings.isolation_startup_timeout_secs, 12);
+        assert_eq!(launch_settings.renderer_library_path, "/opt/libwallpaper-engine-renderer.so");
+        assert_eq!(launch_settings.renderer_cache_path, "~/.cache/we-layerd/test");
+        assert!(!launch_settings.prefer_dmabuf);
+        assert!(launch_settings.allow_shm_fallback);
+        assert!(!launch_settings.interactive);
+        assert_eq!(launch_settings.scale_mode, ScaleMode::Stretch);
     }
 }
 
