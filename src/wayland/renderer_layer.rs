@@ -189,7 +189,10 @@ pub fn run_renderer_background_surface(
     } else {
         output_globals
             .into_iter()
-            .map(|global| OutputSpec { name: format!("output-{}", global.name), global: Some(global) })
+            .map(|global| OutputSpec {
+                name: format!("output-{}", global.name),
+                global: Some(global),
+            })
             .collect::<Vec<_>>()
     };
 
@@ -206,10 +209,9 @@ pub fn run_renderer_background_surface(
         options_json: None,
     };
 
-    let library =
-        RendererLibrary::load(Path::new(&cfg.renderer.library_path)).with_context(|| {
-            format!("failed to load renderer library {}", cfg.renderer.library_path)
-        })?;
+    let library_path = resolve_renderer_library_path(&cfg.renderer.library_path);
+    let library = RendererLibrary::load(&library_path)
+        .with_context(|| format!("failed to load renderer library {}", library_path.display()))?;
     let cache_path_arg =
         if cfg.renderer.cache_path.trim().is_empty() { None } else { Some(cache_path.as_path()) };
 
@@ -299,15 +301,12 @@ pub fn run_renderer_background_surface(
         if !runtime.paused {
             for (index, output) in runtime.outputs.iter_mut().enumerate() {
                 output.session.tick().context("renderer tick failed")?;
-                if let Some(frame) = output
-                    .session
-                    .acquire_frame()
-                    .context("failed to acquire frame")?
+                if let Some(frame) =
+                    output.session.acquire_frame().context("failed to acquire frame")?
                 {
-                    output
-                        .presenter
-                        .present(&output.surface, &runtime.qh, frame)
-                        .with_context(|| format!("failed to present renderer frame for output {index}"))?;
+                    output.presenter.present(&output.surface, &runtime.qh, frame).with_context(
+                        || format!("failed to present renderer frame for output {index}"),
+                    )?;
                 }
             }
         }
@@ -341,20 +340,14 @@ impl RendererRuntime {
             }
             ControlCommand::Pause => {
                 for output in &mut self.outputs {
-                    output
-                        .session
-                        .pause()
-                        .context("failed to pause renderer session")?;
+                    output.session.pause().context("failed to pause renderer session")?;
                 }
                 self.paused = true;
                 Ok(None)
             }
             ControlCommand::Resume => {
                 for output in &mut self.outputs {
-                    output
-                        .session
-                        .play()
-                        .context("failed to resume renderer session")?;
+                    output.session.play().context("failed to resume renderer session")?;
                 }
                 self.paused = false;
                 Ok(None)
@@ -565,9 +558,8 @@ fn create_output_runtime(
     layer_surface.set_margin(0, 0, 0, 0);
     layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
 
-    let mut session = library
-        .create_session(cache_path)
-        .context("failed to create renderer session")?;
+    let mut session =
+        library.create_session(cache_path).context("failed to create renderer session")?;
     session.set_source(source).context("failed to set renderer source")?;
     session.play().context("failed to start renderer session")?;
 
@@ -590,6 +582,38 @@ fn expand_tilde(raw: &str) -> PathBuf {
         }
     }
     PathBuf::from(raw)
+}
+
+fn resolve_renderer_library_path(configured_path: &str) -> PathBuf {
+    let configured = PathBuf::from(configured_path);
+    if configured.exists() {
+        return configured;
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(install_root) = option_env!("WE_LAYERD_RENDERER_INSTALL_ROOT") {
+        candidates.push(
+            Path::new(install_root).join("lib/libwallpaper-engine-renderer.so"),
+        );
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(Path::new(&home).join(".local/bin/lib/libwallpaper-engine-renderer.so"));
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(bin_dir) = current_exe.parent() {
+            candidates.push(bin_dir.join("../lib/libwallpaper-engine-renderer.so"));
+            candidates.push(bin_dir.join("libwallpaper-engine-renderer.so"));
+        }
+    }
+    candidates.push(PathBuf::from("/usr/local/lib/libwallpaper-engine-renderer.so"));
+    candidates.push(PathBuf::from("/usr/local/lib64/libwallpaper-engine-renderer.so"));
+    candidates.push(PathBuf::from("/usr/lib/libwallpaper-engine-renderer.so"));
+    candidates.push(PathBuf::from("/usr/lib64/libwallpaper-engine-renderer.so"));
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.exists())
+        .unwrap_or(configured)
 }
 
 impl Dispatch<ZwlrLayerSurfaceV1, usize> for RendererLayerState {
@@ -630,8 +654,7 @@ impl Dispatch<WlOutput, usize> for RendererLayerState {
             return;
         };
         match event {
-            wl_output::Event::Mode { flags, width, height, .. }
-                if matches!(flags, WEnum::Value(value) if value.contains(wl_output::Mode::Current)) =>
+            wl_output::Event::Mode { flags, width, height, .. } if matches!(flags, WEnum::Value(value) if value.contains(wl_output::Mode::Current)) =>
             {
                 output.output_mode_width = width.max(0) as u32;
                 output.output_mode_height = height.max(0) as u32;
@@ -707,7 +730,9 @@ impl Dispatch<WlPointer, ()> for RendererLayerState {
                         output.pointer_x = surface_x;
                         output.pointer_y = surface_y;
                         if let Some((x, y)) = output.normalized_pointer() {
-                            state.pending_input_events.push((index, InputEvent::PointerMove { x, y }));
+                            state
+                                .pending_input_events
+                                .push((index, InputEvent::PointerMove { x, y }));
                         }
                     }
                 }
@@ -745,16 +770,14 @@ impl Dispatch<WlPointer, ()> for RendererLayerState {
                 };
                 match button_state {
                     WEnum::Value(wl_pointer::ButtonState::Pressed) => {
-                        state.pending_input_events.push((
-                            index,
-                            InputEvent::PointerDown { x, y, button: mapped_button },
-                        ));
+                        state
+                            .pending_input_events
+                            .push((index, InputEvent::PointerDown { x, y, button: mapped_button }));
                     }
                     WEnum::Value(wl_pointer::ButtonState::Released) => {
-                        state.pending_input_events.push((
-                            index,
-                            InputEvent::PointerUp { x, y, button: mapped_button },
-                        ));
+                        state
+                            .pending_input_events
+                            .push((index, InputEvent::PointerUp { x, y, button: mapped_button }));
                     }
                     _ => {}
                 }
@@ -772,15 +795,18 @@ impl Dispatch<WlPointer, ()> for RendererLayerState {
                 let mut delta_x = 0;
                 let mut delta_y = 0;
                 match axis {
-                    WEnum::Value(wl_pointer::Axis::VerticalScroll) => delta_y = value.round() as i32,
-                    WEnum::Value(wl_pointer::Axis::HorizontalScroll) => delta_x = value.round() as i32,
+                    WEnum::Value(wl_pointer::Axis::VerticalScroll) => {
+                        delta_y = value.round() as i32
+                    }
+                    WEnum::Value(wl_pointer::Axis::HorizontalScroll) => {
+                        delta_x = value.round() as i32
+                    }
                     _ => {}
                 }
                 if delta_x != 0 || delta_y != 0 {
-                    state.pending_input_events.push((
-                        index,
-                        InputEvent::PointerWheel { x, y, delta_x, delta_y },
-                    ));
+                    state
+                        .pending_input_events
+                        .push((index, InputEvent::PointerWheel { x, y, delta_x, delta_y }));
                 }
             }
             _ => {}
