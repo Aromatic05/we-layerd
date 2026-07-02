@@ -12,7 +12,7 @@ use wayland_backend::client::WaylandError;
 use wayland_client::{
     delegate_noop,
     globals::registry_queue_init,
-    globals::GlobalListContents,
+    globals::{Global, GlobalListContents},
     protocol::{
         wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_output, wl_output::WlOutput,
         wl_pointer, wl_pointer::WlPointer, wl_region::WlRegion, wl_registry, wl_seat::WlSeat,
@@ -49,12 +49,10 @@ use crate::{
 
 const FRACTIONAL_SCALE_DENOMINATOR: u32 = 120;
 
-#[derive(Debug)]
-struct RendererLayerState {
-    running: bool,
+#[derive(Debug, Clone)]
+struct OutputState {
+    name: String,
     configured: bool,
-    interactive: bool,
-    compositor_version: u32,
     logical_width: u32,
     logical_height: u32,
     output_scale: u32,
@@ -65,17 +63,13 @@ struct RendererLayerState {
     fallback_height: u32,
     pointer_x: f64,
     pointer_y: f64,
-    pending_input_events: Vec<InputEvent>,
-    _pointer: Option<WlPointer>,
 }
 
-impl RendererLayerState {
-    fn new(interactive: bool) -> Self {
+impl OutputState {
+    fn new(name: String) -> Self {
         Self {
-            running: true,
+            name,
             configured: false,
-            interactive,
-            compositor_version: 0,
             logical_width: 0,
             logical_height: 0,
             output_scale: 1,
@@ -86,8 +80,6 @@ impl RendererLayerState {
             fallback_height: 1080,
             pointer_x: 0.0,
             pointer_y: 0.0,
-            pending_input_events: Vec::new(),
-            _pointer: None,
         }
     }
 
@@ -121,13 +113,35 @@ impl RendererLayerState {
     }
 }
 
-struct RendererRuntime {
-    event_queue: EventQueue<RendererLayerState>,
-    qh: QueueHandle<RendererLayerState>,
-    state: RendererLayerState,
-    compositor: WlCompositor,
+#[derive(Debug)]
+struct RendererLayerState {
+    running: bool,
+    interactive: bool,
+    outputs: Vec<OutputState>,
+    focused_output: Option<usize>,
+    pending_input_events: Vec<(usize, InputEvent)>,
+    _pointer: Option<WlPointer>,
+}
+
+impl RendererLayerState {
+    fn new(interactive: bool, outputs: Vec<OutputState>) -> Self {
+        Self {
+            running: true,
+            interactive,
+            outputs,
+            focused_output: None,
+            pending_input_events: Vec::new(),
+            _pointer: None,
+        }
+    }
+
+    fn all_outputs_configured(&self) -> bool {
+        self.outputs.iter().all(|output| output.configured)
+    }
+}
+
+struct OutputRuntime {
     surface: WlSurface,
-    _seat: Option<WlSeat>,
     _output: Option<WlOutput>,
     viewport: Option<WpViewport>,
     _fractional_scale: Option<WpFractionalScaleV1>,
@@ -135,6 +149,15 @@ struct RendererRuntime {
     presenter: FramePresenter,
     session: Session,
     session_configured_extent: Option<(u32, u32)>,
+}
+
+struct RendererRuntime {
+    event_queue: EventQueue<RendererLayerState>,
+    qh: QueueHandle<RendererLayerState>,
+    state: RendererLayerState,
+    compositor: WlCompositor,
+    _seat: Option<WlSeat>,
+    outputs: Vec<OutputRuntime>,
     paused: bool,
 }
 
@@ -160,37 +183,28 @@ pub fn run_renderer_background_surface(
         globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()).ok();
 
     let globals_snapshot = globals.contents().clone_list();
-    let output_global = outputs::output_globals(&globals_snapshot).into_iter().next();
-    let output = output_global
-        .as_ref()
-        .map(|global| outputs::bind_output::<RendererLayerState>(globals.registry(), &qh, global))
-        .transpose()
-        .context("failed to bind wl_output")?;
-
-    let surface = compositor.create_surface(&qh, ());
-    surface.set_buffer_scale(1);
-    let viewport = viewporter.as_ref().map(|global| global.get_viewport(&surface, &qh, ()));
-    let fractional_scale = fractional_scale_manager
-        .as_ref()
-        .map(|global| global.get_fractional_scale(&surface, &qh, ()));
-
-    let layer_surface = layer_shell.get_layer_surface(
-        &surface,
-        output.as_ref(),
-        Layer::Background,
-        "we-layerd".to_string(),
-        &qh,
-        (),
-    );
-    layer_surface.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
-    layer_surface.set_size(0, 0);
-    layer_surface.set_exclusive_zone(-1);
-    layer_surface.set_margin(0, 0, 0, 0);
-    layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+    let output_globals = outputs::output_globals(&globals_snapshot);
+    let output_specs = if output_globals.is_empty() {
+        vec![OutputSpec { name: "output-fallback".to_string(), global: None }]
+    } else {
+        output_globals
+            .into_iter()
+            .map(|global| OutputSpec { name: format!("output-{}", global.name), global: Some(global) })
+            .collect::<Vec<_>>()
+    };
 
     let cache_path = expand_tilde(&cfg.renderer.cache_path);
     let source_path = expand_tilde(&cfg.renderer.source);
     let assets_path = expand_tilde(&cfg.renderer.assets_path);
+    let source = Source {
+        uri: source_path.display().to_string(),
+        assets_uri: assets_path.display().to_string(),
+        fps: cfg.renderer.fps as i32,
+        speed: cfg.renderer.speed,
+        volume: cfg.renderer.volume,
+        muted: cfg.renderer.muted,
+        options_json: None,
+    };
 
     let library =
         RendererLibrary::load(Path::new(&cfg.renderer.library_path)).with_context(|| {
@@ -198,64 +212,70 @@ pub fn run_renderer_background_surface(
         })?;
     let cache_path_arg =
         if cfg.renderer.cache_path.trim().is_empty() { None } else { Some(cache_path.as_path()) };
-    let mut session =
-        library.create_session(cache_path_arg).context("failed to create renderer session")?;
-    session
-        .set_source(&Source {
-            uri: source_path.display().to_string(),
-            assets_uri: assets_path.display().to_string(),
-            fps: cfg.renderer.fps as i32,
-            speed: cfg.renderer.speed,
-            volume: cfg.renderer.volume,
-            muted: cfg.renderer.muted,
-            options_json: None,
-        })
-        .context("failed to set renderer source")?;
-    session.play().context("failed to start renderer session")?;
 
-    let presenter = FramePresenter::new(compositor_version, dmabuf, Some(shm));
+    let mut output_states = Vec::with_capacity(output_specs.len());
+    let mut output_runtimes = Vec::with_capacity(output_specs.len());
+
+    for (index, spec) in output_specs.iter().enumerate() {
+        output_states.push(OutputState::new(spec.name.clone()));
+        output_runtimes.push(create_output_runtime(
+            &globals,
+            &qh,
+            &compositor,
+            compositor_version,
+            &layer_shell,
+            dmabuf.clone(),
+            shm.clone(),
+            viewporter.as_ref(),
+            fractional_scale_manager.as_ref(),
+            &library,
+            cache_path_arg,
+            &source,
+            spec,
+            index,
+        )?);
+    }
+
     let seat_available = seat.is_some();
     let mut runtime = RendererRuntime {
         event_queue,
         qh,
-        state: RendererLayerState::new(cfg.general.interactive),
+        state: RendererLayerState::new(cfg.general.interactive, output_states),
         compositor,
-        surface,
         _seat: seat,
-        _output: output,
-        viewport,
-        _fractional_scale: fractional_scale,
-        _layer_surface: layer_surface,
-        presenter,
-        session,
-        session_configured_extent: None,
+        outputs: output_runtimes,
         paused: false,
     };
-    runtime.state.compositor_version = compositor_version;
+
     if !seat_available {
         info!("wl_seat unavailable; pointer forwarding disabled");
     }
-    runtime.apply_input_region()?;
-    runtime.surface.commit();
 
-    while !runtime.state.configured {
+    runtime.apply_all_input_regions()?;
+    runtime.commit_all_surfaces();
+
+    while !runtime.state.all_outputs_configured() {
         runtime
             .event_queue
             .roundtrip(&mut runtime.state)
             .context("failed waiting for initial layer-surface configure")?;
-        runtime.apply_surface_geometry()?;
+        runtime.apply_all_surface_geometry()?;
     }
 
-    runtime.apply_surface_geometry()?;
-    runtime.configure_session_if_needed(cfg)?;
+    runtime.apply_all_surface_geometry()?;
+    runtime.configure_sessions_if_needed(cfg)?;
 
-    info!(
-        logical_width = runtime.state.logical_width,
-        logical_height = runtime.state.logical_height,
-        render_width = runtime.state.render_extent().0,
-        render_height = runtime.state.render_extent().1,
-        "starting renderer-backed layer-shell runtime"
-    );
+    for output in &runtime.state.outputs {
+        let (render_width, render_height) = output.render_extent();
+        info!(
+            output = %output.name,
+            logical_width = output.logical_width,
+            logical_height = output.logical_height,
+            render_width,
+            render_height,
+            "starting renderer-backed layer-shell output"
+        );
+    }
 
     loop {
         while let Ok(cmd) = control_rx.try_recv() {
@@ -266,41 +286,47 @@ pub fn run_renderer_background_surface(
         }
 
         let input_events = std::mem::take(&mut runtime.state.pending_input_events);
-        for event in input_events {
-            runtime
-                .session
-                .send_input_event(event)
-                .context("failed to forward input event to renderer")?;
+        for (output_index, event) in input_events {
+            if let Some(output) = runtime.outputs.get_mut(output_index) {
+                output
+                    .session
+                    .send_input_event(event)
+                    .context("failed to forward input event to renderer")?;
+            }
         }
 
-        runtime.configure_session_if_needed(cfg)?;
+        runtime.configure_sessions_if_needed(cfg)?;
         if !runtime.paused {
-            runtime.session.tick().context("renderer tick failed")?;
-            if let Some(frame) =
-                runtime.session.acquire_frame().context("failed to acquire frame")?
-            {
-                runtime
-                    .presenter
-                    .present(&runtime.surface, &runtime.qh, frame)
-                    .context("failed to present renderer frame")?;
+            for (index, output) in runtime.outputs.iter_mut().enumerate() {
+                output.session.tick().context("renderer tick failed")?;
+                if let Some(frame) = output
+                    .session
+                    .acquire_frame()
+                    .context("failed to acquire frame")?
+                {
+                    output
+                        .presenter
+                        .present(&output.surface, &runtime.qh, frame)
+                        .with_context(|| format!("failed to present renderer frame for output {index}"))?;
+                }
             }
         }
 
         let flush_blocked = match runtime.event_queue.flush() {
             Ok(()) => {
-                runtime.presenter.release_pending_send_fds();
+                runtime.release_pending_send_fds();
                 false
             }
             Err(WaylandError::Io(err)) if err.kind() == ErrorKind::WouldBlock => true,
             Err(err) => return Err(err).context("failed to flush Wayland connection"),
         };
 
-        runtime.presenter.collect_released_buffers();
+        runtime.collect_released_buffers();
         runtime.dispatch_wayland(Duration::from_millis(5), flush_blocked)?;
-        runtime.presenter.collect_released_buffers();
+        runtime.collect_released_buffers();
 
         if !runtime.state.running {
-            runtime.session.stop().ok();
+            runtime.stop_sessions();
             return Ok(RuntimeLoopExit::Stop);
         }
     }
@@ -310,16 +336,26 @@ impl RendererRuntime {
     fn handle_control_command(&mut self, cmd: ControlCommand) -> Result<Option<RuntimeLoopExit>> {
         match cmd {
             ControlCommand::Stop => {
-                self.session.stop().ok();
+                self.stop_sessions();
                 Ok(Some(RuntimeLoopExit::Stop))
             }
             ControlCommand::Pause => {
-                self.session.pause().context("failed to pause renderer session")?;
+                for output in &mut self.outputs {
+                    output
+                        .session
+                        .pause()
+                        .context("failed to pause renderer session")?;
+                }
                 self.paused = true;
                 Ok(None)
             }
             ControlCommand::Resume => {
-                self.session.play().context("failed to resume renderer session")?;
+                for output in &mut self.outputs {
+                    output
+                        .session
+                        .play()
+                        .context("failed to resume renderer session")?;
+                }
                 self.paused = false;
                 Ok(None)
             }
@@ -328,24 +364,29 @@ impl RendererRuntime {
         }
     }
 
-    fn configure_session_if_needed(&mut self, cfg: &Config) -> Result<()> {
-        let extent = self.state.render_extent();
-        if self.session_configured_extent == Some(extent) {
-            return Ok(());
+    fn configure_sessions_if_needed(&mut self, cfg: &Config) -> Result<()> {
+        for (state, runtime) in self.state.outputs.iter().zip(self.outputs.iter_mut()) {
+            let extent = state.render_extent();
+            if runtime.session_configured_extent == Some(extent) {
+                continue;
+            }
+            runtime
+                .session
+                .configure(RenderConfig {
+                    width: extent.0,
+                    height: extent.1,
+                    enable_valid_layer: false,
+                    prefer_dmabuf: cfg.renderer.prefer_dmabuf,
+                    allow_shm_fallback: cfg.renderer.allow_shm_fallback,
+                })
+                .with_context(|| {
+                    format!(
+                        "failed to configure renderer session for {} at {}x{}",
+                        state.name, extent.0, extent.1
+                    )
+                })?;
+            runtime.session_configured_extent = Some(extent);
         }
-
-        self.session
-            .configure(RenderConfig {
-                width: extent.0,
-                height: extent.1,
-                enable_valid_layer: false,
-                prefer_dmabuf: cfg.renderer.prefer_dmabuf,
-                allow_shm_fallback: cfg.renderer.allow_shm_fallback,
-            })
-            .with_context(|| {
-                format!("failed to configure renderer session for {}x{}", extent.0, extent.1)
-            })?;
-        self.session_configured_extent = Some(extent);
         Ok(())
     }
 
@@ -387,13 +428,13 @@ impl RendererRuntime {
             self.event_queue
                 .dispatch_pending(&mut self.state)
                 .context("failed to dispatch Wayland events after read")?;
-            self.apply_surface_geometry()?;
+            self.apply_all_surface_geometry()?;
         } else {
             drop(read_guard);
         }
         if flush_blocked && (poll_fd.revents & libc::POLLOUT) != 0 {
             match self.event_queue.flush() {
-                Ok(()) => self.presenter.release_pending_send_fds(),
+                Ok(()) => self.release_pending_send_fds(),
                 Err(WaylandError::Io(err)) if err.kind() == ErrorKind::WouldBlock => {}
                 Err(err) => return Err(err).context("failed to flush Wayland fd after POLLOUT"),
             }
@@ -401,29 +442,145 @@ impl RendererRuntime {
         Ok(())
     }
 
-    fn apply_surface_geometry(&mut self) -> Result<()> {
-        if let Some(viewport) = &self.viewport {
-            viewport
-                .set_destination(self.state.logical_width as i32, self.state.logical_height as i32);
+    fn apply_all_surface_geometry(&mut self) -> Result<()> {
+        for index in 0..self.outputs.len() {
+            self.apply_surface_geometry(index)?;
         }
-        self.apply_input_region()?;
         Ok(())
     }
 
-    fn apply_input_region(&self) -> Result<()> {
-        if self.state.logical_width == 0 || self.state.logical_height == 0 {
+    fn apply_surface_geometry(&mut self, index: usize) -> Result<()> {
+        let Some(state) = self.state.outputs.get(index) else {
+            return Ok(());
+        };
+        let Some(output) = self.outputs.get_mut(index) else {
+            return Ok(());
+        };
+        if let Some(viewport) = &output.viewport {
+            viewport.set_destination(state.logical_width as i32, state.logical_height as i32);
+        }
+        self.apply_input_region(index)?;
+        Ok(())
+    }
+
+    fn apply_all_input_regions(&self) -> Result<()> {
+        for index in 0..self.outputs.len() {
+            self.apply_input_region(index)?;
+        }
+        Ok(())
+    }
+
+    fn apply_input_region(&self, index: usize) -> Result<()> {
+        let Some(state) = self.state.outputs.get(index) else {
+            return Ok(());
+        };
+        let Some(output) = self.outputs.get(index) else {
+            return Ok(());
+        };
+        if state.logical_width == 0 || state.logical_height == 0 {
             return Ok(());
         }
         let region = self.compositor.create_region(&self.qh, ());
         if self.state.interactive {
-            region.add(0, 0, self.state.logical_width as i32, self.state.logical_height as i32);
-            self.surface.set_input_region(Some(&region));
+            region.add(0, 0, state.logical_width as i32, state.logical_height as i32);
+            output.surface.set_input_region(Some(&region));
         } else {
-            self.surface.set_input_region(Some(&region));
+            output.surface.set_input_region(Some(&region));
         }
         region.destroy();
         Ok(())
     }
+
+    fn commit_all_surfaces(&self) {
+        for output in &self.outputs {
+            output.surface.commit();
+        }
+    }
+
+    fn release_pending_send_fds(&mut self) {
+        for output in &mut self.outputs {
+            output.presenter.release_pending_send_fds();
+        }
+    }
+
+    fn collect_released_buffers(&mut self) {
+        for output in &mut self.outputs {
+            output.presenter.collect_released_buffers();
+        }
+    }
+
+    fn stop_sessions(&mut self) {
+        for output in &mut self.outputs {
+            output.session.stop().ok();
+        }
+    }
+}
+
+struct OutputSpec {
+    name: String,
+    global: Option<Global>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_output_runtime(
+    globals: &wayland_client::globals::GlobalList,
+    qh: &QueueHandle<RendererLayerState>,
+    compositor: &WlCompositor,
+    compositor_version: u32,
+    layer_shell: &ZwlrLayerShellV1,
+    dmabuf: Option<ZwpLinuxDmabufV1>,
+    shm: WlShm,
+    viewporter: Option<&WpViewporter>,
+    fractional_scale_manager: Option<&WpFractionalScaleManagerV1>,
+    library: &RendererLibrary,
+    cache_path: Option<&Path>,
+    source: &Source,
+    spec: &OutputSpec,
+    index: usize,
+) -> Result<OutputRuntime> {
+    let output = spec
+        .global
+        .as_ref()
+        .map(|global| outputs::bind_output(globals.registry(), qh, global, index))
+        .transpose()
+        .context("failed to bind output for renderer runtime")?;
+
+    let surface = compositor.create_surface(qh, ());
+    surface.set_buffer_scale(1);
+    let viewport = viewporter.map(|global| global.get_viewport(&surface, qh, ()));
+    let fractional_scale =
+        fractional_scale_manager.map(|global| global.get_fractional_scale(&surface, qh, index));
+
+    let layer_surface = layer_shell.get_layer_surface(
+        &surface,
+        output.as_ref(),
+        Layer::Background,
+        "we-layerd".to_string(),
+        qh,
+        index,
+    );
+    layer_surface.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
+    layer_surface.set_size(0, 0);
+    layer_surface.set_exclusive_zone(-1);
+    layer_surface.set_margin(0, 0, 0, 0);
+    layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+
+    let mut session = library
+        .create_session(cache_path)
+        .context("failed to create renderer session")?;
+    session.set_source(source).context("failed to set renderer source")?;
+    session.play().context("failed to start renderer session")?;
+
+    Ok(OutputRuntime {
+        surface,
+        _output: output,
+        viewport,
+        _fractional_scale: fractional_scale,
+        _layer_surface: layer_surface,
+        presenter: FramePresenter::new(compositor_version, dmabuf, Some(shm)),
+        session,
+        session_configured_extent: None,
+    })
 }
 
 fn expand_tilde(raw: &str) -> PathBuf {
@@ -435,21 +592,24 @@ fn expand_tilde(raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
-impl Dispatch<ZwlrLayerSurfaceV1, ()> for RendererLayerState {
+impl Dispatch<ZwlrLayerSurfaceV1, usize> for RendererLayerState {
     fn event(
         state: &mut Self,
         layer_surface: &ZwlrLayerSurfaceV1,
         event: LayerSurfaceEvent,
-        _data: &(),
+        index: &usize,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        let Some(output) = state.outputs.get_mut(*index) else {
+            return;
+        };
         match event {
             LayerSurfaceEvent::Configure { serial, width, height } => {
                 layer_surface.ack_configure(serial);
-                state.configured = true;
-                state.logical_width = width.max(1);
-                state.logical_height = height.max(1);
+                output.configured = true;
+                output.logical_width = width.max(1);
+                output.logical_height = height.max(1);
             }
             LayerSurfaceEvent::Closed => state.running = false,
             _ => {}
@@ -457,40 +617,47 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for RendererLayerState {
     }
 }
 
-impl Dispatch<WlOutput, ()> for RendererLayerState {
+impl Dispatch<WlOutput, usize> for RendererLayerState {
     fn event(
         state: &mut Self,
         _proxy: &WlOutput,
         event: wl_output::Event,
-        _data: &(),
+        index: &usize,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        let Some(output) = state.outputs.get_mut(*index) else {
+            return;
+        };
         match event {
-            wl_output::Event::Mode { flags, width, height, .. } if matches!(flags, WEnum::Value(value) if value.contains(wl_output::Mode::Current)) =>
+            wl_output::Event::Mode { flags, width, height, .. }
+                if matches!(flags, WEnum::Value(value) if value.contains(wl_output::Mode::Current)) =>
             {
-                state.output_mode_width = width.max(0) as u32;
-                state.output_mode_height = height.max(0) as u32;
+                output.output_mode_width = width.max(0) as u32;
+                output.output_mode_height = height.max(0) as u32;
             }
             wl_output::Event::Scale { factor } => {
-                state.output_scale = factor.max(1) as u32;
+                output.output_scale = factor.max(1) as u32;
             }
             _ => {}
         }
     }
 }
 
-impl Dispatch<WpFractionalScaleV1, ()> for RendererLayerState {
+impl Dispatch<WpFractionalScaleV1, usize> for RendererLayerState {
     fn event(
         state: &mut Self,
         _proxy: &WpFractionalScaleV1,
         event: FractionalScaleEvent,
-        _data: &(),
+        index: &usize,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        let Some(output) = state.outputs.get_mut(*index) else {
+            return;
+        };
         if let FractionalScaleEvent::PreferredScale { scale } = event {
-            state.preferred_fractional_scale = scale.max(FRACTIONAL_SCALE_DENOMINATOR);
+            output.preferred_fractional_scale = scale.max(FRACTIONAL_SCALE_DENOMINATOR);
         }
     }
 }
@@ -533,16 +700,41 @@ impl Dispatch<WlPointer, ()> for RendererLayerState {
         }
 
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. }
-            | wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
-                state.pointer_x = surface_x;
-                state.pointer_y = surface_y;
-                if let Some((x, y)) = state.normalized_pointer() {
-                    state.pending_input_events.push(InputEvent::PointerMove { x, y });
+            wl_pointer::Event::Enter { surface, surface_x, surface_y, .. } => {
+                if let Some(index) = focused_output_index(state, &surface) {
+                    state.focused_output = Some(index);
+                    if let Some(output) = state.outputs.get_mut(index) {
+                        output.pointer_x = surface_x;
+                        output.pointer_y = surface_y;
+                        if let Some((x, y)) = output.normalized_pointer() {
+                            state.pending_input_events.push((index, InputEvent::PointerMove { x, y }));
+                        }
+                    }
+                }
+            }
+            wl_pointer::Event::Leave { .. } => {
+                state.focused_output = None;
+            }
+            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+                let Some(index) = state.focused_output else {
+                    return;
+                };
+                if let Some(output) = state.outputs.get_mut(index) {
+                    output.pointer_x = surface_x;
+                    output.pointer_y = surface_y;
+                    if let Some((x, y)) = output.normalized_pointer() {
+                        state.pending_input_events.push((index, InputEvent::PointerMove { x, y }));
+                    }
                 }
             }
             wl_pointer::Event::Button { button, state: button_state, .. } => {
-                let Some((x, y)) = state.normalized_pointer() else {
+                let Some(index) = state.focused_output else {
+                    return;
+                };
+                let Some(output) = state.outputs.get(index) else {
+                    return;
+                };
+                let Some((x, y)) = output.normalized_pointer() else {
                     return;
                 };
                 let mapped_button = match button {
@@ -553,49 +745,57 @@ impl Dispatch<WlPointer, ()> for RendererLayerState {
                 };
                 match button_state {
                     WEnum::Value(wl_pointer::ButtonState::Pressed) => {
-                        state.pending_input_events.push(InputEvent::PointerDown {
-                            x,
-                            y,
-                            button: mapped_button,
-                        });
+                        state.pending_input_events.push((
+                            index,
+                            InputEvent::PointerDown { x, y, button: mapped_button },
+                        ));
                     }
                     WEnum::Value(wl_pointer::ButtonState::Released) => {
-                        state.pending_input_events.push(InputEvent::PointerUp {
-                            x,
-                            y,
-                            button: mapped_button,
-                        });
+                        state.pending_input_events.push((
+                            index,
+                            InputEvent::PointerUp { x, y, button: mapped_button },
+                        ));
                     }
                     _ => {}
                 }
             }
             wl_pointer::Event::Axis { axis, value, .. } => {
-                let Some((x, y)) = state.normalized_pointer() else {
+                let Some(index) = state.focused_output else {
+                    return;
+                };
+                let Some(output) = state.outputs.get(index) else {
+                    return;
+                };
+                let Some((x, y)) = output.normalized_pointer() else {
                     return;
                 };
                 let mut delta_x = 0;
                 let mut delta_y = 0;
                 match axis {
-                    WEnum::Value(wl_pointer::Axis::VerticalScroll) => {
-                        delta_y = value.round() as i32
-                    }
-                    WEnum::Value(wl_pointer::Axis::HorizontalScroll) => {
-                        delta_x = value.round() as i32
-                    }
+                    WEnum::Value(wl_pointer::Axis::VerticalScroll) => delta_y = value.round() as i32,
+                    WEnum::Value(wl_pointer::Axis::HorizontalScroll) => delta_x = value.round() as i32,
                     _ => {}
                 }
                 if delta_x != 0 || delta_y != 0 {
-                    state.pending_input_events.push(InputEvent::PointerWheel {
-                        x,
-                        y,
-                        delta_x,
-                        delta_y,
-                    });
+                    state.pending_input_events.push((
+                        index,
+                        InputEvent::PointerWheel { x, y, delta_x, delta_y },
+                    ));
                 }
             }
             _ => {}
         }
     }
+}
+
+fn focused_output_index(state: &RendererLayerState, surface: &WlSurface) -> Option<usize> {
+    let surface_id = surface.id();
+    state
+        .outputs
+        .iter()
+        .enumerate()
+        .find(|(_, output)| output.name.ends_with(&surface_id.protocol_id().to_string()))
+        .map(|(index, _)| index)
 }
 
 impl Dispatch<WlBuffer, BufferState> for RendererLayerState {
@@ -639,11 +839,11 @@ delegate_noop!(RendererLayerState: ignore WpFractionalScaleManagerV1);
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_tilde, RendererLayerState, FRACTIONAL_SCALE_DENOMINATOR};
+    use super::{expand_tilde, OutputState, FRACTIONAL_SCALE_DENOMINATOR};
 
     #[test]
     fn render_extent_prefers_output_mode() {
-        let mut state = RendererLayerState::new(true);
+        let mut state = OutputState::new("output-1".to_string());
         state.output_mode_width = 2560;
         state.output_mode_height = 1440;
         state.logical_width = 1920;
@@ -654,7 +854,7 @@ mod tests {
 
     #[test]
     fn render_extent_uses_fractional_scale_when_available() {
-        let mut state = RendererLayerState::new(true);
+        let mut state = OutputState::new("output-1".to_string());
         state.fallback_width = 0;
         state.fallback_height = 0;
         state.logical_width = 100;
