@@ -13,7 +13,7 @@ use iced::{
 use settings_panel::{build_settings_overlay, ScaleModeOption, UiSettings};
 use we_core::{
     config::{build_config, load_launch_settings, save_config, LaunchSettings, ScaleMode},
-    steam::{self, WallpaperEngineInstallState},
+    steam,
     wallpaper::{self, WallpaperEntry, WallpaperType},
 };
 
@@ -38,7 +38,6 @@ struct App {
     launch_settings: LaunchSettings,
     ui_settings: UiSettings,
     show_settings: bool,
-    install_notice: Option<String>,
     tray: Option<tray::TrayController>,
     main_window_id: Option<window::Id>,
     theme: Theme,
@@ -52,13 +51,13 @@ enum Message {
     PlayPressed,
     StopPressed,
     SettingsPressed,
-    WallpaperExeChanged(String),
+    AssetsPathChanged(String),
     WorkshopPathChanged(String),
     RendererLibraryPathChanged(String),
     RendererCachePathChanged(String),
-    PickWallpaperExe,
+    PickAssetsPath,
     PickWorkshopPath,
-    WallpaperExePicked(Option<PathBuf>),
+    AssetsPathPicked(Option<PathBuf>),
     WorkshopPathPicked(Option<PathBuf>),
     FpsLimitChanged(String),
     InteractiveToggled(bool),
@@ -138,8 +137,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             persist_current_config(app);
             Task::none()
         }
-        Message::WallpaperExeChanged(value) => {
-            app.ui_settings.wallpaper_exe = value;
+        Message::AssetsPathChanged(value) => {
+            app.ui_settings.assets_path = value;
             sync_launch_settings(app);
             Task::none()
         }
@@ -164,13 +163,13 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             sync_launch_settings(app);
             Task::none()
         }
-        Message::PickWallpaperExe => Task::perform(
+        Message::PickAssetsPath => Task::perform(
             async {
                 rfd::FileDialog::new()
-                    .set_title("Select wallpaper64.exe / wallpaper32.exe")
-                    .pick_file()
+                    .set_title("Select Wallpaper Engine assets directory")
+                    .pick_folder()
             },
-            Message::WallpaperExePicked,
+            Message::AssetsPathPicked,
         ),
         Message::PickWorkshopPath => Task::perform(
             async {
@@ -178,9 +177,9 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             },
             Message::WorkshopPathPicked,
         ),
-        Message::WallpaperExePicked(path) => {
+        Message::AssetsPathPicked(path) => {
             if let Some(path) = path {
-                app.ui_settings.wallpaper_exe = path.display().to_string();
+                app.ui_settings.assets_path = path.display().to_string();
                 sync_launch_settings(app);
             }
             Task::none()
@@ -335,29 +334,20 @@ fn view(app: &App, _window: window::Id) -> Element<'_, Message> {
     .align_y(Vertical::Bottom)
     .padding(20);
 
-    let mut notice_lines: Vec<String> = Vec::new();
-    if !app.layerd_available {
-        notice_lines.push("we-layerd not found in PATH".to_string());
-    }
-    if let Some(msg) = &app.install_notice {
-        notice_lines.push(msg.clone());
-    }
-
-    let runtime_warning: Option<Element<'_, Message>> = if notice_lines.is_empty() {
-        None
-    } else {
-        let mut warning_col = column!().spacing(6);
-        for line in notice_lines {
-            warning_col =
-                warning_col.push(text(line).size(28).color(Color::from_rgb8(150, 205, 255)));
-        }
-        let warning = container(warning_col)
-            .width(Fill)
-            .height(Fill)
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Top)
-            .padding(24);
+    let runtime_warning: Option<Element<'_, Message>> = if !app.layerd_available {
+        let warning = container(
+            text("we-layerd not found in PATH")
+                .size(28)
+                .color(Color::from_rgb8(150, 205, 255)),
+        )
+        .width(Fill)
+        .height(Fill)
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Top)
+        .padding(24);
         Some(warning.into())
+    } else {
+        None
     };
 
     let settings_overlay: Option<Element<'_, Message>> =
@@ -408,31 +398,13 @@ impl App {
             steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
         let mut launch_settings =
             load_launch_settings(&config_path).unwrap_or_else(|_| LaunchSettings::default());
-        let install_state =
-            steam::detect_wallpaper_engine_install_state(&launch_settings.wallpaper_exe);
-        let install_notice = match &install_state {
-            WallpaperEngineInstallState::NotInstalled => Some(
-                "Wallpaper Engine is not installed. Please install it, or choose paths in Settings."
-                    .to_string(),
-            ),
-            WallpaperEngineInstallState::FirstRunRequired { .. } => Some(
-                "Wallpaper Engine first-run setup is pending. Launch it once in Steam to run installer.exe."
-                    .to_string(),
-            ),
-            WallpaperEngineInstallState::Installed { exe_path, .. } => {
-                if launch_settings.wallpaper_exe.trim().is_empty() {
-                    launch_settings.wallpaper_exe = exe_path.display().to_string();
-                }
-                None
-            }
-        };
         if launch_settings.workshop_path.trim().is_empty() {
             launch_settings.workshop_path = steam::discover_workshop_wallpaper_root()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
         }
         let ui_settings = UiSettings {
-            wallpaper_exe: launch_settings.wallpaper_exe.clone(),
+            assets_path: launch_settings.assets_path.clone(),
             workshop_path: launch_settings.workshop_path.clone(),
             renderer_library_path: launch_settings.renderer_library_path.clone(),
             renderer_cache_path: launch_settings.renderer_cache_path.clone(),
@@ -455,7 +427,6 @@ impl App {
                 launch_settings,
                 ui_settings,
                 show_settings: false,
-                install_notice,
                 tray: tray::TrayController::new().ok(),
                 main_window_id: None,
                 theme: detect_system_theme(),
@@ -572,7 +543,7 @@ fn make_wallpaper_card<'a>(
 }
 
 fn sync_launch_settings_from_ui(ui_settings: &UiSettings, launch_settings: &mut LaunchSettings) {
-    launch_settings.wallpaper_exe = ui_settings.wallpaper_exe.clone();
+    launch_settings.assets_path = ui_settings.assets_path.clone();
     launch_settings.workshop_path = ui_settings.workshop_path.clone();
     launch_settings.renderer_library_path = ui_settings.renderer_library_path.clone();
     launch_settings.renderer_cache_path = ui_settings.renderer_cache_path.clone();
@@ -700,7 +671,7 @@ mod tests {
     #[test]
     fn sync_launch_settings_copies_workshop_path_from_ui() {
         let ui_settings = UiSettings {
-            wallpaper_exe: "/tmp/wallpaper32.exe".to_string(),
+            assets_path: "/opt/wallpaper_engine/assets".to_string(),
             workshop_path: "/tmp/workshop/content/431960".to_string(),
             renderer_library_path: "/opt/libwallpaper-engine-renderer.so".to_string(),
             renderer_cache_path: "~/.cache/we-layerd/test".to_string(),
@@ -717,7 +688,7 @@ mod tests {
         sync_launch_settings_from_ui(&ui_settings, &mut launch_settings);
 
         assert_eq!(launch_settings.workshop_path, "/tmp/workshop/content/431960");
-        assert_eq!(launch_settings.wallpaper_exe, "/tmp/wallpaper32.exe");
+        assert_eq!(launch_settings.assets_path, "/opt/wallpaper_engine/assets");
         assert_eq!(launch_settings.renderer_library_path, "/opt/libwallpaper-engine-renderer.so");
         assert_eq!(launch_settings.renderer_cache_path, "~/.cache/we-layerd/test");
         assert!(!launch_settings.prefer_dmabuf);
@@ -782,7 +753,7 @@ fn stop_runtime(app: &mut App) -> bool {
         }
     }
 
-    if cleanup_runtime_residue(&app.launch_settings.wallpaper_exe) {
+    if cleanup_runtime_residue() {
         stopped_any = true;
     }
 
@@ -821,19 +792,9 @@ fn send_process_signal(pid: u32, signal: &str) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn cleanup_runtime_residue(wallpaper_exe: &str) -> bool {
+fn cleanup_runtime_residue() -> bool {
     let mut any = false;
-    let mut patterns = vec![
-        "we-layerd run".to_string(),
-        "wallpaper64.exe".to_string(),
-        "wallpaper32.exe".to_string(),
-        "explorer.exe".to_string(),
-        "ui32.exe".to_string(),
-    ];
-    if !wallpaper_exe.trim().is_empty() {
-        patterns.push(wallpaper_exe.to_string());
-    }
-
+    let patterns = ["we-layerd run"];
     for pattern in &patterns {
         any |= pkill_for_user("TERM", pattern);
     }
@@ -857,6 +818,6 @@ fn pkill_for_user(signal: &str, pattern: &str) -> bool {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn cleanup_runtime_residue(_wallpaper_exe: &str) -> bool {
+fn cleanup_runtime_residue() -> bool {
     false
 }

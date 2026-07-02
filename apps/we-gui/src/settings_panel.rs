@@ -10,7 +10,7 @@ use crate::Message;
 
 #[derive(Debug, Clone)]
 pub struct UiSettings {
-    pub wallpaper_exe: String,
+    pub assets_path: String,
     pub workshop_path: String,
     pub renderer_library_path: String,
     pub renderer_cache_path: String,
@@ -61,24 +61,24 @@ impl From<ScaleModeOption> for ScaleMode {
 }
 
 pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Message> {
-    let wallpaper_path_display = format_path_for_display(&ui_settings.wallpaper_exe, 64);
+    let assets_path_display = format_path_for_display(&ui_settings.assets_path, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
     let library_path_display = format_path_for_display(&ui_settings.renderer_library_path, 64);
     let cache_path_display = format_path_for_display(&ui_settings.renderer_cache_path, 64);
 
     let content = column![
         text("Settings").size(26),
-        text("Wallpaper Engine Path").size(14),
+        text("Wallpaper Engine Assets Path").size(14),
         row![
-            text_input("/path/to/wallpaper64.exe", &ui_settings.wallpaper_exe)
-                .on_input(Message::WallpaperExeChanged)
+            text_input("/path/to/wallpaper_engine/assets", &ui_settings.assets_path)
+                .on_input(Message::AssetsPathChanged)
                 .padding(10)
                 .on_submit(Message::AutoScan)
                 .width(Fill),
-            button(text("Browse")).on_press(Message::PickWallpaperExe),
+            button(text("Browse")).on_press(Message::PickAssetsPath),
         ]
         .spacing(10),
-        text(wallpaper_path_display).size(12),
+        text(assets_path_display).size(12),
         text("Workshop Path").size(14),
         row![
             text_input("/path/to/workshop/content/431960", &ui_settings.workshop_path)
