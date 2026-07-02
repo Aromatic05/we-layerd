@@ -1,0 +1,3 @@
+[submodule "third_party/wallpaper-engine-renderer"]
+	path = third_party/wallpaper-engine-renderer
+	url = https://github.com/Aromatic05/wallpaper-engine-renderer.git
