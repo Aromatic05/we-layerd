@@ -19,6 +19,33 @@ git submodule update --init --recursive
 cargo build --workspace
 ```
 
+### Arch Linux 依赖包
+
+仓库本体构建依赖：
+
+```bash
+sudo pacman -S --needed \
+  rustup gcc cmake pkgconf git \
+  wayland wayland-protocols libxkbcommon \
+  gtk3
+```
+
+内置 `wallpaper-engine-renderer` submodule 构建依赖：
+
+```bash
+sudo pacman -S --needed \
+  vulkan-headers vulkan-icd-loader mesa libglvnd \
+  gstreamer gst-plugins-base-libs \
+  lz4 pango fontconfig freetype2 \
+  directx-shader-compiler
+```
+
+说明：
+
+- 当前保持上游默认的 `BUILD_WEWEB`，因此默认不需要 CEF。
+- `gtk3` 是当前 Linux 托盘 / GUI 栈需要的包。
+- `directx-shader-compiler` 用来满足上游 renderer 对 DXC 的探测。
+
 构建 `we-layerd` 时会顺带构建上游动态库，并放到：
 
 ```text

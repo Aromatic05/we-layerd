@@ -20,6 +20,33 @@ git submodule update --init --recursive
 cargo build --workspace
 ```
 
+### Arch Linux packages
+
+For this repository itself:
+
+```bash
+sudo pacman -S --needed \
+  rustup gcc cmake pkgconf git \
+  wayland wayland-protocols libxkbcommon \
+  gtk3
+```
+
+For the bundled `wallpaper-engine-renderer` submodule build:
+
+```bash
+sudo pacman -S --needed \
+  vulkan-headers vulkan-icd-loader mesa libglvnd \
+  gstreamer gst-plugins-base-libs \
+  lz4 pango fontconfig freetype2 \
+  directx-shader-compiler
+```
+
+Notes:
+
+- `BUILD_WEWEB` is left at the upstream default. With the current upstream default, CEF is not required.
+- `gtk3` is needed by the current tray/GUI stack on Linux.
+- `directx-shader-compiler` satisfies the upstream DXC probe used by the renderer submodule.
+
 During `cargo build`, `we-layerd` also builds the upstream renderer library from:
 
 ```text

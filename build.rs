@@ -27,10 +27,6 @@ fn main() {
     let install_roots = install_roots(&workspace_root);
     let build_root = workspace_root.join("target/we-renderer-upstream/build");
     let built_library = build_root.join("src/libwallpaper-engine-renderer.so");
-    for install_root in &install_roots {
-        fs::create_dir_all(install_root.join("lib"))
-            .expect("failed to create renderer install dir");
-    }
     ensure_recursive_submodules(&upstream_root);
     reset_cmake_cache_if_source_changed(&build_root, &upstream_root)
         .expect("failed to reset stale cmake cache");
@@ -70,9 +66,17 @@ fn main() {
     }
 
     for install_root in &install_roots {
-        let installed_library = install_root.join("lib/libwallpaper-engine-renderer.so");
-        copy_if_different(&built_library, &installed_library)
-            .expect("failed to copy renderer library into install root");
+        run(
+            Command::new("cmake")
+                .arg("--install")
+                .arg(&build_root)
+                .arg("--prefix")
+                .arg(install_root),
+            &format!(
+                "install upstream wallpaper-engine-renderer into {}",
+                install_root.display()
+            ),
+        );
     }
 
     println!(
@@ -96,22 +100,6 @@ fn run(command: &mut Command, description: &str) {
     if !status.success() {
         panic!("failed to {}: {}", description, status);
     }
-}
-
-fn copy_if_different(from: &Path, to: &Path) -> std::io::Result<()> {
-    let replace = match (fs::metadata(from), fs::metadata(to)) {
-        (Ok(src), Ok(dst)) => {
-            src.len() != dst.len()
-                || src.modified().ok().zip(dst.modified().ok()).map(|(a, b)| a > b).unwrap_or(true)
-        }
-        (Ok(_), Err(_)) => true,
-        (Err(err), _) => return Err(err),
-    };
-
-    if replace {
-        fs::copy(from, to)?;
-    }
-    Ok(())
 }
 
 fn reset_cmake_cache_if_source_changed(build_root: &Path, upstream_root: &Path) -> std::io::Result<()> {
