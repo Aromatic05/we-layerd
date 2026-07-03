@@ -12,10 +12,7 @@ fn main() {
 
     let workspace_root =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
-    let upstream_root = workspace_root
-        .parent()
-        .expect("workspace root must have parent directory")
-        .join("we-new/wallpaper-engine-renderer");
+    let upstream_root = workspace_root.join("third_party/wallpaper-engine-renderer");
     if !upstream_root.exists() {
         panic!("missing upstream renderer repository at {}", upstream_root.display());
     }

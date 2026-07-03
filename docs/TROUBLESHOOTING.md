@@ -5,8 +5,8 @@
 Check these paths in order:
 
 1. `renderer.library_path`
-2. `~/.local/bin/lib/libwallpaper-engine-renderer.so`
-3. `target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so`
+2. `~/.local/lib/libwallpaper-engine-renderer.so`
+3. `/usr/lib/libwallpaper-engine-renderer.so`
 4. standard system library paths
 
 For local repo builds, rerun:
@@ -21,9 +21,8 @@ cargo build --workspace
 Expected locations after a successful build:
 
 ```text
-target/we-renderer-upstream/build/src/libwallpaper-engine-renderer.so
-target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so
-~/.local/bin/lib/libwallpaper-engine-renderer.so
+~/.local/lib/libwallpaper-engine-renderer.so
+/usr/lib/libwallpaper-engine-renderer.so
 ```
 
 If the build fails inside the submodule, inspect the CMake step under:
@@ -48,7 +47,7 @@ third_party/wallpaper-engine-renderer
 ## DMA-BUF does not work
 
 - Leave `renderer.prefer_dmabuf = true`
-- Keep `renderer.allow_shm_fallback = true` unless you are debugging DMA-BUF only
+- Keep `renderer.allow_shm_fallback = true` unless you explicitly want DMA-BUF only
 - Some compositor/GPU combinations will fall back to SHM even when DMA-BUF is preferred
 
 ## `ctl` cannot connect

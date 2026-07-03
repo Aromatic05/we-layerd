@@ -58,11 +58,9 @@ muted = false
 
 If `renderer.library_path` is empty or does not resolve to an existing file, `we-layerd` falls back to these locations:
 
-1. `WE_LAYERD_RENDERER_INSTALL_ROOT/lib/libwallpaper-engine-renderer.so`
-2. `~/.local/lib/libwallpaper-engine-renderer.so`
-3. `/usr/lib/libwallpaper-engine-renderer.so`
-4. `../lib/libwallpaper-engine-renderer.so` relative to the executable
-5. current working directory / build-directory fallbacks used for debugging
+1. `~/.local/lib/libwallpaper-engine-renderer.so`
+2. `/usr/lib/libwallpaper-engine-renderer.so`
+3. `../lib/libwallpaper-engine-renderer.so` relative to the executable
 
 ## GUI output
 

@@ -5,8 +5,8 @@
 按这个顺序检查：
 
 1. `renderer.library_path`
-2. `~/.local/bin/lib/libwallpaper-engine-renderer.so`
-3. `target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so`
+2. `~/.local/lib/libwallpaper-engine-renderer.so`
+3. `/usr/lib/libwallpaper-engine-renderer.so`
 4. 系统标准库路径
 
 如果是本仓库本地构建，请重新执行：
@@ -21,9 +21,8 @@ cargo build --workspace
 成功构建后应当能看到：
 
 ```text
-target/we-renderer-upstream/build/src/libwallpaper-engine-renderer.so
-target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so
-~/.local/bin/lib/libwallpaper-engine-renderer.so
+~/.local/lib/libwallpaper-engine-renderer.so
+/usr/lib/libwallpaper-engine-renderer.so
 ```
 
 如果失败，请优先检查：

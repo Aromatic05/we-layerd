@@ -58,11 +58,9 @@ muted = false
 
 如果 `renderer.library_path` 为空，或者指向的文件不存在，`we-layerd` 会按以下顺序继续查找：
 
-1. `WE_LAYERD_RENDERER_INSTALL_ROOT/lib/libwallpaper-engine-renderer.so`
-2. `~/.local/lib/libwallpaper-engine-renderer.so`
-3. `/usr/lib/libwallpaper-engine-renderer.so`
-4. 可执行文件旁边的 `../lib/libwallpaper-engine-renderer.so`
-5. 当前工作目录 / build 目录下的调试 fallback
+1. `~/.local/lib/libwallpaper-engine-renderer.so`
+2. `/usr/lib/libwallpaper-engine-renderer.so`
+3. 可执行文件旁边的 `../lib/libwallpaper-engine-renderer.so`
 
 ## GUI 输出
 

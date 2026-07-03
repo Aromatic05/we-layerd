@@ -4,7 +4,7 @@
 
 ## What it does
 
-- Builds and stages `wallpaper-engine-renderer`
+- Builds the bundled `wallpaper-engine-renderer` submodule
 - Presents renderer output through Wayland layer-shell
 - Supports DMA-BUF and SHM frame presentation
 - Forwards pointer input to interactive wallpapers
@@ -18,8 +18,7 @@ Initialize the bundled renderer submodule and build the workspace:
 ```bash
 git submodule update --init --recursive
 cargo build --workspace --release
-# WE_LAYERD_INSTALL_PREFIX=/usr cargo build --workspace --release
-# prefix can be overridden with `WE_LAYERD_INSTALL_PREFIX` to stage the install into a different prefix.
+WE_LAYERD_INSTALL_PREFIX=/usr cargo build --workspace --release
 ```
 
 ### Arch Linux packages
@@ -48,11 +47,6 @@ Notes:
 - `BUILD_WEWEB=ON` is forced during the upstream configure step.
 - `gtk3` is needed by the current tray/GUI stack on Linux.
 - `directx-shader-compiler` satisfies the upstream DXC probe used by the renderer submodule.
-
-During a debug build, `build.rs` stages these runtime artifacts into `target/we-renderer-upstream/install/lib` and strips them there:
-
-- `libwallpaper-engine-renderer.so`
-- `we-cef-helper`
 
 ## Install binaries
 
