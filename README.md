@@ -4,7 +4,7 @@
 
 ## What it does
 
-- Builds and stages `wallpaper-engine-renderer` from `../we-new/wallpaper-engine-renderer`
+- Builds and stages `wallpaper-engine-renderer`
 - Presents renderer output through Wayland layer-shell
 - Supports DMA-BUF and SHM frame presentation
 - Forwards pointer input to interactive wallpapers
@@ -13,22 +13,13 @@
 
 ## Build
 
-`cargo build` expects the upstream renderer checkout at:
-
-```text
-../we-new/wallpaper-engine-renderer
-```
-
-and stages the renderer runtime under:
-
-```text
-target/we-renderer-upstream/install
-```
-
-Build the workspace with:
+Initialize the bundled renderer submodule and build the workspace:
 
 ```bash
-cargo build --workspace
+git submodule update --init --recursive
+cargo build --workspace --release
+# WE_LAYERD_INSTALL_PREFIX=/usr cargo build --workspace --release
+# prefix can be overridden with `WE_LAYERD_INSTALL_PREFIX` to stage the install into a different prefix.
 ```
 
 ### Arch Linux packages
@@ -42,7 +33,7 @@ sudo pacman -S --needed \
   gtk3
 ```
 
-For the upstream `wallpaper-engine-renderer` build:
+For the renderer build:
 
 ```bash
 sudo pacman -S --needed \
@@ -58,15 +49,17 @@ Notes:
 - `gtk3` is needed by the current tray/GUI stack on Linux.
 - `directx-shader-compiler` satisfies the upstream DXC probe used by the renderer submodule.
 
-During `cargo build`, `build.rs` stages these runtime artifacts into `target/we-renderer-upstream/install/lib` and strips them there:
+During a debug build, `build.rs` stages these runtime artifacts into `target/we-renderer-upstream/install/lib` and strips them there:
 
 - `libwallpaper-engine-renderer.so`
 - `we-cef-helper`
 
 ## Install binaries
 
+`cargo xtask install` follows the prefix recorded by the build. The default build prefix is `~/.local`.
+
 ```bash
-cargo xtask install --prefix ~/.local
+cargo xtask install
 sudo cargo xtask install --prefix /usr
 DESTDIR="$pkgdir" cargo xtask install --prefix /usr
 ```

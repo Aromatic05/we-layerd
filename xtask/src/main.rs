@@ -10,29 +10,31 @@ fn main() {
     match args.next().as_deref() {
         Some("install") => install(parse_install_args(args.collect())),
         Some(other) => panic!("unsupported xtask command: {other}"),
-        None => panic!("usage: cargo xtask install [--prefix <prefix>]"),
+        None => panic!("usage: cargo xtask install [--prefix /usr]"),
     }
 }
 
 struct InstallArgs {
-    prefix: PathBuf,
+    prefix: Option<PathBuf>,
 }
 
 fn parse_install_args(args: Vec<String>) -> InstallArgs {
-    let mut prefix = expand_tilde("~/.local");
+    let mut prefix = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--prefix" => {
                 let value = iter.next().expect("--prefix requires a value");
-                prefix = expand_tilde(&value);
+                prefix = Some(expand_tilde(&value));
             }
             other => panic!("unsupported install argument: {other}"),
         }
     }
 
-    if !prefix.is_absolute() {
-        panic!("install prefix must be absolute after expansion: {}", prefix.display());
+    if let Some(prefix) = &prefix {
+        if !prefix.is_absolute() {
+            panic!("install prefix must be absolute after expansion: {}", prefix.display());
+        }
     }
 
     InstallArgs { prefix }
@@ -44,21 +46,19 @@ fn install(args: InstallArgs) {
             .parent()
             .expect("xtask manifest must live under workspace root")
             .to_path_buf();
+    let effective_prefix = args
+        .prefix
+        .clone()
+        .or_else(|| read_configured_prefix(&workspace_root).ok())
+        .unwrap_or_else(|| expand_tilde("~/.local"));
 
     run(
-        Command::new("cargo")
-            .arg("build")
-            .arg("--release")
-            .arg("-p")
-            .arg("we-layerd")
-            .arg("-p")
-            .arg("we-gui")
-            .current_dir(&workspace_root),
+        configure_release_build(&mut Command::new("cargo"), &workspace_root, args.prefix.as_deref()),
         "build release binaries for installation",
     );
 
     let stage_root = workspace_root.join("target/we-renderer-upstream/install");
-    let install_root = resolve_install_root(&args.prefix);
+    let install_root = resolve_install_root(&effective_prefix);
 
     install_artifact(
         &workspace_root.join("target/release/we-layerd"),
@@ -87,6 +87,34 @@ fn resolve_install_root(prefix: &Path) -> PathBuf {
         }
         _ => prefix.to_path_buf(),
     }
+}
+
+fn configure_release_build<'a>(
+    command: &'a mut Command,
+    workspace_root: &Path,
+    prefix: Option<&Path>,
+) -> &'a mut Command {
+    let command = command
+        .arg("build")
+        .arg("--release")
+        .arg("-p")
+        .arg("we-layerd")
+        .arg("-p")
+        .arg("we-gui")
+        .current_dir(workspace_root);
+    let effective_prefix = prefix
+        .map(Path::to_path_buf)
+        .or_else(|| read_configured_prefix(workspace_root).ok())
+        .unwrap_or_else(|| expand_tilde("~/.local"));
+    command.env("WE_LAYERD_INSTALL_PREFIX", &effective_prefix);
+    command
+}
+
+fn read_configured_prefix(workspace_root: &Path) -> Result<PathBuf, String> {
+    let path = workspace_root.join("target/we-renderer-upstream/install-prefix.txt");
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
+    Ok(PathBuf::from(raw.trim()))
 }
 
 fn install_artifact(source: &Path, destination: &Path) {

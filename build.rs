@@ -8,6 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=.gitmodules");
     println!("cargo:rerun-if-env-changed=CEF_ROOT");
+    println!("cargo:rerun-if-env-changed=WE_LAYERD_INSTALL_PREFIX");
 
     let workspace_root =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
@@ -22,6 +23,7 @@ fn main() {
 
     let build_root = workspace_root.join("target/we-renderer-upstream/build");
     let install_root = workspace_root.join("target/we-renderer-upstream/install");
+    let install_prefix = configured_install_prefix();
     ensure_recursive_submodules(&upstream_root);
     reset_cmake_cache_if_source_changed(&build_root, &upstream_root)
         .expect("failed to reset stale cmake cache");
@@ -79,7 +81,12 @@ fn main() {
         );
     }
 
-    println!("cargo:rustc-env=WE_LAYERD_RENDERER_INSTALL_ROOT={}", install_root.display());
+    if env::var("PROFILE").as_deref() == Ok("debug") {
+        println!("cargo:rustc-env=WE_LAYERD_RENDERER_INSTALL_ROOT={}", install_root.display());
+    }
+    println!("cargo:rustc-env=WE_LAYERD_INSTALL_PREFIX={}", install_prefix.display());
+    persist_install_prefix(&workspace_root, &install_prefix)
+        .expect("failed to persist configured install prefix");
 }
 
 fn emit_upstream_rerun_hints(upstream_root: &Path) {
@@ -145,4 +152,37 @@ fn ensure_cmake_cache_value(cache_path: &Path, key: &str, expected: &str) -> std
         panic!("expected {key}={expected} in {}, got {:?}", cache_path.display(), value);
     }
     Ok(())
+}
+
+fn configured_install_prefix() -> PathBuf {
+    let expanded = match env::var_os("WE_LAYERD_INSTALL_PREFIX") {
+        Some(value) => expand_tilde(PathBuf::from(value)),
+        None => expand_tilde(PathBuf::from("~/.local")),
+    };
+    if expanded == expand_tilde(PathBuf::from("~/.local")) || expanded == PathBuf::from("/usr") {
+        return expanded;
+    }
+    panic!(
+        "unsupported install prefix {}; expected ~/.local or /usr",
+        expanded.display()
+    );
+}
+
+fn persist_install_prefix(workspace_root: &Path, install_prefix: &Path) -> std::io::Result<()> {
+    let path = workspace_root.join("target/we-renderer-upstream/install-prefix.txt");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, install_prefix.display().to_string())
+}
+
+fn expand_tilde(path: PathBuf) -> PathBuf {
+    let raw = path.to_string_lossy();
+    if raw == "~" {
+        return PathBuf::from(env::var_os("HOME").expect("HOME must be set"));
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        return PathBuf::from(env::var_os("HOME").expect("HOME must be set")).join(rest);
+    }
+    path
 }

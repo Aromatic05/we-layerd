@@ -26,14 +26,6 @@ pub fn renderer_library_candidates(configured_path: &str) -> Vec<PathBuf> {
 
     push_unique(&mut candidates, &mut seen, normalized_candidate(configured_path));
 
-    if let Some(install_root) = std::env::var_os("WE_LAYERD_RENDERER_INSTALL_ROOT") {
-        push_unique(
-            &mut candidates,
-            &mut seen,
-            Some(PathBuf::from(install_root).join("lib").join(RENDERER_LIBRARY_NAME)),
-        );
-    }
-
     if let Some(home) = std::env::var_os("HOME") {
         push_unique(
             &mut candidates,
@@ -59,22 +51,32 @@ pub fn renderer_library_candidates(configured_path: &str) -> Vec<PathBuf> {
         }
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
-        push_unique(&mut candidates, &mut seen, Some(current_dir.join(RENDERER_LIBRARY_NAME)));
-        push_unique(
-            &mut candidates,
-            &mut seen,
-            Some(
-                current_dir
-                    .join("target/we-renderer-upstream/install/lib")
-                    .join(RENDERER_LIBRARY_NAME),
-            ),
-        );
-        push_unique(
-            &mut candidates,
-            &mut seen,
-            Some(current_dir.join("build").join(RENDERER_LIBRARY_NAME)),
-        );
+    if cfg!(debug_assertions) {
+        if let Some(install_root) = std::env::var_os("WE_LAYERD_RENDERER_INSTALL_ROOT") {
+            push_unique(
+                &mut candidates,
+                &mut seen,
+                Some(PathBuf::from(install_root).join("lib").join(RENDERER_LIBRARY_NAME)),
+            );
+        }
+
+        if let Ok(current_dir) = std::env::current_dir() {
+            push_unique(&mut candidates, &mut seen, Some(current_dir.join(RENDERER_LIBRARY_NAME)));
+            push_unique(
+                &mut candidates,
+                &mut seen,
+                Some(
+                    current_dir
+                        .join("target/we-renderer-upstream/install/lib")
+                        .join(RENDERER_LIBRARY_NAME),
+                ),
+            );
+            push_unique(
+                &mut candidates,
+                &mut seen,
+                Some(current_dir.join("build").join(RENDERER_LIBRARY_NAME)),
+            );
+        }
     }
 
     candidates
