@@ -1,21 +1,11 @@
-use std::{
-    io::ErrorKind,
-    os::fd::AsRawFd,
-    path::{Path, PathBuf},
-    sync::mpsc,
-    time::Duration,
-};
+use std::{io::ErrorKind, os::fd::AsRawFd, sync::mpsc, time::Duration};
 
 use anyhow::{Context, Result};
 use tracing::info;
 use wayland_backend::client::WaylandError;
 use wayland_client::{
     globals::registry_queue_init,
-    protocol::{
-        wl_compositor::WlCompositor,
-        wl_seat::WlSeat,
-        wl_shm::WlShm,
-    },
+    protocol::{wl_compositor::WlCompositor, wl_seat::WlSeat, wl_shm::WlShm},
     Connection,
 };
 use wayland_protocols::wp::{
@@ -24,6 +14,7 @@ use wayland_protocols::wp::{
     viewporter::client::wp_viewporter::WpViewporter,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
+use we_core::install_layout::{expand_tilde, resolve_renderer_library};
 use we_renderer::{RenderConfig, RendererLibrary, Source};
 
 use crate::{
@@ -33,49 +24,6 @@ use crate::{
 
 use super::state::LayerState;
 use super::wayland;
-
-// ---------------------------------------------------------------------------
-// Utility functions
-// ---------------------------------------------------------------------------
-
-pub(super) fn expand_tilde(raw: &str) -> PathBuf {
-    if let Some(rest) = raw.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
-    }
-    PathBuf::from(raw)
-}
-
-fn resolve_renderer_library_path(configured_path: &str) -> PathBuf {
-    let configured = PathBuf::from(configured_path);
-    if configured.exists() {
-        return configured;
-    }
-
-    let mut candidates = Vec::new();
-    if let Some(install_root) = option_env!("WE_LAYERD_RENDERER_INSTALL_ROOT") {
-        candidates.push(Path::new(install_root).join("lib/libwallpaper-engine-renderer.so"));
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        candidates.push(Path::new(&home).join(".local/bin/lib/libwallpaper-engine-renderer.so"));
-    }
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(bin_dir) = current_exe.parent() {
-            candidates.push(bin_dir.join("../lib/libwallpaper-engine-renderer.so"));
-            candidates.push(bin_dir.join("libwallpaper-engine-renderer.so"));
-        }
-    }
-    candidates.push(PathBuf::from("/usr/local/lib/libwallpaper-engine-renderer.so"));
-    candidates.push(PathBuf::from("/usr/local/lib64/libwallpaper-engine-renderer.so"));
-    candidates.push(PathBuf::from("/usr/lib/libwallpaper-engine-renderer.so"));
-    candidates.push(PathBuf::from("/usr/lib64/libwallpaper-engine-renderer.so"));
-
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.exists())
-        .unwrap_or(configured)
-}
 
 fn env_var_enabled(name: &str) -> bool {
     std::env::var(name).map(|v| !v.is_empty() && v != "0").unwrap_or(false)
@@ -104,9 +52,8 @@ pub fn run_renderer_background_surface(
         globals.bind(&qh, 1..=5, ()).context("failed to bind zwlr_layer_shell_v1")?;
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).context("failed to bind wl_shm")?;
 
-    let dmabuf_global = globals.contents().clone_list().into_iter().find(|g| {
-        g.interface == "zwp_linux_dmabuf_v1"
-    });
+    let dmabuf_global =
+        globals.contents().clone_list().into_iter().find(|g| g.interface == "zwp_linux_dmabuf_v1");
     let dmabuf_version = dmabuf_global.as_ref().map(|g| g.version).unwrap_or(0);
     let dmabuf = globals.bind::<ZwpLinuxDmabufV1, _, _>(&qh, 3..=4, ()).ok();
 
@@ -119,7 +66,10 @@ pub fn run_renderer_background_surface(
     let source_path = expand_tilde(&cfg.renderer.source);
     let assets_path = expand_tilde(&cfg.renderer.assets_path);
 
-    let library_path = resolve_renderer_library_path(&cfg.renderer.library_path);
+    if let Some(install_root) = option_env!("WE_LAYERD_RENDERER_INSTALL_ROOT") {
+        std::env::set_var("WE_LAYERD_RENDERER_INSTALL_ROOT", install_root);
+    }
+    let library_path = resolve_renderer_library(&cfg.renderer.library_path)?;
     let library = RendererLibrary::load(&library_path)
         .with_context(|| format!("failed to load renderer library {}", library_path.display()))?;
 
@@ -182,9 +132,7 @@ pub fn run_renderer_background_surface(
 
     // Set input region and commit initial surface state
     {
-        if let (Some(ref compositor), Some(ref surface)) =
-            (&state.compositor, &state.surface)
-        {
+        if let (Some(ref compositor), Some(ref surface)) = (&state.compositor, &state.surface) {
             let region = compositor.create_region(&qh, ());
             if state.interactive {
                 region.add(0, 0, state.logical_width as i32, state.logical_height as i32);
@@ -384,8 +332,9 @@ pub fn run_renderer_background_surface(
             events: libc::POLLIN | if flush_blocked { libc::POLLOUT } else { 0 },
             revents: 0,
         };
-        let poll_result =
-            unsafe { libc::poll(&mut poll_fd, 1, 5 /* ms */) };
+        let poll_result = unsafe {
+            libc::poll(&mut poll_fd, 1, 5 /* ms */)
+        };
 
         if poll_result < 0 {
             let err = std::io::Error::last_os_error();

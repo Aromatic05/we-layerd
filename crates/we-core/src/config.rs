@@ -93,26 +93,11 @@ fn default_fps_report_interval_secs() -> u64 {
 }
 
 fn default_renderer_library_path() -> String {
-    default_renderer_library_candidate()
+    String::new()
 }
 
 fn default_renderer_cache_path() -> String {
     "~/.cache/we-layerd/renderer".to_string()
-}
-
-fn default_renderer_library_candidate() -> String {
-    if let Some(home) = std::env::var_os("HOME") {
-        let local = Path::new(&home).join(".local/bin/lib/libwallpaper-engine-renderer.so");
-        if local.exists() {
-            return local.display().to_string();
-        }
-    }
-    let dev = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so");
-    if dev.exists() {
-        return dev.display().to_string();
-    }
-    "/usr/local/lib/libwallpaper-engine-renderer.so".to_string()
 }
 
 fn default_prefer_dmabuf() -> bool {
@@ -311,5 +296,11 @@ muted = false
         assert_eq!(settings.assets_path, "/opt/wallpaper_engine/assets");
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn launch_settings_default_to_auto_renderer_resolution() {
+        let settings = LaunchSettings::default();
+        assert!(settings.renderer_library_path.is_empty());
     }
 }

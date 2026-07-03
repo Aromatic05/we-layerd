@@ -91,7 +91,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
         .spacing(10),
         text(workshop_path_display).size(12),
         text("Renderer Library").size(14),
-        text_input("libwallpaper-engine-renderer.so", &ui_settings.renderer_library_path)
+        text_input("Leave blank for automatic search", &ui_settings.renderer_library_path)
             .on_input(Message::RendererLibraryPathChanged)
             .padding(10),
         text(library_path_display).size(12),

@@ -6,7 +6,7 @@ fps_report_interval_secs = 1
 scale_mode = "cover"
 
 [renderer]
-library_path = "/home/USER/.local/bin/lib/libwallpaper-engine-renderer.so"
+library_path = ""
 source = "/path/to/Steam/steamapps/workshop/content/431960/<wallpaper-id>"
 assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 cache_path = "~/.cache/we-layerd/renderer"
