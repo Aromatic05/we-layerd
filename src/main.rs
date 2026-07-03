@@ -1,9 +1,9 @@
 mod app;
+mod wayland;
 mod cli;
 mod config;
 mod ipc;
 mod logging;
-mod wayland;
 
 use anyhow::Result;
 use clap::Parser;
