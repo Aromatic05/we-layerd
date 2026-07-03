@@ -336,9 +336,7 @@ fn view(app: &App, _window: window::Id) -> Element<'_, Message> {
 
     let runtime_warning: Option<Element<'_, Message>> = if !app.layerd_available {
         let warning = container(
-            text("we-layerd not found in PATH")
-                .size(28)
-                .color(Color::from_rgb8(150, 205, 255)),
+            text("we-layerd not found in PATH").size(28).color(Color::from_rgb8(150, 205, 255)),
         )
         .width(Fill)
         .height(Fill)

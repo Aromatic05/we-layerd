@@ -29,9 +29,7 @@ use wayland_protocols::wp::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
-    zwlr_layer_surface_v1::{
-        Event as LayerSurfaceEvent, ZwlrLayerSurfaceV1,
-    },
+    zwlr_layer_surface_v1::{Event as LayerSurfaceEvent, ZwlrLayerSurfaceV1},
 };
 use we_renderer::Frame;
 
@@ -214,9 +212,12 @@ impl Dispatch<WlPointer, ()> for LayerState {
                     _ => {}
                 }
                 if delta_x != 0 || delta_y != 0 {
-                    state
-                        .pending_input_events
-                        .push(we_renderer::InputEvent::PointerWheel { x, y, delta_x, delta_y });
+                    state.pending_input_events.push(we_renderer::InputEvent::PointerWheel {
+                        x,
+                        y,
+                        delta_x,
+                        delta_y,
+                    });
                 }
             }
             _ => {}
@@ -289,11 +290,7 @@ pub(super) fn create_buffer_for_frame(
                 std::sync::Arc::clone(&released),
             );
             pool.destroy();
-            Ok(WaylandBuffer {
-                buffer,
-                released,
-                pending_fds: vec![shm.fd],
-            })
+            Ok(WaylandBuffer { buffer, released, pending_fds: vec![shm.fd] })
         }
         Frame::Dmabuf(dmabuf) => {
             let dmabuf_obj =
@@ -321,8 +318,7 @@ pub(super) fn create_buffer_for_frame(
                 std::sync::Arc::clone(&released),
             );
             params.destroy();
-            let pending_fds: Vec<OwnedFd> =
-                dmabuf.planes.into_iter().map(|p| p.fd).collect();
+            let pending_fds: Vec<OwnedFd> = dmabuf.planes.into_iter().map(|p| p.fd).collect();
             Ok(WaylandBuffer { buffer, released, pending_fds })
         }
     }
@@ -388,13 +384,16 @@ pub(super) fn init_wayland(
         ));
     }
 
-    let output_globals: Vec<_> =
-        globals.contents().clone_list().into_iter().filter(|g| g.interface == "wl_output").collect();
+    let output_globals: Vec<_> = globals
+        .contents()
+        .clone_list()
+        .into_iter()
+        .filter(|g| g.interface == "wl_output")
+        .collect();
     state.output_count = output_globals.len() as u32;
     if let Some(first_output) = output_globals.first() {
         let version = first_output.version.min(4);
-        state.output =
-            Some(globals.registry().bind(first_output.name, version, qh, ()));
+        state.output = Some(globals.registry().bind(first_output.name, version, qh, ()));
     }
 
     if state.output_count > 1 {
@@ -409,7 +408,9 @@ pub(super) fn init_wayland(
         state.viewport = Some(vp.get_viewport(surface, qh, ()));
     }
     if viewporter.is_none() {
-        tracing::info!("wp_viewporter unavailable, fractional high-DPI buffers will not map correctly");
+        tracing::info!(
+            "wp_viewporter unavailable, fractional high-DPI buffers will not map correctly"
+        );
     }
 
     if let Some(ref fsm) = fractional_scale_manager {

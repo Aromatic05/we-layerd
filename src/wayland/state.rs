@@ -7,12 +7,8 @@ use std::{
 };
 
 use wayland_client::protocol::{
-    wl_buffer::WlBuffer,
-    wl_compositor::WlCompositor,
-    wl_output::WlOutput,
-    wl_pointer::WlPointer,
-    wl_shm::WlShm,
-    wl_surface::WlSurface,
+    wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_output::WlOutput, wl_pointer::WlPointer,
+    wl_shm::WlShm, wl_surface::WlSurface,
 };
 use wayland_protocols::wp::{
     fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
@@ -98,16 +94,10 @@ impl LayerState {
             return;
         }
 
-        let logical_w = if self.logical_width > 0 {
-            self.logical_width
-        } else {
-            self.fallback_width
-        };
-        let logical_h = if self.logical_height > 0 {
-            self.logical_height
-        } else {
-            self.fallback_height
-        };
+        let logical_w =
+            if self.logical_width > 0 { self.logical_width } else { self.fallback_width };
+        let logical_h =
+            if self.logical_height > 0 { self.logical_height } else { self.fallback_height };
         let scale = self.render_scale_factor();
 
         self.render_width = (logical_w as f64 * scale).round().max(1.0) as u32;

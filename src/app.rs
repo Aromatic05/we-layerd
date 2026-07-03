@@ -10,9 +10,9 @@ use anyhow::{anyhow, Context, Result};
 use tracing::{info, warn};
 
 use crate::{
-    wayland,
     config::{Backend, Config},
     ipc::{self, ControlCommand, RuntimeLoopExit},
+    wayland,
 };
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
@@ -274,9 +274,7 @@ fn run_runtime_loop(
     }
 
     match cfg.general.backend {
-        Backend::LayerShell => {
-            wayland::run_renderer_background_surface(&cfg, control_rx)
-        }
+        Backend::LayerShell => wayland::run_renderer_background_surface(&cfg, control_rx),
     }
 }
 
