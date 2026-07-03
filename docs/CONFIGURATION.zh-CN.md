@@ -10,12 +10,12 @@ cp config.example.toml ~/.config/we-layerd/config.toml
 
 ```toml
 [renderer]
-library_path = "/home/USER/.local/bin/lib/libwallpaper-engine-renderer.so"
+library_path = ""
 source = "/path/to/Steam/steamapps/workshop/content/431960/<wallpaper-id>"
 assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 ```
 
-- `renderer.library_path`：`libwallpaper-engine-renderer.so` 的路径
+- `renderer.library_path`：留空表示自动查找，也可以显式指定 `libwallpaper-engine-renderer.so` 的路径
 - `renderer.source`：workshop 壁纸目录，不是视频文件，也不是 Wallpaper Engine 的 CLI 参数
 - `renderer.assets_path`：Wallpaper Engine 的 `assets/` 目录
 
@@ -56,12 +56,13 @@ muted = false
 
 ## 动态库查找顺序
 
-如果 `renderer.library_path` 指向的文件不存在，`we-layerd` 会按以下顺序继续查找：
+如果 `renderer.library_path` 为空，或者指向的文件不存在，`we-layerd` 会按以下顺序继续查找：
 
-1. `~/.local/bin/lib/libwallpaper-engine-renderer.so`
-2. `target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so`
-3. 可执行文件旁边的 `../lib/libwallpaper-engine-renderer.so`
-4. `/usr/local/lib`、`/usr/local/lib64`、`/usr/lib`、`/usr/lib64`
+1. `WE_LAYERD_RENDERER_INSTALL_ROOT/lib/libwallpaper-engine-renderer.so`
+2. `~/.local/lib/libwallpaper-engine-renderer.so`
+3. `/usr/lib/libwallpaper-engine-renderer.so`
+4. 可执行文件旁边的 `../lib/libwallpaper-engine-renderer.so`
+5. 当前工作目录 / build 目录下的调试 fallback
 
 ## GUI 输出
 

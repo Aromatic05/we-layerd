@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 构建并使用仓库内的 `wallpaper-engine-renderer` git submodule
+- 从 `../we-new/wallpaper-engine-renderer` 构建并 staging `wallpaper-engine-renderer`
 - 通过 Wayland layer-shell 展示壁纸
 - 支持 DMA-BUF / SHM 帧呈现
 - 将指针输入转发给交互壁纸
@@ -15,7 +15,6 @@
 ## 构建
 
 ```bash
-git submodule update --init --recursive
 cargo build --workspace
 ```
 
@@ -30,7 +29,7 @@ sudo pacman -S --needed \
   gtk3
 ```
 
-内置 `wallpaper-engine-renderer` submodule 构建依赖：
+上游 `wallpaper-engine-renderer` 构建依赖：
 
 ```bash
 sudo pacman -S --needed \
@@ -42,15 +41,22 @@ sudo pacman -S --needed \
 
 说明：
 
-- 当前保持上游默认的 `BUILD_WEWEB`，因此默认不需要 CEF。
+- 构建时会强制 `BUILD_WEWEB=ON`。
 - `gtk3` 是当前 Linux 托盘 / GUI 栈需要的包。
 - `directx-shader-compiler` 用来满足上游 renderer 对 DXC 的探测。
 
-构建 `we-layerd` 时会顺带构建上游动态库，并放到：
+构建 `we-layerd` 时会顺带构建上游运行时，并 staging 到：
 
 ```text
-target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so
-~/.local/bin/lib/libwallpaper-engine-renderer.so
+target/we-renderer-upstream/install
+```
+
+正式安装使用：
+
+```bash
+cargo xtask install --prefix ~/.local
+sudo cargo xtask install --prefix /usr
+DESTDIR="$pkgdir" cargo xtask install --prefix /usr
 ```
 
 ## 配置

@@ -4,7 +4,7 @@
 
 ## What it does
 
-- Builds and uses `wallpaper-engine-renderer` as a git submodule
+- Builds and stages `wallpaper-engine-renderer` from `../we-new/wallpaper-engine-renderer`
 - Presents renderer output through Wayland layer-shell
 - Supports DMA-BUF and SHM frame presentation
 - Forwards pointer input to interactive wallpapers
@@ -13,10 +13,21 @@
 
 ## Build
 
-The repository vendors `wallpaper-engine-renderer` as a git submodule:
+`cargo build` expects the upstream renderer checkout at:
+
+```text
+../we-new/wallpaper-engine-renderer
+```
+
+and stages the renderer runtime under:
+
+```text
+target/we-renderer-upstream/install
+```
+
+Build the workspace with:
 
 ```bash
-git submodule update --init --recursive
 cargo build --workspace
 ```
 
@@ -31,7 +42,7 @@ sudo pacman -S --needed \
   gtk3
 ```
 
-For the bundled `wallpaper-engine-renderer` submodule build:
+For the upstream `wallpaper-engine-renderer` build:
 
 ```bash
 sudo pacman -S --needed \
@@ -43,30 +54,30 @@ sudo pacman -S --needed \
 
 Notes:
 
-- `BUILD_WEWEB` is left at the upstream default. With the current upstream default, CEF is not required.
+- `BUILD_WEWEB=ON` is forced during the upstream configure step.
 - `gtk3` is needed by the current tray/GUI stack on Linux.
 - `directx-shader-compiler` satisfies the upstream DXC probe used by the renderer submodule.
 
-During `cargo build`, `we-layerd` also builds the upstream renderer library from:
+During `cargo build`, `build.rs` stages these runtime artifacts into `target/we-renderer-upstream/install/lib` and strips them there:
 
-```text
-third_party/wallpaper-engine-renderer
-```
-
-and stages it in both of these locations:
-
-```text
-target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so
-~/.local/bin/lib/libwallpaper-engine-renderer.so
-```
-
-`we-layerd` and `we-gui` prefer `~/.local/bin/lib/libwallpaper-engine-renderer.so`, then the staged `target/...` copy, then standard system library paths.
+- `libwallpaper-engine-renderer.so`
+- `we-cef-helper`
 
 ## Install binaries
 
 ```bash
-install -Dm755 target/release/we-layerd ~/.local/bin/we-layerd
-install -Dm755 target/release/we-gui ~/.local/bin/we-gui
+cargo xtask install --prefix ~/.local
+sudo cargo xtask install --prefix /usr
+DESTDIR="$pkgdir" cargo xtask install --prefix /usr
+```
+
+Installed layout:
+
+```text
+$prefix/bin/we-layerd
+$prefix/bin/we-gui
+$prefix/lib/libwallpaper-engine-renderer.so
+$prefix/lib/we-cef-helper
 ```
 
 ## Config
@@ -83,6 +94,8 @@ The important paths are:
 - `renderer.source`
 - `renderer.assets_path`
 - `renderer.cache_path`
+
+Leave `renderer.library_path = ""` to enable automatic lookup.
 
 See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for the config model.
 

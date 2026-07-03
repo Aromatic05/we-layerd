@@ -10,12 +10,12 @@ cp config.example.toml ~/.config/we-layerd/config.toml
 
 ```toml
 [renderer]
-library_path = "/home/USER/.local/bin/lib/libwallpaper-engine-renderer.so"
+library_path = ""
 source = "/path/to/Steam/steamapps/workshop/content/431960/<wallpaper-id>"
 assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 ```
 
-- `renderer.library_path`: path to `libwallpaper-engine-renderer.so`
+- `renderer.library_path`: leave it empty for automatic lookup, or set an explicit path to `libwallpaper-engine-renderer.so`
 - `renderer.source`: workshop item directory, not a video file and not a Wallpaper Engine CLI argument list
 - `renderer.assets_path`: Wallpaper Engine `assets/` directory
 
@@ -56,12 +56,13 @@ muted = false
 
 ## Library search order
 
-If `renderer.library_path` does not resolve to an existing file, `we-layerd` falls back to these locations:
+If `renderer.library_path` is empty or does not resolve to an existing file, `we-layerd` falls back to these locations:
 
-1. `~/.local/bin/lib/libwallpaper-engine-renderer.so`
-2. `target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so`
-3. `../lib/libwallpaper-engine-renderer.so` next to the executable
-4. `/usr/local/lib`, `/usr/local/lib64`, `/usr/lib`, `/usr/lib64`
+1. `WE_LAYERD_RENDERER_INSTALL_ROOT/lib/libwallpaper-engine-renderer.so`
+2. `~/.local/lib/libwallpaper-engine-renderer.so`
+3. `/usr/lib/libwallpaper-engine-renderer.so`
+4. `../lib/libwallpaper-engine-renderer.so` relative to the executable
+5. current working directory / build-directory fallbacks used for debugging
 
 ## GUI output
 

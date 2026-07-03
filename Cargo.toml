@@ -9,6 +9,7 @@ members = [
     "crates/we-renderer-sys",
     "crates/we-renderer",
     "apps/we-gui",
+    "xtask",
 ]
 resolver = "2"
 
