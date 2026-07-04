@@ -127,6 +127,9 @@ pub fn run_renderer_background_surface(
     let mut session =
         library.create_session(cache_path_arg).context("failed to create renderer session")?;
 
+    let (options_json_present, options_json_len, options_json_valid) =
+        cfg.renderer.options_json_diagnostics();
+
     let mut state = LayerState {
         objects: WaylandObjects::default(),
         output: OutputState::new(cfg.general.scale_mode),
@@ -142,9 +145,9 @@ pub fn run_renderer_background_surface(
             prefer_dmabuf_effective: cfg.renderer.prefer_dmabuf,
             allow_shm_fallback: cfg.renderer.allow_shm_fallback,
             options_json: OptionsJsonDiagnostics {
-                present: false,
-                len: 0,
-                valid: true,
+                present: options_json_present,
+                len: options_json_len,
+                valid: options_json_valid,
             },
             ..Default::default()
         },
@@ -222,7 +225,7 @@ pub fn run_renderer_background_surface(
         speed: cfg.renderer.speed,
         volume: cfg.renderer.volume,
         muted: cfg.renderer.muted,
-        options_json: None,
+        options_json: cfg.renderer.options_json.clone(),
     };
     session.set_source(&source).context("failed to set renderer source")?;
 

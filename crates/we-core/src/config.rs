@@ -68,6 +68,8 @@ pub struct RendererConfig {
     pub volume: f32,
     #[serde(default)]
     pub muted: bool,
+    #[serde(default)]
+    pub options_json: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +84,7 @@ pub struct LaunchSettings {
     pub fps_limit: u32,
     pub show_fps: bool,
     pub scale_mode: ScaleMode,
+    pub options_json: Option<String>,
 }
 
 fn default_interactive() -> bool {
@@ -133,6 +136,7 @@ impl Default for RendererConfig {
             speed: default_renderer_speed(),
             volume: default_renderer_volume(),
             muted: false,
+            options_json: None,
         }
     }
 }
@@ -168,6 +172,7 @@ impl Default for LaunchSettings {
             fps_limit: 60,
             show_fps: false,
             scale_mode: ScaleMode::Cover,
+            options_json: None,
         }
     }
 }
@@ -182,6 +187,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.prefer_dmabuf = settings.prefer_dmabuf;
     cfg.renderer.allow_shm_fallback = settings.allow_shm_fallback;
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
+    cfg.renderer.options_json = settings.options_json.clone();
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path = settings.assets_path.clone();
     cfg
@@ -212,6 +218,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     settings.renderer_cache_path = cfg.renderer.cache_path;
     settings.prefer_dmabuf = cfg.renderer.prefer_dmabuf;
     settings.allow_shm_fallback = cfg.renderer.allow_shm_fallback;
+    settings.options_json = cfg.renderer.options_json;
     settings.workshop_path = derive_workshop_root(&cfg.renderer.source);
     settings.assets_path = cfg.renderer.assets_path.clone();
     Ok(settings)
@@ -247,12 +254,14 @@ mod tests {
         settings.fps_limit = 144;
         settings.interactive = false;
         settings.scale_mode = ScaleMode::Fit;
+        settings.options_json = Some("{\"demo\":true}".to_string());
 
         let cfg = build_config(&settings, Path::new("/tmp/item/project.json"));
 
         assert_eq!(cfg.renderer.source, "/tmp/item");
         assert_eq!(cfg.renderer.assets_path, "/steam/steamapps/common/wallpaper_engine/assets");
         assert_eq!(cfg.renderer.fps, 144);
+        assert_eq!(cfg.renderer.options_json.as_deref(), Some("{\"demo\":true}"));
         assert!(!cfg.general.interactive);
         assert_eq!(cfg.general.scale_mode, ScaleMode::Fit);
     }
@@ -279,6 +288,7 @@ fps = 120
 speed = 1.0
 volume = 1.0
 muted = false
+options_json = "{\"keep\":true}"
 "#;
 
         fs::write(&path, toml).expect("failed to write temp config");
@@ -292,6 +302,7 @@ muted = false
         assert_eq!(settings.renderer_cache_path, "~/.cache/we-layerd/custom");
         assert!(!settings.prefer_dmabuf);
         assert!(settings.allow_shm_fallback);
+        assert_eq!(settings.options_json.as_deref(), Some("{\"keep\":true}"));
         assert_eq!(settings.workshop_path, "/tmp/workshop/content/431960");
         assert_eq!(settings.assets_path, "/opt/wallpaper_engine/assets");
 

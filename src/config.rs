@@ -63,6 +63,8 @@ pub struct RendererConfig {
     pub volume: f32,
     #[serde(default)]
     pub muted: bool,
+    #[serde(default)]
+    pub options_json: Option<String>,
 }
 
 fn default_interactive() -> bool {
@@ -126,7 +128,29 @@ impl Default for RendererConfig {
             speed: default_renderer_speed(),
             volume: default_renderer_volume(),
             muted: false,
+            options_json: None,
         }
+    }
+}
+
+impl RendererConfig {
+    pub fn options_json_diagnostics(&self) -> (bool, usize, bool) {
+        let present = self.options_json.is_some();
+        let len = self.options_json.as_ref().map(|value| value.len()).unwrap_or(0);
+        let valid = self
+            .options_json
+            .as_ref()
+            .map(|value| serde_json::from_str::<serde_json::Value>(value).is_ok())
+            .unwrap_or(true);
+        (present, len, valid)
+    }
+
+    pub fn validate_options_json(&self) -> Result<()> {
+        if let Some(raw) = &self.options_json {
+            serde_json::from_str::<serde_json::Value>(raw)
+                .context("renderer.options_json must be valid JSON")?;
+        }
+        Ok(())
     }
 }
 
@@ -171,6 +195,7 @@ mod tests {
             source = "/tmp/workshop/item"
             assets_path = "/tmp/wallpaper_engine/assets"
             muted = true
+            options_json = "{\"hello\":true}"
         "#;
 
         let cfg: Config = toml::from_str(raw).expect("valid renderer config");
@@ -178,5 +203,6 @@ mod tests {
         assert_eq!(cfg.renderer.source, "/tmp/workshop/item");
         assert_eq!(cfg.renderer.assets_path, "/tmp/wallpaper_engine/assets");
         assert!(cfg.renderer.muted);
+        assert_eq!(cfg.renderer.options_json.as_deref(), Some("{\"hello\":true}"));
     }
 }

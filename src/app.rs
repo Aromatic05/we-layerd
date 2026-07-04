@@ -280,6 +280,7 @@ fn run_runtime_loop(
     if cfg.renderer.source.trim().is_empty() {
         return Err(anyhow!("renderer.source is required"));
     }
+    cfg.renderer.validate_options_json()?;
 
     let mut cfg = cfg.clone();
     if cfg.renderer.assets_path.trim().is_empty() {
@@ -349,6 +350,8 @@ fn handle_runtime_control_command(
 pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     let (cfg, loaded_from) = load_doctor_config(config_path)?;
     let mut lines = Vec::new();
+    let (options_json_present, options_json_len, options_json_valid) =
+        cfg.renderer.options_json_diagnostics();
 
     lines.push("OK backend = layer_shell".to_string());
     match loaded_from {
@@ -431,6 +434,13 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     match we_core::steam::discover_wallpaper_engine_assets() {
         Some(path) => lines.push(format!("OK assets_auto_discovery = {}", path.display())),
         None => lines.push("WARN assets_auto_discovery = not found".to_string()),
+    }
+    lines.push(format!("OK renderer.options_json_present = {options_json_present}"));
+    lines.push(format!("OK renderer.options_json_len = {options_json_len}"));
+    if options_json_valid {
+        lines.push("OK renderer.options_json_valid = true".to_string());
+    } else {
+        lines.push("ERR renderer.options_json_valid = false".to_string());
     }
 
     if env_var_enabled("__NV_PRIME_RENDER_OFFLOAD")
@@ -577,5 +587,21 @@ mod tests {
     fn reload_control_requests_restart_current() {
         let exit = RuntimeLoopExit::RestartCurrent;
         assert_eq!(exit, RuntimeLoopExit::RestartCurrent);
+    }
+
+    #[test]
+    fn invalid_options_json_is_rejected_before_runtime_start() {
+        let mut cfg = Config::default();
+        cfg.renderer.source = "/tmp/workshop/item".to_string();
+        cfg.renderer.assets_path = "/tmp/assets".to_string();
+        cfg.renderer.options_json = Some("{invalid".to_string());
+        let state = std::sync::Arc::new(std::sync::Mutex::new(RuntimeState::new(&cfg)));
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let stop = AtomicBool::new(false);
+
+        let err = super::run_runtime_loop(&cfg, &stop, &state, 1, &rx)
+            .expect_err("invalid options_json should fail");
+
+        assert!(err.to_string().contains("renderer.options_json must be valid JSON"));
     }
 }
