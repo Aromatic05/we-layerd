@@ -5,6 +5,7 @@ use wayland_client::{
     delegate_noop,
     protocol::{
         wl_buffer::WlBuffer,
+        wl_callback::{Event as CallbackEvent, WlCallback},
         wl_compositor::WlCompositor,
         wl_output::{self, WlOutput},
         wl_pointer::{self, WlPointer},
@@ -68,9 +69,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerState {
             LayerSurfaceEvent::Configure { serial, width, height } => {
                 layer_surface.ack_configure(serial);
                 state.configured = true;
-                state.logical_width = if width > 0 { width as u32 } else { state.fallback_width };
-                state.logical_height =
-                    if height > 0 { height as u32 } else { state.fallback_height };
+                state.output.logical_width =
+                    if width > 0 { width as u32 } else { state.output.fallback_width };
+                state.output.logical_height =
+                    if height > 0 { height as u32 } else { state.output.fallback_height };
                 state.update_render_extent();
                 state.update_viewport_destination();
             }
@@ -96,11 +98,13 @@ impl Dispatch<WlOutput, ()> for LayerState {
                     WEnum::Value(value) if value.contains(wl_output::Mode::Current)
                 ) =>
             {
-                state.output_mode_width = width.max(0) as u32;
-                state.output_mode_height = height.max(0) as u32;
+                state.output.output_mode_width = width.max(0) as u32;
+                state.output.output_mode_height = height.max(0) as u32;
+                state.update_render_extent();
             }
             wl_output::Event::Scale { factor } => {
-                state.output_scale = factor.max(1) as u32;
+                state.output.output_scale = factor.max(1) as u32;
+                state.update_render_extent();
             }
             _ => {}
         }
@@ -117,7 +121,8 @@ impl Dispatch<WpFractionalScaleV1, ()> for LayerState {
         _qh: &QueueHandle<Self>,
     ) {
         if let FractionalScaleEvent::PreferredScale { scale } = event {
-            state.preferred_fractional_scale = scale.max(FRACTIONAL_SCALE_DENOMINATOR);
+            state.output.preferred_fractional_scale = scale.max(FRACTIONAL_SCALE_DENOMINATOR);
+            state.update_render_extent();
         }
     }
 }
@@ -137,10 +142,10 @@ impl Dispatch<WlSeat, ()> for LayerState {
                 WEnum::Value(value)
                     if value.contains(wayland_client::protocol::wl_seat::Capability::Pointer)
             );
-            if has_pointer && state.pointer.is_none() {
-                state.pointer = Some(seat.get_pointer(qh, ()));
+            if has_pointer && state.objects.pointer.is_none() {
+                state.objects.pointer = Some(seat.get_pointer(qh, ()));
             } else if !has_pointer {
-                state.pointer = None;
+                state.objects.pointer = None;
             }
         }
     }
@@ -160,16 +165,16 @@ impl Dispatch<WlPointer, ()> for LayerState {
         }
         match event {
             wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
-                state.pointer_x = surface_x;
-                state.pointer_y = surface_y;
+                state.output.pointer_x = surface_x;
+                state.output.pointer_y = surface_y;
                 if let Some((x, y)) = state.normalized_pointer() {
                     state.pending_input_events.push(we_renderer::InputEvent::PointerMove { x, y });
                 }
             }
             wl_pointer::Event::Leave { .. } => {}
             wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
-                state.pointer_x = surface_x;
-                state.pointer_y = surface_y;
+                state.output.pointer_x = surface_x;
+                state.output.pointer_y = surface_y;
                 if let Some((x, y)) = state.normalized_pointer() {
                     state.pending_input_events.push(we_renderer::InputEvent::PointerMove { x, y });
                 }
@@ -221,6 +226,32 @@ impl Dispatch<WlPointer, ()> for LayerState {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlCallback, ()> for LayerState {
+    fn event(
+        state: &mut Self,
+        callback: &WlCallback,
+        event: CallbackEvent,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let CallbackEvent::Done { callback_data } = event {
+            state.frame_callback.pending = false;
+            state.frame_callback.ready_for_next_frame = true;
+            state.frame_callback.last_done_msec = Some(callback_data);
+            if state
+                .objects
+                .frame_callback
+                .as_ref()
+                .map(|current| current.id() == callback.id())
+                .unwrap_or(false)
+            {
+                state.objects.frame_callback = None;
+            }
         }
     }
 }
@@ -277,7 +308,7 @@ pub(super) fn create_buffer_for_frame(
 ) -> Result<WaylandBuffer> {
     match frame {
         Frame::Shm(shm) => {
-            let shm_obj = state.shm.as_ref().ok_or_else(|| anyhow!("wl_shm unavailable"))?;
+            let shm_obj = state.objects.shm.as_ref().ok_or_else(|| anyhow!("wl_shm unavailable"))?;
             let released = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let pool = shm_obj.create_pool(shm.fd.as_fd(), shm.size as i32, qh, ());
             let buffer = pool.create_buffer(
@@ -294,7 +325,11 @@ pub(super) fn create_buffer_for_frame(
         }
         Frame::Dmabuf(dmabuf) => {
             let dmabuf_obj =
-                state.dmabuf.as_ref().ok_or_else(|| anyhow!("zwp_linux_dmabuf_v1 unavailable"))?;
+                state
+                    .objects
+                    .dmabuf
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("zwp_linux_dmabuf_v1 unavailable"))?;
             let params = dmabuf_obj.create_params(qh, ());
             let modifier_hi = (dmabuf.drm_modifier >> 32) as u32;
             let modifier_lo = (dmabuf.drm_modifier & 0xffff_ffff) as u32;
@@ -334,22 +369,22 @@ pub(super) fn present_frame(
     frame: Frame,
 ) -> Result<()> {
     let entry = create_buffer_for_frame(state, qh, frame)?;
-
-    if !state.extent_mismatch_reported {
-        state.extent_mismatch_reported = true;
-    }
-
     state.update_viewport_destination();
-
-    let surface = state.surface.as_ref().ok_or_else(|| anyhow!("no surface"))?;
+    let surface = state.objects.surface.as_ref().ok_or_else(|| anyhow!("no surface"))?;
     surface.attach(Some(&entry.buffer), 0, 0);
     if state.compositor_version >= 4 {
         surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
     } else {
         surface.damage(0, 0, i32::MAX, i32::MAX);
     }
+    let callback = surface.frame(qh, ());
     surface.commit();
-    state.in_flight.push(entry);
+    state.objects.frame_callback = Some(callback);
+    state.frame_callback.pending = true;
+    state.frame_callback.ready_for_next_frame = false;
+    state.frame_stats.presented = state.frame_stats.presented.saturating_add(1);
+    state.frame_stats.in_flight_count = state.buffers.in_flight.len() + 1;
+    state.buffers.in_flight.push(entry);
     Ok(())
 }
 
@@ -371,13 +406,19 @@ pub(super) fn init_wayland(
     viewporter: Option<WpViewporter>,
     fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
 ) -> Result<()> {
-    state.compositor = Some(compositor.clone());
+    state.objects.compositor = Some(compositor.clone());
     state.compositor_version = compositor.version();
-    state.shm = Some(shm);
-    state.dmabuf = dmabuf;
+    state.objects.shm = Some(shm);
+    state.objects.dmabuf = dmabuf;
     state.dmabuf_version = dmabuf_version;
+    state.diagnostics.wayland_connected = true;
+    state.diagnostics.dmabuf_global_available = state.objects.dmabuf.is_some();
+    state.diagnostics.dmabuf_global_version = dmabuf_version;
+    state.diagnostics.shm_available = true;
+    state.diagnostics.viewporter_available = viewporter.is_some();
+    state.diagnostics.fractional_scale_available = fractional_scale_manager.is_some();
 
-    if state.dmabuf.is_some() && state.dmabuf_version < 2 {
+    if state.objects.dmabuf.is_some() && state.dmabuf_version < 2 {
         return Err(anyhow!(
             "zwp_linux_dmabuf_v1 version {} does not support create_immed",
             state.dmabuf_version
@@ -393,19 +434,19 @@ pub(super) fn init_wayland(
     state.output_count = output_globals.len() as u32;
     if let Some(first_output) = output_globals.first() {
         let version = first_output.version.min(4);
-        state.output = Some(globals.registry().bind(first_output.name, version, qh, ()));
+        state.objects.output = Some(globals.registry().bind(first_output.name, version, qh, ()));
     }
 
     if state.output_count > 1 {
         tracing::info!("compositor exposed {} outputs, using the first one", state.output_count);
     }
 
-    state.surface = Some(compositor.create_surface(qh, ()));
-    let surface = state.surface.as_ref().unwrap();
+    state.objects.surface = Some(compositor.create_surface(qh, ()));
+    let surface = state.objects.surface.as_ref().unwrap();
     surface.set_buffer_scale(1);
 
     if let Some(ref vp) = viewporter {
-        state.viewport = Some(vp.get_viewport(surface, qh, ()));
+        state.objects.viewport = Some(vp.get_viewport(surface, qh, ()));
     }
     if viewporter.is_none() {
         tracing::info!(
@@ -414,7 +455,7 @@ pub(super) fn init_wayland(
     }
 
     if let Some(ref fsm) = fractional_scale_manager {
-        state.fractional_scale = Some(fsm.get_fractional_scale(surface, qh, ()));
+        state.objects.fractional_scale = Some(fsm.get_fractional_scale(surface, qh, ()));
     }
     if fractional_scale_manager.is_none() {
         tracing::info!("fractional-scale-v1 unavailable, falling back to wl_output integer scale");
@@ -422,7 +463,7 @@ pub(super) fn init_wayland(
 
     let layer_surface = layer_shell.get_layer_surface(
         surface,
-        state.output.as_ref(),
+        state.objects.output.as_ref(),
         wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
         "wallpaper-engine-renderer".to_string(),
         qh,
@@ -440,10 +481,10 @@ pub(super) fn init_wayland(
     layer_surface.set_keyboard_interactivity(
         wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
     );
-    state.layer_surface = Some(layer_surface);
+    state.objects.layer_surface = Some(layer_surface);
 
     if seat.is_some() {
-        state.pointer = None;
+        state.objects.pointer = None;
     }
 
     Ok(())
@@ -454,10 +495,17 @@ pub(super) fn init_wayland(
 // ---------------------------------------------------------------------------
 
 pub(super) fn update_input_region(state: &LayerState, qh: &QueueHandle<LayerState>) {
-    if let (Some(ref compositor), Some(ref surface)) = (&state.compositor, &state.surface) {
+    if let (Some(ref compositor), Some(ref surface)) =
+        (&state.objects.compositor, &state.objects.surface)
+    {
         let region = compositor.create_region(qh, ());
-        if state.interactive && state.logical_width > 0 && state.logical_height > 0 {
-            region.add(0, 0, state.logical_width as i32, state.logical_height as i32);
+        if state.interactive && state.output.logical_width > 0 && state.output.logical_height > 0 {
+            region.add(
+                0,
+                0,
+                state.output.logical_width as i32,
+                state.output.logical_height as i32,
+            );
         }
         surface.set_input_region(Some(&region));
         region.destroy();

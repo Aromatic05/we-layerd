@@ -15,14 +15,17 @@ use wayland_protocols::wp::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use we_core::install_layout::{expand_tilde, resolve_renderer_library};
-use we_renderer::{RenderConfig, RendererLibrary, Source};
+use we_renderer::{Frame, RenderConfig, RendererLibrary, Source};
 
 use crate::{
     config::Config,
     ipc::{ControlCommand, RuntimeLoopExit},
 };
 
-use super::state::LayerState;
+use super::{
+    diagnostics::{OptionsJsonDiagnostics, PresentBackend, RuntimeDiagnostics},
+    state::{BufferBookkeeping, FrameCallbackState, LayerState, OutputState, WaylandObjects},
+};
 use super::wayland;
 
 fn env_var_enabled(name: &str) -> bool {
@@ -31,6 +34,22 @@ fn env_var_enabled(name: &str) -> bool {
 
 fn env_var_equals(name: &str, expected: &str) -> bool {
     std::env::var(name).map(|v| v == expected).unwrap_or(false)
+}
+
+fn note_frame_acquired(state: &mut LayerState, frame: &Frame) {
+    state.frame_stats.acquired = state.frame_stats.acquired.saturating_add(1);
+    match frame {
+        Frame::Dmabuf(dmabuf) => {
+            state.frame_stats.last_present_backend = Some(PresentBackend::Dmabuf);
+            state.frame_stats.last_frame_width = dmabuf.width;
+            state.frame_stats.last_frame_height = dmabuf.height;
+        }
+        Frame::Shm(shm) => {
+            state.frame_stats.last_present_backend = Some(PresentBackend::Shm);
+            state.frame_stats.last_frame_width = shm.width;
+            state.frame_stats.last_frame_height = shm.height;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -80,36 +99,33 @@ pub fn run_renderer_background_surface(
         library.create_session(cache_path_arg).context("failed to create renderer session")?;
 
     let mut state = LayerState {
-        compositor: None,
-        surface: None,
-        pointer: None,
-        output: None,
-        viewport: None,
-        layer_surface: None,
-        dmabuf: None,
-        shm: None,
-        fractional_scale: None,
+        objects: WaylandObjects::default(),
+        output: OutputState::new(cfg.general.scale_mode),
+        buffers: BufferBookkeeping::default(),
+        frame_callback: FrameCallbackState {
+            pending: false,
+            ready_for_next_frame: true,
+            last_done_msec: None,
+        },
+        frame_stats: Default::default(),
+        diagnostics: RuntimeDiagnostics {
+            prefer_dmabuf_configured: cfg.renderer.prefer_dmabuf,
+            prefer_dmabuf_effective: cfg.renderer.prefer_dmabuf,
+            allow_shm_fallback: cfg.renderer.allow_shm_fallback,
+            options_json: OptionsJsonDiagnostics {
+                present: false,
+                len: 0,
+                valid: true,
+            },
+            ..Default::default()
+        },
         dmabuf_version: 0,
         compositor_version: 0,
         output_count: 0,
-        output_scale: 1,
-        preferred_fractional_scale: 0,
-        output_mode_width: 0,
-        output_mode_height: 0,
-        logical_width: 0,
-        logical_height: 0,
-        render_width: 0,
-        render_height: 0,
-        fallback_width: 1920,
-        fallback_height: 1080,
-        pointer_x: 0.0,
-        pointer_y: 0.0,
         running: true,
         configured: false,
-        extent_mismatch_reported: false,
         session: None,
         _library: Some(library),
-        in_flight: Vec::new(),
         interactive: cfg.general.interactive,
         paused: false,
         pending_input_events: Vec::new(),
@@ -132,15 +148,22 @@ pub fn run_renderer_background_surface(
 
     // Set input region and commit initial surface state
     {
-        if let (Some(ref compositor), Some(ref surface)) = (&state.compositor, &state.surface) {
+        if let (Some(ref compositor), Some(ref surface)) =
+            (&state.objects.compositor, &state.objects.surface)
+        {
             let region = compositor.create_region(&qh, ());
             if state.interactive {
-                region.add(0, 0, state.logical_width as i32, state.logical_height as i32);
+                region.add(
+                    0,
+                    0,
+                    state.output.logical_width as i32,
+                    state.output.logical_height as i32,
+                );
             }
             surface.set_input_region(Some(&region));
             region.destroy();
         }
-        if let Some(ref surface) = &state.surface {
+        if let Some(ref surface) = &state.objects.surface {
             surface.commit();
         }
     }
@@ -152,11 +175,11 @@ pub fn run_renderer_background_surface(
         state.update_viewport_destination();
     }
 
-    if state.logical_width == 0 {
-        state.logical_width = state.fallback_width;
+    if state.output.logical_width == 0 {
+        state.output.logical_width = state.output.fallback_width;
     }
-    if state.logical_height == 0 {
-        state.logical_height = state.fallback_height;
+    if state.output.logical_height == 0 {
+        state.output.logical_height = state.output.fallback_height;
     }
     state.update_render_extent();
     state.update_viewport_destination();
@@ -178,6 +201,8 @@ pub fn run_renderer_background_surface(
         || env_var_equals("__VK_LAYER_NV_optimus", "NVIDIA_only")
     {
         info!("NVIDIA prime-render-offload detected; forcing SHM fallback");
+        state.diagnostics.nvidia_prime_offload_detected = true;
+        state.diagnostics.prefer_dmabuf_effective = false;
         false
     } else {
         cfg.renderer.prefer_dmabuf
@@ -186,8 +211,8 @@ pub fn run_renderer_background_surface(
     // Set render config BEFORE play
     session
         .configure(RenderConfig {
-            width: state.render_width,
-            height: state.render_height,
+            width: state.output.geometry.render_width,
+            height: state.output.geometry.render_height,
             enable_valid_layer: false,
             prefer_dmabuf,
             allow_shm_fallback: cfg.renderer.allow_shm_fallback,
@@ -198,18 +223,14 @@ pub fn run_renderer_background_surface(
     state.session = Some(session);
 
     info!(
-        logical_width = state.logical_width,
-        logical_height = state.logical_height,
-        render_width = state.render_width,
-        render_height = state.render_height,
-        scale = state.render_scale_factor(),
+        logical_width = state.output.logical_width,
+        logical_height = state.output.logical_height,
+        render_width = state.output.geometry.render_width,
+        render_height = state.output.geometry.render_height,
+        scale = state.output.render_scale_factor(),
         "starting renderer-backed layer-shell surface"
     );
 
-    // Stats
-    let mut acquired: u64 = 0;
-    let mut presented: u64 = 0;
-    let mut no_frame_polls: u64 = 0;
     let mut last_acquire_status: i32 = 1;
     let mut last_log = std::time::Instant::now();
 
@@ -235,6 +256,7 @@ pub fn run_renderer_background_surface(
                         session.play().ok();
                     }
                     state.paused = false;
+                    state.frame_callback.ready_for_next_frame = true;
                 }
                 ControlCommand::Reload => {
                     if let Some(ref mut session) = state.session {
@@ -265,14 +287,14 @@ pub fn run_renderer_background_surface(
                 session.tick().context("renderer tick failed")?;
                 match session.acquire_frame().context("failed to acquire frame")? {
                     Some(frame) => {
-                        acquired += 1;
+                        note_frame_acquired(&mut state, &frame);
                         wayland::present_frame(&mut state, &qh, frame)
                             .context("failed to present frame")?;
-                        presented += 1;
                         last_acquire_status = 0;
                     }
                     None => {
-                        no_frame_polls += 1;
+                        state.frame_stats.no_frame_polls =
+                            state.frame_stats.no_frame_polls.saturating_add(1);
                         last_acquire_status = 1;
                     }
                 }
@@ -301,9 +323,9 @@ pub fn run_renderer_background_surface(
                 _ => "error",
             };
             info!(
-                acquired,
-                presented,
-                no_frame_polls,
+                acquired = state.frame_stats.acquired,
+                presented = state.frame_stats.presented,
+                no_frame_polls = state.frame_stats.no_frame_polls,
                 last_acquire_status = status_text,
                 last_acquire_status_code = last_acquire_status,
                 "renderer stats"

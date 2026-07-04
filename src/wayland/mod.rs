@@ -1,3 +1,5 @@
+mod diagnostics;
+mod geometry;
 mod renderer;
 mod state;
 mod wayland;
