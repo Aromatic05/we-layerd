@@ -70,9 +70,9 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerState {
                 layer_surface.ack_configure(serial);
                 state.configured = true;
                 state.output.logical_width =
-                    if width > 0 { width as u32 } else { state.output.fallback_width };
+                    if width > 0 { width } else { state.output.fallback_width };
                 state.output.logical_height =
-                    if height > 0 { height as u32 } else { state.output.fallback_height };
+                    if height > 0 { height } else { state.output.fallback_height };
                 state.update_render_extent();
                 state.update_viewport_destination();
             }
@@ -92,11 +92,8 @@ impl Dispatch<WlOutput, ()> for LayerState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_output::Event::Mode { flags, width, height, .. }
-                if matches!(
-                    flags,
-                    WEnum::Value(value) if value.contains(wl_output::Mode::Current)
-                ) =>
+            wl_output::Event::Mode { flags: WEnum::Value(value), width, height, .. }
+                if value.contains(wl_output::Mode::Current) =>
             {
                 state.output.output_mode_width = width.max(0) as u32;
                 state.output.output_mode_height = height.max(0) as u32;
@@ -308,7 +305,8 @@ pub(super) fn create_buffer_for_frame(
 ) -> Result<WaylandBuffer> {
     match frame {
         Frame::Shm(shm) => {
-            let shm_obj = state.objects.shm.as_ref().ok_or_else(|| anyhow!("wl_shm unavailable"))?;
+            let shm_obj =
+                state.objects.shm.as_ref().ok_or_else(|| anyhow!("wl_shm unavailable"))?;
             let released = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let pool = shm_obj.create_pool(shm.fd.as_fd(), shm.size as i32, qh, ());
             let buffer = pool.create_buffer(
@@ -324,12 +322,11 @@ pub(super) fn create_buffer_for_frame(
             Ok(WaylandBuffer { buffer, released, pending_fds: vec![shm.fd] })
         }
         Frame::Dmabuf(dmabuf) => {
-            let dmabuf_obj =
-                state
-                    .objects
-                    .dmabuf
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("zwp_linux_dmabuf_v1 unavailable"))?;
+            let dmabuf_obj = state
+                .objects
+                .dmabuf
+                .as_ref()
+                .ok_or_else(|| anyhow!("zwp_linux_dmabuf_v1 unavailable"))?;
             let params = dmabuf_obj.create_params(qh, ());
             let modifier_hi = (dmabuf.drm_modifier >> 32) as u32;
             let modifier_lo = (dmabuf.drm_modifier & 0xffff_ffff) as u32;
@@ -392,6 +389,7 @@ pub(super) fn present_frame(
 // Wayland init
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn init_wayland(
     _conn: &Connection,
     qh: &QueueHandle<LayerState>,
@@ -500,12 +498,7 @@ pub(super) fn update_input_region(state: &LayerState, qh: &QueueHandle<LayerStat
     {
         let region = compositor.create_region(qh, ());
         if state.interactive && state.output.logical_width > 0 && state.output.logical_height > 0 {
-            region.add(
-                0,
-                0,
-                state.output.logical_width as i32,
-                state.output.logical_height as i32,
-            );
+            region.add(0, 0, state.output.logical_width as i32, state.output.logical_height as i32);
         }
         surface.set_input_region(Some(&region));
         region.destroy();

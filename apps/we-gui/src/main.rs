@@ -665,44 +665,6 @@ fn detect_system_theme() -> Theme {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        settings_panel::{ScaleModeOption, UiSettings},
-        sync_launch_settings_from_ui,
-    };
-    use we_core::config::{LaunchSettings, ScaleMode};
-
-    #[test]
-    fn sync_launch_settings_copies_workshop_path_from_ui() {
-        let ui_settings = UiSettings {
-            assets_path: "/opt/wallpaper_engine/assets".to_string(),
-            workshop_path: "/tmp/workshop/content/431960".to_string(),
-            renderer_library_path: "/opt/libwallpaper-engine-renderer.so".to_string(),
-            renderer_cache_path: "~/.cache/we-layerd/test".to_string(),
-            prefer_dmabuf: false,
-            allow_shm_fallback: true,
-            interactive: false,
-            fps_limit: "144".to_string(),
-            show_fps: true,
-            scale_mode: ScaleModeOption::Stretch,
-            status_text: String::new(),
-        };
-        let mut launch_settings = LaunchSettings::default();
-
-        sync_launch_settings_from_ui(&ui_settings, &mut launch_settings);
-
-        assert_eq!(launch_settings.workshop_path, "/tmp/workshop/content/431960");
-        assert_eq!(launch_settings.assets_path, "/opt/wallpaper_engine/assets");
-        assert_eq!(launch_settings.renderer_library_path, "/opt/libwallpaper-engine-renderer.so");
-        assert_eq!(launch_settings.renderer_cache_path, "~/.cache/we-layerd/test");
-        assert!(!launch_settings.prefer_dmabuf);
-        assert!(launch_settings.allow_shm_fallback);
-        assert!(!launch_settings.interactive);
-        assert_eq!(launch_settings.scale_mode, ScaleMode::Stretch);
-    }
-}
-
 fn command_exists_in_path(name: &str) -> bool {
     let Some(path_os) = env::var_os("PATH") else {
         return false;
@@ -756,12 +718,7 @@ fn stop_runtime(app: &mut App) -> bool {
 }
 
 fn send_layerd_ctl(action: &str) -> bool {
-    Command::new("we-layerd")
-        .arg("ctl")
-        .arg(action)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    Command::new("we-layerd").arg("ctl").arg(action).status().map(|s| s.success()).unwrap_or(false)
 }
 
 fn reap_runtime_child(app: &mut App) {
@@ -797,4 +754,42 @@ fn send_process_signal(pid: u32, signal: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        settings_panel::{ScaleModeOption, UiSettings},
+        sync_launch_settings_from_ui,
+    };
+    use we_core::config::{LaunchSettings, ScaleMode};
+
+    #[test]
+    fn sync_launch_settings_copies_workshop_path_from_ui() {
+        let ui_settings = UiSettings {
+            assets_path: "/opt/wallpaper_engine/assets".to_string(),
+            workshop_path: "/tmp/workshop/content/431960".to_string(),
+            renderer_library_path: "/opt/libwallpaper-engine-renderer.so".to_string(),
+            renderer_cache_path: "~/.cache/we-layerd/test".to_string(),
+            prefer_dmabuf: false,
+            allow_shm_fallback: true,
+            interactive: false,
+            fps_limit: "144".to_string(),
+            show_fps: true,
+            scale_mode: ScaleModeOption::Stretch,
+            status_text: String::new(),
+        };
+        let mut launch_settings = LaunchSettings::default();
+
+        sync_launch_settings_from_ui(&ui_settings, &mut launch_settings);
+
+        assert_eq!(launch_settings.workshop_path, "/tmp/workshop/content/431960");
+        assert_eq!(launch_settings.assets_path, "/opt/wallpaper_engine/assets");
+        assert_eq!(launch_settings.renderer_library_path, "/opt/libwallpaper-engine-renderer.so");
+        assert_eq!(launch_settings.renderer_cache_path, "~/.cache/we-layerd/test");
+        assert!(!launch_settings.prefer_dmabuf);
+        assert!(launch_settings.allow_shm_fallback);
+        assert!(!launch_settings.interactive);
+        assert_eq!(launch_settings.scale_mode, ScaleMode::Stretch);
+    }
 }

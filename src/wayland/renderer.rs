@@ -27,11 +27,11 @@ use crate::{
     ipc::{ControlCommand, RuntimeLoopExit},
 };
 
+use super::wayland;
 use super::{
     diagnostics::{OptionsJsonDiagnostics, PresentBackend, RuntimeDiagnostics},
     state::{BufferBookkeeping, FrameCallbackState, LayerState, OutputState, WaylandObjects},
 };
-use super::wayland;
 
 fn env_var_enabled(name: &str) -> bool {
     std::env::var(name).map(|v| !v.is_empty() && v != "0").unwrap_or(false)

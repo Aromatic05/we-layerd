@@ -7,8 +7,8 @@ use std::{
 };
 
 use wayland_client::protocol::{
-    wl_buffer::WlBuffer, wl_callback::WlCallback, wl_compositor::WlCompositor,
-    wl_output::WlOutput, wl_pointer::WlPointer, wl_shm::WlShm, wl_surface::WlSurface,
+    wl_buffer::WlBuffer, wl_callback::WlCallback, wl_compositor::WlCompositor, wl_output::WlOutput,
+    wl_pointer::WlPointer, wl_shm::WlShm, wl_surface::WlSurface,
 };
 use wayland_protocols::wp::{
     fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
@@ -211,9 +211,11 @@ impl LayerState {
                 paused: self.paused,
                 viewport_width: self.output.geometry.viewport_width,
                 viewport_height: self.output.geometry.viewport_height,
-                viewport_source: self.output.geometry.viewport_source.map(|source| {
-                    (source.x, source.y, source.width, source.height)
-                }),
+                viewport_source: self
+                    .output
+                    .geometry
+                    .viewport_source
+                    .map(|source| (source.x, source.y, source.width, source.height)),
             },
             frame_stats: self.frame_stats.clone(),
         }

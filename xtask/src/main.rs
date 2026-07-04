@@ -53,7 +53,11 @@ fn install(args: InstallArgs) {
         .unwrap_or_else(|| expand_tilde("~/.local"));
 
     run(
-        configure_release_build(&mut Command::new("cargo"), &workspace_root, args.prefix.as_deref()),
+        configure_release_build(
+            &mut Command::new("cargo"),
+            &workspace_root,
+            args.prefix.as_deref(),
+        ),
         "build release binaries for installation",
     );
 

@@ -106,10 +106,7 @@ impl RuntimeStatusSnapshot {
             format!("dmabuf_global_version = {}", self.runtime.dmabuf_global_version),
             format!("shm_available = {}", self.runtime.shm_available),
             format!("viewporter_available = {}", self.runtime.viewporter_available),
-            format!(
-                "fractional_scale_available = {}",
-                self.runtime.fractional_scale_available
-            ),
+            format!("fractional_scale_available = {}", self.runtime.fractional_scale_available),
             format!("prefer_dmabuf_configured = {}", self.runtime.prefer_dmabuf_configured),
             format!("prefer_dmabuf_effective = {}", self.runtime.prefer_dmabuf_effective),
             format!("allow_shm_fallback = {}", self.runtime.allow_shm_fallback),
@@ -154,10 +151,7 @@ impl RuntimeStatusSnapshot {
             format!("in_flight_buffers = {}", self.frame_stats.in_flight_count),
             format!("acquired = {}", self.frame_stats.acquired),
             format!("presented = {}", self.frame_stats.presented),
-            format!(
-                "skipped_by_backpressure = {}",
-                self.frame_stats.skipped_by_backpressure
-            ),
+            format!("skipped_by_backpressure = {}", self.frame_stats.skipped_by_backpressure),
             format!("no_frame_polls = {}", self.frame_stats.no_frame_polls),
             format!("released_buffers = {}", self.frame_stats.released_buffers),
             format!("last_error = {:?}", self.frame_stats.last_error.as_deref().unwrap_or("")),

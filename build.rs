@@ -152,17 +152,15 @@ fn ensure_cmake_cache_value(cache_path: &Path, key: &str, expected: &str) -> std
 }
 
 fn configured_install_prefix() -> PathBuf {
+    let default_prefix = expand_tilde(PathBuf::from("~/.local"));
     let expanded = match env::var_os("WE_LAYERD_INSTALL_PREFIX") {
         Some(value) => expand_tilde(PathBuf::from(value)),
-        None => expand_tilde(PathBuf::from("~/.local")),
+        None => default_prefix.clone(),
     };
-    if expanded == expand_tilde(PathBuf::from("~/.local")) || expanded == PathBuf::from("/usr") {
+    if expanded == default_prefix || expanded == Path::new("/usr") {
         return expanded;
     }
-    panic!(
-        "unsupported install prefix {}; expected ~/.local or /usr",
-        expanded.display()
-    );
+    panic!("unsupported install prefix {}; expected ~/.local or /usr", expanded.display());
 }
 
 fn persist_install_prefix(workspace_root: &Path, install_prefix: &Path) -> std::io::Result<()> {

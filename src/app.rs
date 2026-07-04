@@ -1,7 +1,7 @@
 use std::{
     fs,
-    path::PathBuf,
     path::Path,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -9,10 +9,10 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use we_core::install_layout::{expand_tilde, resolve_renderer_library};
-use we_renderer::RendererLibrary;
 use tracing::{info, warn};
 use wayland_client::{globals::registry_queue_init, Connection};
+use we_core::install_layout::{expand_tilde, resolve_renderer_library};
+use we_renderer::RendererLibrary;
 
 use crate::{
     config::{Backend, Config},
@@ -309,11 +309,11 @@ fn run_runtime_loop(
     }
 
     match cfg.general.backend {
-        Backend::LayerShell => wayland::run_renderer_background_surface(
-            &cfg,
-            control_rx,
-            &mut |snapshot| update_runtime_snapshot(runtime_state, snapshot),
-        ),
+        Backend::LayerShell => {
+            wayland::run_renderer_background_surface(&cfg, control_rx, &mut |snapshot| {
+                update_runtime_snapshot(runtime_state, snapshot)
+            })
+        }
     }
 }
 
@@ -368,11 +368,9 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
                     for required in ["wl_compositor", "zwlr_layer_shell_v1", "wl_shm"] {
                         push_global_check(&mut lines, &snapshot, required, true);
                     }
-                    for optional in [
-                        "zwp_linux_dmabuf_v1",
-                        "wp_viewporter",
-                        "wp_fractional_scale_manager_v1",
-                    ] {
+                    for optional in
+                        ["zwp_linux_dmabuf_v1", "wp_viewporter", "wp_fractional_scale_manager_v1"]
+                    {
                         push_global_check(&mut lines, &snapshot, optional, false);
                     }
                 }
@@ -404,7 +402,10 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
 
     if cfg.renderer.assets_path.trim().is_empty() {
         if let Some(discovered) = we_core::steam::discover_wallpaper_engine_assets() {
-            lines.push(format!("WARN renderer.assets_path = auto-discovered {}", discovered.display()));
+            lines.push(format!(
+                "WARN renderer.assets_path = auto-discovered {}",
+                discovered.display()
+            ));
         } else {
             lines.push("ERR renderer.assets_path = empty and auto-discovery failed".to_string());
         }
@@ -421,10 +422,8 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     let cache_parent = cache_path.parent().map(Path::to_path_buf).unwrap_or(cache_path.clone());
     match fs::create_dir_all(&cache_parent) {
         Ok(()) => lines.push(format!("OK renderer.cache_path_parent = {}", cache_parent.display())),
-        Err(err) => lines.push(format!(
-            "ERR renderer.cache_path_parent = {} ({err})",
-            cache_parent.display()
-        )),
+        Err(err) => lines
+            .push(format!("ERR renderer.cache_path_parent = {} ({err})", cache_parent.display())),
     }
 
     match we_core::steam::discover_workshop_wallpaper_root() {
@@ -446,7 +445,9 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     if env_var_enabled("__NV_PRIME_RENDER_OFFLOAD")
         || env_var_equals("__VK_LAYER_NV_optimus", "NVIDIA_only")
     {
-        lines.push("WARN nvidia_prime_offload = detected; runtime will force SHM fallback".to_string());
+        lines.push(
+            "WARN nvidia_prime_offload = detected; runtime will force SHM fallback".to_string(),
+        );
     } else {
         lines.push("OK nvidia_prime_offload = not detected".to_string());
     }

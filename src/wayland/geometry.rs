@@ -139,12 +139,7 @@ fn cover_source(
 
     let cropped_height = render_width as f64 / viewport_aspect;
     let y = ((render_height as f64 - cropped_height) / 2.0).max(0.0);
-    Some(ViewportSource {
-        x: 0.0,
-        y,
-        width: render_width as f64,
-        height: cropped_height,
-    })
+    Some(ViewportSource { x: 0.0, y, width: render_width as f64, height: cropped_height })
 }
 
 fn fit_destination(

@@ -2,6 +2,7 @@ pub(crate) mod diagnostics;
 mod geometry;
 mod renderer;
 pub(crate) mod state;
+#[allow(clippy::module_inception)]
 mod wayland;
 
 #[cfg(test)]
