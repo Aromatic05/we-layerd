@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -32,18 +32,13 @@ pub enum Backend {
     LayerShell,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScaleMode {
     Fit,
+    #[default]
     Cover,
     Stretch,
-}
-
-impl Default for ScaleMode {
-    fn default() -> Self {
-        Self::Cover
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,12 +148,6 @@ impl Default for GeneralConfig {
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self { general: GeneralConfig::default(), renderer: RendererConfig::default() }
-    }
-}
-
 impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
@@ -209,19 +198,19 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
     let cfg: AppConfig =
         toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
 
-    let mut settings = LaunchSettings::default();
-    settings.interactive = cfg.general.interactive;
-    settings.show_fps = cfg.general.show_fps;
-    settings.scale_mode = cfg.general.scale_mode;
-    settings.fps_limit = cfg.renderer.fps.max(1);
-    settings.renderer_library_path = cfg.renderer.library_path;
-    settings.renderer_cache_path = cfg.renderer.cache_path;
-    settings.prefer_dmabuf = cfg.renderer.prefer_dmabuf;
-    settings.allow_shm_fallback = cfg.renderer.allow_shm_fallback;
-    settings.options_json = cfg.renderer.options_json;
-    settings.workshop_path = derive_workshop_root(&cfg.renderer.source);
-    settings.assets_path = cfg.renderer.assets_path.clone();
-    Ok(settings)
+    Ok(LaunchSettings {
+        assets_path: cfg.renderer.assets_path.clone(),
+        workshop_path: derive_workshop_root(&cfg.renderer.source),
+        renderer_library_path: cfg.renderer.library_path,
+        renderer_cache_path: cfg.renderer.cache_path,
+        prefer_dmabuf: cfg.renderer.prefer_dmabuf,
+        allow_shm_fallback: cfg.renderer.allow_shm_fallback,
+        interactive: cfg.general.interactive,
+        fps_limit: cfg.renderer.fps.max(1),
+        show_fps: cfg.general.show_fps,
+        scale_mode: cfg.general.scale_mode,
+        options_json: cfg.renderer.options_json,
+    })
 }
 
 fn derive_workshop_root(source: &str) -> String {
@@ -249,12 +238,14 @@ mod tests {
 
     #[test]
     fn build_config_writes_renderer_native_source_and_assets() {
-        let mut settings = LaunchSettings::default();
-        settings.assets_path = "/steam/steamapps/common/wallpaper_engine/assets".to_string();
-        settings.fps_limit = 144;
-        settings.interactive = false;
-        settings.scale_mode = ScaleMode::Fit;
-        settings.options_json = Some("{\"demo\":true}".to_string());
+        let settings = LaunchSettings {
+            assets_path: "/steam/steamapps/common/wallpaper_engine/assets".to_string(),
+            fps_limit: 144,
+            interactive: false,
+            scale_mode: ScaleMode::Fit,
+            options_json: Some("{\"demo\":true}".to_string()),
+            ..LaunchSettings::default()
+        };
 
         let cfg = build_config(&settings, Path::new("/tmp/item/project.json"));
 

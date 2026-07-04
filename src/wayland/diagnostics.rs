@@ -145,8 +145,13 @@ impl RuntimeStatusSnapshot {
         }
 
         lines.extend([
-            String::new(),
-            "[frame_stats]".to_string(),
+            format!(
+                "last_present_backend = \"{}\"",
+                self.frame_stats.last_present_backend.map(PresentBackend::as_str).unwrap_or("")
+            ),
+            format!("last_frame_width = {}", self.frame_stats.last_frame_width),
+            format!("last_frame_height = {}", self.frame_stats.last_frame_height),
+            format!("in_flight_buffers = {}", self.frame_stats.in_flight_count),
             format!("acquired = {}", self.frame_stats.acquired),
             format!("presented = {}", self.frame_stats.presented),
             format!(
@@ -155,17 +160,7 @@ impl RuntimeStatusSnapshot {
             ),
             format!("no_frame_polls = {}", self.frame_stats.no_frame_polls),
             format!("released_buffers = {}", self.frame_stats.released_buffers),
-            format!("in_flight_buffers = {}", self.frame_stats.in_flight_count),
-            format!(
-                "last_present_backend = {:?}",
-                self.frame_stats.last_present_backend.map(PresentBackend::as_str).unwrap_or("")
-            ),
-            format!("last_frame_width = {}", self.frame_stats.last_frame_width),
-            format!("last_frame_height = {}", self.frame_stats.last_frame_height),
-            format!(
-                "last_error = {:?}",
-                self.frame_stats.last_error.as_deref().unwrap_or("")
-            ),
+            format!("last_error = {:?}", self.frame_stats.last_error.as_deref().unwrap_or("")),
         ]);
 
         lines.join("\n")
