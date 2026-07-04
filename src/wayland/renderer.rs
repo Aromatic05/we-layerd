@@ -1,4 +1,9 @@
-use std::{io::ErrorKind, os::fd::AsRawFd, sync::mpsc, time::Duration};
+use std::{
+    io::ErrorKind,
+    os::fd::AsRawFd,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use tracing::info;
@@ -50,6 +55,29 @@ fn note_frame_acquired(state: &mut LayerState, frame: &Frame) {
             state.frame_stats.last_frame_height = shm.height;
         }
     }
+}
+
+fn frame_interval(fps: u32) -> Duration {
+    Duration::from_secs_f64(1.0 / fps.max(1) as f64)
+}
+
+fn can_present_next_frame(state: &LayerState) -> bool {
+    !state.paused
+        && state.frame_callback.ready_for_next_frame
+        && !state.frame_callback.pending
+        && state.buffers.in_flight.len() < state.buffers.max_in_flight
+}
+
+fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerState) -> i32 {
+    if can_present_next_frame(state) {
+        return next_tick_at
+            .checked_duration_since(now)
+            .unwrap_or_default()
+            .min(Duration::from_millis(100))
+            .as_millis() as i32;
+    }
+
+    100
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +261,8 @@ pub fn run_renderer_background_surface(
 
     let mut last_acquire_status: i32 = 1;
     let mut last_log = std::time::Instant::now();
+    let render_interval = frame_interval(cfg.renderer.fps);
+    let mut next_tick_at = Instant::now();
 
     // Main loop
     loop {
@@ -281,10 +311,19 @@ pub fn run_renderer_background_surface(
             }
         }
 
+        state.collect_released_buffers();
+
         // Tick and acquire frame
-        if !state.paused {
+        let now = Instant::now();
+        let blocked_by_backpressure = state.buffers.in_flight.len() >= state.buffers.max_in_flight;
+        if blocked_by_backpressure && now >= next_tick_at && !state.paused {
+            state.frame_stats.skipped_by_backpressure =
+                state.frame_stats.skipped_by_backpressure.saturating_add(1);
+        }
+        if can_present_next_frame(&state) && now >= next_tick_at {
             if let Some(ref mut session) = state.session {
                 session.tick().context("renderer tick failed")?;
+                next_tick_at = now + render_interval;
                 match session.acquire_frame().context("failed to acquire frame")? {
                     Some(frame) => {
                         note_frame_acquired(&mut state, &frame);
@@ -310,8 +349,6 @@ pub fn run_renderer_background_surface(
             Err(WaylandError::Io(err)) if err.kind() == ErrorKind::WouldBlock => true,
             Err(err) => return Err(err).context("failed to flush Wayland connection"),
         };
-
-        state.collect_released_buffers();
 
         // 5-second stats log
         let now = std::time::Instant::now();
@@ -354,9 +391,8 @@ pub fn run_renderer_background_surface(
             events: libc::POLLIN | if flush_blocked { libc::POLLOUT } else { 0 },
             revents: 0,
         };
-        let poll_result = unsafe {
-            libc::poll(&mut poll_fd, 1, 5 /* ms */)
-        };
+        let timeout_ms = poll_timeout(Instant::now(), next_tick_at, &state);
+        let poll_result = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
 
         if poll_result < 0 {
             let err = std::io::Error::last_os_error();
