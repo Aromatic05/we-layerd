@@ -24,7 +24,11 @@ pub enum Command {
         config: PathBuf,
     },
     /// Print environment diagnostics
-    Doctor,
+    Doctor {
+        /// Path to TOML config file
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Print the effective config as TOML
     PrintConfig {
         /// Path to TOML config file

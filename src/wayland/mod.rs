@@ -1,7 +1,7 @@
-mod diagnostics;
+pub(crate) mod diagnostics;
 mod geometry;
 mod renderer;
-mod state;
+pub(crate) mod state;
 mod wayland;
 
 #[cfg(test)]

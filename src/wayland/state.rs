@@ -145,7 +145,7 @@ impl Default for BufferBookkeeping {
     }
 }
 
-pub(super) struct LayerState {
+pub(crate) struct LayerState {
     pub(super) objects: WaylandObjects,
     pub(super) output: OutputState,
     pub(super) buffers: BufferBookkeeping,

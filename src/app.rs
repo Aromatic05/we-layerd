@@ -1,4 +1,6 @@
 use std::{
+    fs,
+    path::PathBuf,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -7,12 +9,15 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+use we_core::install_layout::{expand_tilde, resolve_renderer_library};
+use we_renderer::RendererLibrary;
 use tracing::{info, warn};
+use wayland_client::{globals::registry_queue_init, Connection};
 
 use crate::{
     config::{Backend, Config},
     ipc::{self, ControlCommand, RuntimeLoopExit},
-    wayland,
+    wayland::{self, diagnostics::RuntimeStatusSnapshot},
 };
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
@@ -151,6 +156,7 @@ struct RuntimeState {
     generation: u64,
     source: String,
     error: Option<String>,
+    runtime_status: Option<RuntimeStatusSnapshot>,
 }
 
 impl RuntimeState {
@@ -161,6 +167,7 @@ impl RuntimeState {
             generation: 0,
             source: cfg.renderer.source.clone(),
             error: None,
+            runtime_status: None,
         }
     }
 
@@ -170,6 +177,7 @@ impl RuntimeState {
         self.phase = RuntimePhase::Starting;
         self.source = cfg.renderer.source.clone();
         self.error = None;
+        self.runtime_status = None;
         self.generation
     }
 
@@ -178,6 +186,7 @@ impl RuntimeState {
         self.phase = RuntimePhase::Starting;
         self.source = cfg.renderer.source.clone();
         self.error = None;
+        self.runtime_status = None;
     }
 
     fn mark_running(&mut self, generation: u64) {
@@ -215,6 +224,10 @@ impl RuntimeState {
         }
     }
 
+    fn update_runtime_status(&mut self, status: RuntimeStatusSnapshot) {
+        self.runtime_status = Some(status);
+    }
+
     fn render_status_toml(&self) -> String {
         let mut lines = vec![
             "[orchestrator]".to_string(),
@@ -226,6 +239,10 @@ impl RuntimeState {
         if let Some(error) = &self.error {
             lines.push(format!("error = {:?}", error));
         }
+        if let Some(status) = &self.runtime_status {
+            lines.push(String::new());
+            lines.push(status.render_toml());
+        }
         lines.join("\n")
     }
 }
@@ -233,6 +250,23 @@ impl RuntimeState {
 fn backend_name(backend: Backend) -> &'static str {
     match backend {
         Backend::LayerShell => "layer_shell",
+    }
+}
+
+fn env_var_enabled(name: &str) -> bool {
+    std::env::var(name).map(|value| !value.is_empty() && value != "0").unwrap_or(false)
+}
+
+fn env_var_equals(name: &str, expected: &str) -> bool {
+    std::env::var(name).map(|value| value == expected).unwrap_or(false)
+}
+
+fn update_runtime_snapshot(
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    snapshot: RuntimeStatusSnapshot,
+) {
+    if let Ok(mut state) = runtime_state.lock() {
+        state.update_runtime_status(snapshot);
     }
 }
 
@@ -274,7 +308,11 @@ fn run_runtime_loop(
     }
 
     match cfg.general.backend {
-        Backend::LayerShell => wayland::run_renderer_background_surface(&cfg, control_rx),
+        Backend::LayerShell => wayland::run_renderer_background_surface(
+            &cfg,
+            control_rx,
+            &mut |snapshot| update_runtime_snapshot(runtime_state, snapshot),
+        ),
     }
 }
 
@@ -308,11 +346,131 @@ fn handle_runtime_control_command(
     }
 }
 
-pub fn doctor() -> Result<()> {
-    let cfg = Config::default();
-    info!(backend = ?cfg.general.backend, "default backend");
-    info!("renderer-native migration is active; runtime backend implementation is pending");
+pub fn doctor(config_path: Option<&Path>) -> Result<()> {
+    let (cfg, loaded_from) = load_doctor_config(config_path)?;
+    let mut lines = Vec::new();
+
+    lines.push("OK backend = layer_shell".to_string());
+    match loaded_from {
+        Some(path) => lines.push(format!("OK config = {}", path.display())),
+        None => lines.push("WARN config = using built-in defaults".to_string()),
+    }
+
+    match Connection::connect_to_env() {
+        Ok(conn) => {
+            lines.push("OK wayland_display = connected".to_string());
+            match registry_queue_init::<wayland::state::LayerState>(&conn) {
+                Ok((globals, _event_queue)) => {
+                    let snapshot = globals.contents().clone_list();
+                    for required in ["wl_compositor", "zwlr_layer_shell_v1", "wl_shm"] {
+                        push_global_check(&mut lines, &snapshot, required, true);
+                    }
+                    for optional in [
+                        "zwp_linux_dmabuf_v1",
+                        "wp_viewporter",
+                        "wp_fractional_scale_manager_v1",
+                    ] {
+                        push_global_check(&mut lines, &snapshot, optional, false);
+                    }
+                }
+                Err(err) => lines.push(format!("ERR wayland_registry = {err}")),
+            }
+        }
+        Err(err) => lines.push(format!("ERR wayland_display = {err}")),
+    }
+
+    match resolve_renderer_library(&cfg.renderer.library_path) {
+        Ok(path) => {
+            lines.push(format!("OK renderer_library = {}", path.display()));
+            match RendererLibrary::load(&path) {
+                Ok(_) => lines.push("OK renderer_symbols = loaded".to_string()),
+                Err(err) => lines.push(format!("ERR renderer_symbols = {err}")),
+            }
+        }
+        Err(err) => lines.push(format!("ERR renderer_library = {err}")),
+    }
+
+    let source_path = expand_tilde(&cfg.renderer.source);
+    if cfg.renderer.source.trim().is_empty() {
+        lines.push("ERR renderer.source = empty".to_string());
+    } else if source_path.is_dir() {
+        lines.push(format!("OK renderer.source = {}", source_path.display()));
+    } else {
+        lines.push(format!("ERR renderer.source = missing {}", source_path.display()));
+    }
+
+    if cfg.renderer.assets_path.trim().is_empty() {
+        if let Some(discovered) = we_core::steam::discover_wallpaper_engine_assets() {
+            lines.push(format!("WARN renderer.assets_path = auto-discovered {}", discovered.display()));
+        } else {
+            lines.push("ERR renderer.assets_path = empty and auto-discovery failed".to_string());
+        }
+    } else {
+        let assets_path = expand_tilde(&cfg.renderer.assets_path);
+        if assets_path.is_dir() {
+            lines.push(format!("OK renderer.assets_path = {}", assets_path.display()));
+        } else {
+            lines.push(format!("ERR renderer.assets_path = missing {}", assets_path.display()));
+        }
+    }
+
+    let cache_path = expand_tilde(&cfg.renderer.cache_path);
+    let cache_parent = cache_path.parent().map(Path::to_path_buf).unwrap_or(cache_path.clone());
+    match fs::create_dir_all(&cache_parent) {
+        Ok(()) => lines.push(format!("OK renderer.cache_path_parent = {}", cache_parent.display())),
+        Err(err) => lines.push(format!(
+            "ERR renderer.cache_path_parent = {} ({err})",
+            cache_parent.display()
+        )),
+    }
+
+    match we_core::steam::discover_workshop_wallpaper_root() {
+        Some(path) => lines.push(format!("OK workshop_auto_discovery = {}", path.display())),
+        None => lines.push("WARN workshop_auto_discovery = not found".to_string()),
+    }
+    match we_core::steam::discover_wallpaper_engine_assets() {
+        Some(path) => lines.push(format!("OK assets_auto_discovery = {}", path.display())),
+        None => lines.push("WARN assets_auto_discovery = not found".to_string()),
+    }
+
+    if env_var_enabled("__NV_PRIME_RENDER_OFFLOAD")
+        || env_var_equals("__VK_LAYER_NV_optimus", "NVIDIA_only")
+    {
+        lines.push("WARN nvidia_prime_offload = detected; runtime will force SHM fallback".to_string());
+    } else {
+        lines.push("OK nvidia_prime_offload = not detected".to_string());
+    }
+
+    println!("{}", lines.join("\n"));
     Ok(())
+}
+
+fn load_doctor_config(config_path: Option<&Path>) -> Result<(Config, Option<PathBuf>)> {
+    if let Some(path) = config_path {
+        return Config::load(Some(path)).map(|cfg| (cfg, Some(path.to_path_buf())));
+    }
+
+    if let Some(default_path) = we_core::steam::default_config_path() {
+        if default_path.is_file() {
+            return Config::load(Some(&default_path)).map(|cfg| (cfg, Some(default_path)));
+        }
+    }
+
+    Ok((Config::default(), None))
+}
+
+fn push_global_check(
+    lines: &mut Vec<String>,
+    globals: &[wayland_client::globals::Global],
+    interface: &str,
+    required: bool,
+) {
+    let found = globals.iter().find(|global| global.interface == interface);
+    match (required, found) {
+        (_, Some(global)) => lines.push(format!("OK global {interface} = v{}", global.version)),
+        (true, None) => lines.push(format!("ERR global {interface} = missing")),
+        (false, None) => lines.push(format!("WARN global {interface} = missing")),
+    }
 }
 
 fn request_runtime_shutdown(

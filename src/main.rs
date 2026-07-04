@@ -17,7 +17,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Run { config } => app::run(config.as_deref()),
         Command::Switch { config } => ipc::send_switch_config(&config),
-        Command::Doctor => app::doctor(),
+        Command::Doctor { config } => app::doctor(config.as_deref()),
         Command::PrintConfig { config } => {
             let cfg = config::Config::load(config.as_deref())?;
             println!("{}", cfg.to_toml_pretty()?);

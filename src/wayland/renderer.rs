@@ -87,6 +87,7 @@ fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerState) -> i32 
 pub fn run_renderer_background_surface(
     cfg: &Config,
     control_rx: &mpsc::Receiver<ControlCommand>,
+    status_sink: &mut dyn FnMut(super::diagnostics::RuntimeStatusSnapshot),
 ) -> Result<RuntimeLoopExit> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
     let (globals, mut event_queue) =
@@ -173,6 +174,7 @@ pub fn run_renderer_background_surface(
         viewporter,
         fractional_scale_manager,
     )?;
+    status_sink(state.snapshot());
 
     // Set input region and commit initial surface state
     {
@@ -249,6 +251,7 @@ pub fn run_renderer_background_surface(
 
     session.play().context("failed to start renderer session")?;
     state.session = Some(session);
+    status_sink(state.snapshot());
 
     info!(
         logical_width = state.output.logical_width,
@@ -273,6 +276,7 @@ pub fn run_renderer_background_surface(
                     if let Some(ref mut session) = state.session {
                         session.stop().ok();
                     }
+                    status_sink(state.snapshot());
                     return Ok(RuntimeLoopExit::Stop);
                 }
                 ControlCommand::Pause => {
@@ -280,6 +284,7 @@ pub fn run_renderer_background_surface(
                         session.pause().ok();
                     }
                     state.paused = true;
+                    status_sink(state.snapshot());
                 }
                 ControlCommand::Resume => {
                     if let Some(ref mut session) = state.session {
@@ -287,17 +292,20 @@ pub fn run_renderer_background_surface(
                     }
                     state.paused = false;
                     state.frame_callback.ready_for_next_frame = true;
+                    status_sink(state.snapshot());
                 }
                 ControlCommand::Reload => {
                     if let Some(ref mut session) = state.session {
                         session.stop().ok();
                     }
+                    status_sink(state.snapshot());
                     return Ok(RuntimeLoopExit::RestartCurrent);
                 }
                 ControlCommand::Reconfigure => {
                     if let Some(ref mut session) = state.session {
                         session.stop().ok();
                     }
+                    status_sink(state.snapshot());
                     return Ok(RuntimeLoopExit::Reconfigure);
                 }
             }
@@ -312,6 +320,7 @@ pub fn run_renderer_background_surface(
         }
 
         state.collect_released_buffers();
+        status_sink(state.snapshot());
 
         // Tick and acquire frame
         let now = Instant::now();
@@ -330,6 +339,7 @@ pub fn run_renderer_background_surface(
                         wayland::present_frame(&mut state, &qh, frame)
                             .context("failed to present frame")?;
                         last_acquire_status = 0;
+                        status_sink(state.snapshot());
                     }
                     None => {
                         state.frame_stats.no_frame_polls =
@@ -373,13 +383,16 @@ pub fn run_renderer_background_surface(
         event_queue
             .dispatch_pending(&mut state)
             .context("failed to dispatch pending Wayland events")?;
+        status_sink(state.snapshot());
 
         let Some(read_guard) = event_queue.prepare_read() else {
             state.collect_released_buffers();
+            status_sink(state.snapshot());
             if !state.running {
                 if let Some(ref mut session) = state.session {
                     session.stop().ok();
                 }
+                status_sink(state.snapshot());
                 return Ok(RuntimeLoopExit::Stop);
             }
             continue;
@@ -406,6 +419,7 @@ pub fn run_renderer_background_surface(
             drop(read_guard);
             while event_queue.dispatch_pending(&mut state).unwrap_or(0) > 0 {}
             state.collect_released_buffers();
+            status_sink(state.snapshot());
             continue;
         }
         if (poll_fd.revents & (libc::POLLERR | libc::POLLHUP)) != 0 {
@@ -419,6 +433,7 @@ pub fn run_renderer_background_surface(
                 .dispatch_pending(&mut state)
                 .context("failed to dispatch Wayland events after read")?;
             wayland::update_input_region(&state, &qh);
+            status_sink(state.snapshot());
         } else {
             drop(read_guard);
         }
@@ -431,11 +446,13 @@ pub fn run_renderer_background_surface(
         }
 
         state.collect_released_buffers();
+        status_sink(state.snapshot());
 
         if !state.running {
             if let Some(ref mut session) = state.session {
                 session.stop().ok();
             }
+            status_sink(state.snapshot());
             return Ok(RuntimeLoopExit::Stop);
         }
     }
