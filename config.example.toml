@@ -16,3 +16,8 @@ fps = 60
 speed = 1.0
 volume = 1.0
 muted = false
+options_json = '''
+{
+  "example": true
+}
+'''

@@ -8,7 +8,7 @@
 - Presents renderer output through Wayland layer-shell
 - Supports DMA-BUF and SHM frame presentation
 - Forwards pointer input to interactive wallpapers
-- Runs one renderer session per output
+- Exposes `ctl status` and `doctor` diagnostics for the native runtime
 - Ships a GUI companion, `we-gui`, for workshop browsing and config generation
 
 ## Build
@@ -94,6 +94,7 @@ we-layerd ctl pause
 we-layerd ctl resume
 we-layerd ctl reload
 we-layerd ctl status
+we-layerd doctor --config ~/.config/we-layerd/config.toml
 ```
 
 ## More docs

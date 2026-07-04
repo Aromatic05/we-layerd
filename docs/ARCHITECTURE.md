@@ -5,6 +5,9 @@
 ```text
 renderer dynamic library
 -> renderer session
+-> renderer tick / acquire
+-> frame-callback paced present
+-> in-flight buffer backpressure
 -> acquire dmabuf/shm frame
 -> Wayland layer-shell present
 -> pointer input forwarding
@@ -45,15 +48,28 @@ renderer dynamic library
 
 The active runtime is centered in:
 
-- `src/wayland/frame_present.rs`
-- `src/wayland/renderer_layer.rs`
+- `src/wayland/renderer.rs`
+- `src/wayland/state.rs`
+- `src/wayland/wayland.rs`
+- `src/wayland/geometry.rs`
+- `src/wayland/diagnostics.rs`
 
 Current behavior:
 
-- one renderer session per output
-- one layer-shell surface per output
+- one renderer session for the selected output
+- one layer-shell surface bound to the first advertised `wl_output`
 - one presenter path that supports DMA-BUF and SHM
-- pointer input routing to the focused output session
+- presentation paced by `wl_surface.frame` callbacks
+- acquire throttled by an in-flight buffer cap
+- pointer input forwarding when `general.interactive = true`
+- live runtime status exported through `we-layerd ctl status`
+
+Current non-goals:
+
+- no linux-dmabuf feedback handling
+- no format/modifier intersection negotiation
+- no cross-GPU import matching
+- no scanout/import device probing
 
 ## Renderer source of truth
 
@@ -70,6 +86,7 @@ onRegistryGlobal
 -> initWayland
 -> onLayerSurfaceConfigure
 -> createBufferForFrame
+-> attach frame callback
 -> presentFrame
 -> main loop
 ```

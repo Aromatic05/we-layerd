@@ -34,6 +34,10 @@ scale_mode = "cover"
 - `interactive`: when `false`, `we-layerd` sets an empty input region so the wallpaper does not consume pointer input
 - `show_fps`: keeps the renderer FPS counters enabled in config/status
 - `scale_mode`: `fit`, `cover`, or `stretch`
+  - `stretch`: fill the logical surface and allow non-uniform scaling
+  - `cover`: fill the logical surface and crop the source region when buffer and viewport aspects differ
+  - `fit`: preserve aspect ratio and shrink the viewport destination when needed
+  - current `fit` limitation: the runtime uses one layer-surface plus `wp_viewporter`, so any empty area stays on the bottom/right edges instead of being centered like a full letterbox compositor scene
 
 ## Renderer settings
 
@@ -46,13 +50,24 @@ fps = 60
 speed = 1.0
 volume = 1.0
 muted = false
+options_json = '''
+{
+  "example": true
+}
+'''
 ```
 
 - `cache_path`: renderer cache directory
-- `prefer_dmabuf`: prefer DMA-BUF buffers when the compositor and renderer support them
-- `allow_shm_fallback`: allow SHM presentation when DMA-BUF is unavailable
+- `prefer_dmabuf`: prefer DMA-BUF buffers when the current simple presenter path can use them
+- `allow_shm_fallback`: allow SHM presentation when DMA-BUF is unavailable or explicitly disabled
 - `fps`: target update rate passed to the renderer
 - `speed`, `volume`, `muted`: source parameters forwarded directly to the renderer ABI
+- `options_json`: optional raw JSON string forwarded to `we_renderer::Source.options_json`; invalid JSON stops runtime startup with a clear error
+
+Current DMA-BUF scope:
+
+- `we-layerd` does not implement linux-dmabuf feedback negotiation
+- `prefer_dmabuf` and `allow_shm_fallback` are policy flags for the existing presenter path, not a full feedback-driven negotiation stack
 
 ## Library search order
 
@@ -68,4 +83,5 @@ If `renderer.library_path` is empty or does not resolve to an existing file, `we
 
 - it writes `renderer.source` as the selected workshop item directory
 - it derives `renderer.assets_path` from the Wallpaper Engine install path
+- it preserves `renderer.options_json` when re-saving an existing config
 - it no longer generates Wine, Proton, X11 capture, video-native, or `openWallpaper` arguments
