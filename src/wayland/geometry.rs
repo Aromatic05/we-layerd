@@ -93,13 +93,20 @@ fn geometry_with_render_extent(
                 viewport_source: source,
             }
         }
-        ScaleMode::Fit => PresentationGeometry {
-            render_width,
-            render_height,
-            viewport_width,
-            viewport_height,
-            viewport_source: None,
-        },
+        ScaleMode::Fit => {
+            // A single layer-surface + wp_viewporter destination cannot center letterboxing.
+            // We still preserve aspect ratio here so fit is observable in status and rendering,
+            // with the current limitation that any empty area stays on the bottom/right edges.
+            let (fit_width, fit_height) =
+                fit_destination(render_width, render_height, viewport_width, viewport_height);
+            PresentationGeometry {
+                render_width,
+                render_height,
+                viewport_width: fit_width,
+                viewport_height: fit_height,
+                viewport_source: None,
+            }
+        }
     }
 }
 
@@ -138,4 +145,22 @@ fn cover_source(
         width: render_width as f64,
         height: cropped_height,
     })
+}
+
+fn fit_destination(
+    render_width: u32,
+    render_height: u32,
+    viewport_width: u32,
+    viewport_height: u32,
+) -> (u32, u32) {
+    if render_width == 0 || render_height == 0 || viewport_width == 0 || viewport_height == 0 {
+        return (viewport_width, viewport_height);
+    }
+
+    let width_scale = viewport_width as f64 / render_width as f64;
+    let height_scale = viewport_height as f64 / render_height as f64;
+    let scale = width_scale.min(height_scale);
+    let width = (render_width as f64 * scale).round().max(1.0) as u32;
+    let height = (render_height as f64 * scale).round().max(1.0) as u32;
+    (width, height)
 }

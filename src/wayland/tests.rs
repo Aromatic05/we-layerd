@@ -46,7 +46,21 @@ fn render_extent_uses_fractional_scale() {
 }
 
 #[test]
-fn cover_geometry_crops_width_for_wide_render_source() {
+fn fit_geometry_uses_letterboxed_destination_for_16_by_9_to_16_by_10() {
+    let mut state = LayerState::test_default(ScaleMode::Fit);
+    state.output.output_mode_width = 2560;
+    state.output.output_mode_height = 1440;
+    state.output.logical_width = 1920;
+    state.output.logical_height = 1200;
+    state.update_render_extent();
+
+    assert_eq!(state.output.geometry.viewport_width, 1920);
+    assert_eq!(state.output.geometry.viewport_height, 1080);
+    assert!(state.output.geometry.viewport_source.is_none());
+}
+
+#[test]
+fn cover_geometry_crops_width_for_16_by_9_to_16_by_10() {
     let mut state = LayerState::test_default(ScaleMode::Cover);
     state.output.output_mode_width = 2560;
     state.output.output_mode_height = 1440;
@@ -55,19 +69,23 @@ fn cover_geometry_crops_width_for_wide_render_source() {
     state.update_render_extent();
 
     let source = state.output.geometry.viewport_source.expect("cover should crop");
+    assert_eq!(state.output.geometry.viewport_width, 1920);
+    assert_eq!(state.output.geometry.viewport_height, 1200);
     assert!(source.x > 0.0);
     assert_eq!(source.y, 0.0);
 }
 
 #[test]
-fn fit_geometry_keeps_full_source() {
-    let mut state = LayerState::test_default(ScaleMode::Fit);
+fn stretch_geometry_keeps_full_destination_for_16_by_9_to_16_by_10() {
+    let mut state = LayerState::test_default(ScaleMode::Stretch);
     state.output.output_mode_width = 2560;
     state.output.output_mode_height = 1440;
     state.output.logical_width = 1920;
     state.output.logical_height = 1200;
     state.update_render_extent();
 
+    assert_eq!(state.output.geometry.viewport_width, 1920);
+    assert_eq!(state.output.geometry.viewport_height, 1200);
     assert!(state.output.geometry.viewport_source.is_none());
 }
 
