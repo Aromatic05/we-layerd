@@ -1,7 +1,7 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command},
     time::Duration,
 };
 
@@ -101,16 +101,18 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::PlayPressed => {
             if !app.layerd_available {
+                app.ui_settings.status_text = "we-layerd not found in PATH".to_string();
                 return Task::none();
             }
 
             persist_current_config(app);
 
-            if can_hot_switch(app.selected_id.is_some()) && try_switch_runtime(&app.config_path) {
+            reap_runtime_child(app);
+
+            if try_switch_runtime(&app.config_path) {
+                app.ui_settings.status_text = "switched running daemon".to_string();
                 return Task::none();
             }
-
-            stop_runtime(app);
 
             let spawn =
                 Command::new("we-layerd").arg("run").arg("--config").arg(&app.config_path).spawn();
@@ -118,14 +120,24 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             match spawn {
                 Ok(child) => {
                     app.runtime_child = Some(child);
+                    app.ui_settings.status_text = "started daemon".to_string();
                 }
-                Err(_err) => {}
+                Err(err) => {
+                    app.ui_settings.status_text = format!("failed to start daemon: {err}");
+                    eprintln!("failed to start daemon: {err}");
+                }
             }
             Task::none()
         }
         Message::StopPressed => {
-            if !stop_runtime(app) {
-                let _ = send_layerd_ctl("stop");
+            let stopped = stop_runtime(app);
+            app.ui_settings.status_text = if stopped {
+                "stopped daemon".to_string()
+            } else {
+                "daemon stop request failed".to_string()
+            };
+            if !stopped {
+                eprintln!("failed to stop daemon via IPC or owned child process");
             }
             Task::none()
         }
@@ -283,10 +295,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                 let _ = send_layerd_ctl("resume");
                 Task::none()
             }
-            tray::TrayAction::Quit => {
-                let _ = stop_runtime(app);
-                iced::exit()
-            }
+            tray::TrayAction::Quit => iced::exit(),
         },
     }
 }
@@ -438,9 +447,7 @@ impl App {
 }
 
 impl Drop for App {
-    fn drop(&mut self) {
-        let _ = stop_runtime(self);
-    }
+    fn drop(&mut self) {}
 }
 
 fn build_wallpaper_grid<'a>(
@@ -711,17 +718,11 @@ fn command_exists_in_path(name: &str) -> bool {
     false
 }
 
-fn can_hot_switch(has_selection: bool) -> bool {
-    has_selection
-}
-
 fn try_switch_runtime(config_path: &Path) -> bool {
     Command::new("we-layerd")
         .arg("switch")
         .arg("--config")
         .arg(config_path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
@@ -751,10 +752,6 @@ fn stop_runtime(app: &mut App) -> bool {
         }
     }
 
-    if cleanup_runtime_residue() {
-        stopped_any = true;
-    }
-
     stopped_any
 }
 
@@ -762,11 +759,24 @@ fn send_layerd_ctl(action: &str) -> bool {
     Command::new("we-layerd")
         .arg("ctl")
         .arg(action)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+fn reap_runtime_child(app: &mut App) {
+    let Some(child) = app.runtime_child.as_mut() else {
+        return;
+    };
+    match child.try_wait() {
+        Ok(Some(_)) => {
+            app.runtime_child = None;
+        }
+        Ok(None) => {}
+        Err(err) => {
+            eprintln!("failed to query daemon child status: {err}");
+        }
+    }
 }
 
 fn wait_child_exit(child: &mut Child, attempts: usize, sleep_ms: u64) -> bool {
@@ -787,35 +797,4 @@ fn send_process_signal(pid: u32, signal: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-#[cfg(target_os = "linux")]
-fn cleanup_runtime_residue() -> bool {
-    let mut any = false;
-    let patterns = ["we-layerd run"];
-    for pattern in &patterns {
-        any |= pkill_for_user("TERM", pattern);
-    }
-    std::thread::sleep(Duration::from_millis(120));
-    for pattern in &patterns {
-        any |= pkill_for_user("KILL", pattern);
-    }
-    any
-}
-
-#[cfg(target_os = "linux")]
-fn pkill_for_user(signal: &str, pattern: &str) -> bool {
-    let user = env::var("USER").unwrap_or_default();
-    let mut cmd = Command::new("pkill");
-    cmd.arg(format!("-{signal}"));
-    if !user.is_empty() {
-        cmd.args(["-u", &user]);
-    }
-    cmd.args(["-f", pattern]).stdout(Stdio::null()).stderr(Stdio::null());
-    cmd.status().map(|s| s.success()).unwrap_or(false)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn cleanup_runtime_residue() -> bool {
-    false
 }
