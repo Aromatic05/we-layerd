@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use tracing::info;
+use tracing::{info, warn};
 use wayland_backend::client::WaylandError;
 use wayland_client::{
     globals::registry_queue_init,
@@ -63,6 +63,7 @@ fn frame_interval(fps: u32) -> Duration {
 
 fn can_present_next_frame(state: &LayerState) -> bool {
     !state.paused
+        && !state.stopping
         && state.frame_callback.ready_for_next_frame
         && !state.frame_callback.pending
         && state.buffers.in_flight.len() < state.buffers.max_in_flight
@@ -78,6 +79,85 @@ fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerState) -> i32 
     }
 
     100
+}
+
+fn flush_wayland_stop(conn: &Connection, state: &mut LayerState) -> Result<()> {
+    info!("flush begin");
+    let deadline = Instant::now() + Duration::from_millis(500);
+    loop {
+        match conn.flush() {
+            Ok(()) => {
+                state.release_pending_send_fds();
+                info!("flush end");
+                return Ok(());
+            }
+            Err(WaylandError::Io(err)) if err.kind() == ErrorKind::WouldBlock => {
+                let Some(read_guard) = conn.prepare_read() else {
+                    continue;
+                };
+                let fd = read_guard.connection_fd().as_raw_fd();
+                let mut poll_fd = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+                let timeout_ms = deadline
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or_default()
+                    .as_millis()
+                    .min(i32::MAX as u128) as i32;
+                if timeout_ms == 0 {
+                    drop(read_guard);
+                    return Err(anyhow::anyhow!("timed out flushing Wayland stop detach"));
+                }
+                let poll_result = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
+                drop(read_guard);
+                if poll_result < 0 {
+                    let poll_err = std::io::Error::last_os_error();
+                    if poll_err.kind() == ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return Err(poll_err).context("failed polling Wayland fd during stop flush");
+                }
+            }
+            Err(err) => return Err(err).context("failed to flush Wayland stop detach"),
+        }
+    }
+}
+
+fn stop_and_drop_session(state: &mut LayerState) {
+    let Some(mut session) = state.session.take() else {
+        return;
+    };
+
+    info!("session.stop begin");
+    if let Err(err) = session.stop() {
+        warn!(error = %err, "session.stop failed during teardown");
+    }
+    info!("session.stop end");
+
+    info!("Session drop / we_session_destroy begin");
+    drop(session);
+    info!("Session drop / we_session_destroy end");
+}
+
+fn exit_runtime_loop(
+    conn: &Connection,
+    state: &mut LayerState,
+    exit: RuntimeLoopExit,
+    label: &'static str,
+) -> Result<RuntimeLoopExit> {
+    info!("{label} received");
+    info!("detach surface begin");
+    wayland::begin_stop_teardown(state).context("failed to detach Wayland surface")?;
+    info!("detach surface end");
+
+    flush_wayland_stop(conn, state)?;
+    state.clear_in_flight_buffers();
+    stop_and_drop_session(state);
+
+    match exit {
+        RuntimeLoopExit::Stop => info!("returning RuntimeLoopExit::Stop"),
+        RuntimeLoopExit::RestartCurrent => info!("returning RuntimeLoopExit::RestartCurrent"),
+        RuntimeLoopExit::Reconfigure => info!("returning RuntimeLoopExit::Reconfigure"),
+    }
+    Ok(exit)
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +240,7 @@ pub fn run_renderer_background_surface(
         _library: Some(library),
         interactive: cfg.general.interactive,
         paused: false,
+        stopping: false,
         pending_input_events: Vec::new(),
     };
 
@@ -276,11 +357,9 @@ pub fn run_renderer_background_surface(
         while let Ok(cmd) = control_rx.try_recv() {
             match cmd {
                 ControlCommand::Stop => {
-                    if let Some(ref mut session) = state.session {
-                        session.stop().ok();
-                    }
+                    let exit = exit_runtime_loop(&conn, &mut state, RuntimeLoopExit::Stop, "Stop")?;
                     status_sink(state.snapshot());
-                    return Ok(RuntimeLoopExit::Stop);
+                    return Ok(exit);
                 }
                 ControlCommand::Pause => {
                     if let Some(ref mut session) = state.session {
@@ -298,18 +377,24 @@ pub fn run_renderer_background_surface(
                     status_sink(state.snapshot());
                 }
                 ControlCommand::Reload => {
-                    if let Some(ref mut session) = state.session {
-                        session.stop().ok();
-                    }
+                    let exit = exit_runtime_loop(
+                        &conn,
+                        &mut state,
+                        RuntimeLoopExit::RestartCurrent,
+                        "Reload",
+                    )?;
                     status_sink(state.snapshot());
-                    return Ok(RuntimeLoopExit::RestartCurrent);
+                    return Ok(exit);
                 }
                 ControlCommand::Reconfigure => {
-                    if let Some(ref mut session) = state.session {
-                        session.stop().ok();
-                    }
+                    let exit = exit_runtime_loop(
+                        &conn,
+                        &mut state,
+                        RuntimeLoopExit::Reconfigure,
+                        "Reconfigure",
+                    )?;
                     status_sink(state.snapshot());
-                    return Ok(RuntimeLoopExit::Reconfigure);
+                    return Ok(exit);
                 }
             }
         }
@@ -376,6 +461,12 @@ pub fn run_renderer_background_surface(
                 acquired = state.frame_stats.acquired,
                 presented = state.frame_stats.presented,
                 no_frame_polls = state.frame_stats.no_frame_polls,
+                in_flight = state.frame_stats.in_flight_count,
+                last_present_backend = state
+                    .frame_stats
+                    .last_present_backend
+                    .map(|backend| backend.as_str())
+                    .unwrap_or("unknown"),
                 last_acquire_status = status_text,
                 last_acquire_status_code = last_acquire_status,
                 "renderer stats"
@@ -392,11 +483,9 @@ pub fn run_renderer_background_surface(
             state.collect_released_buffers();
             status_sink(state.snapshot());
             if !state.running {
-                if let Some(ref mut session) = state.session {
-                    session.stop().ok();
-                }
+                let exit = exit_runtime_loop(&conn, &mut state, RuntimeLoopExit::Stop, "Stop")?;
                 status_sink(state.snapshot());
-                return Ok(RuntimeLoopExit::Stop);
+                return Ok(exit);
             }
             continue;
         };
@@ -452,11 +541,9 @@ pub fn run_renderer_background_surface(
         status_sink(state.snapshot());
 
         if !state.running {
-            if let Some(ref mut session) = state.session {
-                session.stop().ok();
-            }
+            let exit = exit_runtime_loop(&conn, &mut state, RuntimeLoopExit::Stop, "Stop")?;
             status_sink(state.snapshot());
-            return Ok(RuntimeLoopExit::Stop);
+            return Ok(exit);
         }
     }
 }

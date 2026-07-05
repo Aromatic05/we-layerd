@@ -385,6 +385,20 @@ pub(super) fn present_frame(
     Ok(())
 }
 
+pub(super) fn begin_stop_teardown(state: &mut LayerState) -> Result<()> {
+    state.stopping = true;
+    state.paused = true;
+    state.frame_callback.pending = false;
+    state.frame_callback.ready_for_next_frame = false;
+    state.objects.frame_callback = None;
+    state.pending_input_events.clear();
+
+    let surface = state.objects.surface.as_ref().ok_or_else(|| anyhow!("no surface"))?;
+    surface.attach(None, 0, 0);
+    surface.commit();
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Wayland init
 // ---------------------------------------------------------------------------

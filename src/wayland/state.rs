@@ -39,6 +39,13 @@ pub(super) struct WaylandBuffer {
     pub(super) pending_fds: Vec<OwnedFd>,
 }
 
+impl Drop for WaylandBuffer {
+    fn drop(&mut self) {
+        self.pending_fds.clear();
+        self.buffer.destroy();
+    }
+}
+
 #[derive(Default)]
 pub(super) struct WaylandObjects {
     pub(super) compositor: Option<WlCompositor>,
@@ -161,6 +168,7 @@ pub(crate) struct LayerState {
     pub(super) _library: Option<RendererLibrary>,
     pub(super) interactive: bool,
     pub(super) paused: bool,
+    pub(super) stopping: bool,
     pub(super) pending_input_events: Vec<InputEvent>,
 }
 
@@ -238,6 +246,11 @@ impl LayerState {
         self.frame_stats.in_flight_count = self.buffers.in_flight.len();
     }
 
+    pub(super) fn clear_in_flight_buffers(&mut self) {
+        self.buffers.in_flight.clear();
+        self.frame_stats.in_flight_count = 0;
+    }
+
     #[cfg(test)]
     pub(crate) fn test_default(scale_mode: ScaleMode) -> Self {
         Self {
@@ -256,6 +269,7 @@ impl LayerState {
             _library: None,
             interactive: false,
             paused: false,
+            stopping: false,
             pending_input_events: Vec::new(),
         }
     }
