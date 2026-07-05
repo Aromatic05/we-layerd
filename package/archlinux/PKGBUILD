@@ -1,0 +1,80 @@
+pkgname=we-layerd-git
+_gitname=we-layerd
+pkgver=.r159.gc165999
+pkgrel=1
+pkgdesc='Wayland daemon and GUI for running Wallpaper Engine wallpapers through wallpaper-engine-renderer'
+arch=('x86_64')
+url='https://github.com/Aromatic05/we-layerd'
+license=('custom:unlicensed')
+depends=(
+  'cef'
+  'directx-shader-compiler'
+  'fontconfig'
+  'freetype2'
+  'gstreamer'
+  'gst-plugins-bad-libs'
+  'gst-plugins-base-libs'
+  'gtk3'
+  'libdrm'
+  'libglvnd'
+  'libva'
+  'libxkbcommon'
+  'lz4'
+  'mesa'
+  'pango'
+  'vulkan-icd-loader'
+  'wayland'
+  'xdotool'
+)
+makedepends=(
+  'cmake'
+  'git'
+  'pkgconf'
+  'rust'
+  'vulkan-headers'
+  'wayland-protocols'
+)
+provides=('we-layerd')
+conflicts=('we-layerd')
+source=("${_gitname}::git+${url}.git")
+b2sums=('SKIP')
+
+pkgver() {
+  cd "${srcdir}/${_gitname}"
+
+  local base_version rev_count short_hash
+  base_version="$(sed -n 's/^version = \"\\(.*\\)\"$/\\1/p' Cargo.toml | head -n1)"
+  rev_count="$(git rev-list --count HEAD)"
+  short_hash="$(git rev-parse --short HEAD)"
+
+  printf '%s.r%s.g%s\n' "${base_version}" "${rev_count}" "${short_hash}"
+}
+
+prepare() {
+  cd "${srcdir}/${_gitname}"
+  git submodule update --init --recursive
+
+  export CARGO_HOME="${srcdir}/cargo-home"
+  cargo fetch --locked
+}
+
+build() {
+  cd "${srcdir}/${_gitname}"
+  export CARGO_HOME="${srcdir}/cargo-home"
+  export CARGO_NET_OFFLINE=true
+  export WE_LAYERD_INSTALL_PREFIX=/usr
+  cargo build --frozen --offline --workspace --release
+}
+
+package() {
+  cd "${srcdir}/${_gitname}"
+
+  install -Dm755 target/release/we-layerd "${pkgdir}/usr/bin/we-layerd"
+  install -Dm755 target/release/we-gui "${pkgdir}/usr/bin/we-gui"
+  install -Dm755 \
+    target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so \
+    "${pkgdir}/usr/lib/libwallpaper-engine-renderer.so"
+  install -Dm755 \
+    target/we-renderer-upstream/install/lib/we-cef-helper \
+    "${pkgdir}/usr/lib/we-cef-helper"
+}
