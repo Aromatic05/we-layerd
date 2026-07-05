@@ -695,22 +695,12 @@ fn stop_runtime(app: &mut App) -> bool {
     let mut stopped_any = stopped_by_ipc;
 
     if let Some(mut child) = app.runtime_child.take() {
-        if wait_child_exit(&mut child, 40, 100) {
+        if wait_child_exit(&mut child, 3, 100) {
             stopped_any = true;
         } else {
-            let _ = send_process_signal(child.id(), "INT");
-            if wait_child_exit(&mut child, 30, 100) {
-                stopped_any = true;
-            } else {
-                let _ = send_process_signal(child.id(), "TERM");
-                if wait_child_exit(&mut child, 20, 100) {
-                    stopped_any = true;
-                } else {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    stopped_any = true;
-                }
-            }
+            let _ = child.kill();
+            let _ = child.wait();
+            stopped_any = true;
         }
     }
 
@@ -745,15 +735,6 @@ fn wait_child_exit(child: &mut Child, attempts: usize, sleep_ms: u64) -> bool {
         }
     }
     false
-}
-
-fn send_process_signal(pid: u32, signal: &str) -> bool {
-    Command::new("kill")
-        .arg(format!("-{signal}"))
-        .arg(pid.to_string())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
