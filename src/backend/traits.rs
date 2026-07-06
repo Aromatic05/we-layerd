@@ -17,7 +17,7 @@ pub enum BackendKind {
 impl BackendKind {
     pub fn as_config_str(self) -> &'static str {
         match self {
-            Self::LayerShell => "layer-shell",
+            Self::LayerShell => "layer_shell",
             Self::Gnome => "gnome",
         }
     }

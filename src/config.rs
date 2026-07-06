@@ -45,7 +45,7 @@ pub enum ScaleMode {
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "snake_case")]
 pub enum ConfigBackend {
     #[default]
     LayerShell,
@@ -251,8 +251,8 @@ mod tests {
 
     #[test]
     fn config_accepts_layer_shell_backend() {
-        let cfg: Config = toml::from_str("[general]\nbackend = \"layer-shell\"\n")
-            .expect("valid layer-shell backend");
+        let cfg: Config = toml::from_str("[general]\nbackend = \"layer_shell\"\n")
+            .expect("valid layer_shell backend");
         assert_eq!(cfg.general.backend, ConfigBackend::LayerShell);
     }
 
