@@ -1,0 +1,24 @@
+<node>
+  <interface name="io.github.weLayerd.Gnome.WindowBridge">
+    <method name="Ping">
+      <arg type="s" name="version" direction="out"/>
+    </method>
+    <method name="RegisterWindow">
+      <arg type="u" name="xid" direction="in"/>
+      <arg type="u" name="pid" direction="in"/>
+      <arg type="s" name="title" direction="in"/>
+      <arg type="s" name="wm_class" direction="in"/>
+      <arg type="b" name="accepted" direction="out"/>
+    </method>
+    <method name="UnregisterWindow">
+      <arg type="u" name="xid" direction="in"/>
+      <arg type="b" name="removed" direction="out"/>
+    </method>
+  </interface>
+  <interface name="io.github.weLayerd.Gnome.VideoBridge">
+    <method name="StartVideo"/>
+    <method name="StopVideo"/>
+    <method name="PauseVideo"/>
+    <method name="ResumeVideo"/>
+  </interface>
+</node>
