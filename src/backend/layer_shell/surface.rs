@@ -28,23 +28,16 @@ use wayland_protocols::wp::{
     },
     viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter},
 };
-use wayland_protocols::xdg::shell::client::{
-    xdg_surface::{Event as XdgSurfaceEvent, XdgSurface},
-    xdg_toplevel::{Event as XdgToplevelEvent, XdgToplevel},
-    xdg_wm_base::{Event as XdgWmBaseEvent, XdgWmBase},
-};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
     zwlr_layer_surface_v1::{Event as LayerSurfaceEvent, ZwlrLayerSurfaceV1},
 };
 use we_renderer::Frame;
 
-use super::state::{LayerState, WaylandBuffer, FRACTIONAL_SCALE_DENOMINATOR};
-
-pub(super) enum SurfaceRole<'a> {
-    LayerShell,
-    XdgToplevel { title: &'a str, app_id: &'a str },
-}
+use crate::backend::{
+    layer_shell::state::{LayerShellState, WaylandBuffer},
+    wayland_common::output::FRACTIONAL_SCALE_DENOMINATOR,
+};
 
 // ---------------------------------------------------------------------------
 // DRM format helper
@@ -66,7 +59,7 @@ fn to_opaque_drm_fourcc(fourcc: u32) -> u32 {
 // Dispatch impls
 // ---------------------------------------------------------------------------
 
-impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerState {
+impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerShellState {
     fn event(
         state: &mut Self,
         layer_surface: &ZwlrLayerSurfaceV1,
@@ -92,72 +85,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerState {
     }
 }
 
-impl Dispatch<XdgWmBase, ()> for LayerState {
-    fn event(
-        _state: &mut Self,
-        wm_base: &XdgWmBase,
-        event: XdgWmBaseEvent,
-        _data: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-        if let XdgWmBaseEvent::Ping { serial } = event {
-            wm_base.pong(serial);
-        }
-    }
-}
-
-impl Dispatch<XdgSurface, ()> for LayerState {
-    fn event(
-        state: &mut Self,
-        xdg_surface: &XdgSurface,
-        event: XdgSurfaceEvent,
-        _data: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-        if let XdgSurfaceEvent::Configure { serial } = event {
-            xdg_surface.ack_configure(serial);
-            state.configured = true;
-            if state.output.logical_width == 0 {
-                state.output.logical_width = state.output.fallback_width;
-            }
-            if state.output.logical_height == 0 {
-                state.output.logical_height = state.output.fallback_height;
-            }
-            state.update_render_extent();
-            state.update_viewport_destination();
-        }
-    }
-}
-
-impl Dispatch<XdgToplevel, ()> for LayerState {
-    fn event(
-        state: &mut Self,
-        _toplevel: &XdgToplevel,
-        event: XdgToplevelEvent,
-        _data: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-        match event {
-            XdgToplevelEvent::Configure { width, height, .. } => {
-                if width > 0 {
-                    state.output.logical_width = width as u32;
-                }
-                if height > 0 {
-                    state.output.logical_height = height as u32;
-                }
-                state.update_render_extent();
-                state.update_viewport_destination();
-            }
-            XdgToplevelEvent::Close => state.running = false,
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<WlOutput, ()> for LayerState {
+impl Dispatch<WlOutput, ()> for LayerShellState {
     fn event(
         state: &mut Self,
         _proxy: &WlOutput,
@@ -183,7 +111,7 @@ impl Dispatch<WlOutput, ()> for LayerState {
     }
 }
 
-impl Dispatch<WpFractionalScaleV1, ()> for LayerState {
+impl Dispatch<WpFractionalScaleV1, ()> for LayerShellState {
     fn event(
         state: &mut Self,
         _proxy: &WpFractionalScaleV1,
@@ -199,7 +127,7 @@ impl Dispatch<WpFractionalScaleV1, ()> for LayerState {
     }
 }
 
-impl Dispatch<WlSeat, ()> for LayerState {
+impl Dispatch<WlSeat, ()> for LayerShellState {
     fn event(
         state: &mut Self,
         seat: &WlSeat,
@@ -223,7 +151,7 @@ impl Dispatch<WlSeat, ()> for LayerState {
     }
 }
 
-impl Dispatch<WlPointer, ()> for LayerState {
+impl Dispatch<WlPointer, ()> for LayerShellState {
     fn event(
         state: &mut Self,
         _proxy: &WlPointer,
@@ -302,7 +230,7 @@ impl Dispatch<WlPointer, ()> for LayerState {
     }
 }
 
-impl Dispatch<WlCallback, ()> for LayerState {
+impl Dispatch<WlCallback, ()> for LayerShellState {
     fn event(
         state: &mut Self,
         callback: &WlCallback,
@@ -328,7 +256,7 @@ impl Dispatch<WlCallback, ()> for LayerState {
     }
 }
 
-impl Dispatch<WlBuffer, std::sync::Arc<std::sync::atomic::AtomicBool>> for LayerState {
+impl Dispatch<WlBuffer, std::sync::Arc<std::sync::atomic::AtomicBool>> for LayerShellState {
     fn event(
         _state: &mut Self,
         _proxy: &WlBuffer,
@@ -343,7 +271,7 @@ impl Dispatch<WlBuffer, std::sync::Arc<std::sync::atomic::AtomicBool>> for Layer
     }
 }
 
-impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListContents> for LayerState {
+impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListContents> for LayerShellState {
     fn event(
         _state: &mut Self,
         _proxy: &wl_registry::WlRegistry,
@@ -355,18 +283,18 @@ impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListConten
     }
 }
 
-delegate_noop!(LayerState: ignore WlCompositor);
-delegate_noop!(LayerState: ignore WlSurface);
-delegate_noop!(LayerState: ignore WlRegion);
-delegate_noop!(LayerState: ignore ZwlrLayerShellV1);
-delegate_noop!(LayerState: ignore WlShm);
-delegate_noop!(LayerState: ignore WlShmPool);
-delegate_noop!(LayerState: ignore ZwpLinuxDmabufV1);
-delegate_noop!(LayerState: ignore ZwpLinuxBufferParamsV1);
-delegate_noop!(LayerState: ignore WpViewporter);
-delegate_noop!(LayerState: ignore WpViewport);
+delegate_noop!(LayerShellState: ignore WlCompositor);
+delegate_noop!(LayerShellState: ignore WlSurface);
+delegate_noop!(LayerShellState: ignore WlRegion);
+delegate_noop!(LayerShellState: ignore ZwlrLayerShellV1);
+delegate_noop!(LayerShellState: ignore WlShm);
+delegate_noop!(LayerShellState: ignore WlShmPool);
+delegate_noop!(LayerShellState: ignore ZwpLinuxDmabufV1);
+delegate_noop!(LayerShellState: ignore ZwpLinuxBufferParamsV1);
+delegate_noop!(LayerShellState: ignore WpViewporter);
+delegate_noop!(LayerShellState: ignore WpViewport);
 delegate_noop!(
-    LayerState: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1
+    LayerShellState: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1
 );
 
 // ---------------------------------------------------------------------------
@@ -374,8 +302,8 @@ delegate_noop!(
 // ---------------------------------------------------------------------------
 
 pub(super) fn create_buffer_for_frame(
-    state: &LayerState,
-    qh: &QueueHandle<LayerState>,
+    state: &LayerShellState,
+    qh: &QueueHandle<LayerShellState>,
     frame: Frame,
 ) -> Result<WaylandBuffer> {
     match frame {
@@ -436,8 +364,8 @@ pub(super) fn create_buffer_for_frame(
 // ---------------------------------------------------------------------------
 
 pub(super) fn present_frame(
-    state: &mut LayerState,
-    qh: &QueueHandle<LayerState>,
+    state: &mut LayerShellState,
+    qh: &QueueHandle<LayerShellState>,
     frame: Frame,
 ) -> Result<()> {
     let entry = create_buffer_for_frame(state, qh, frame)?;
@@ -460,7 +388,7 @@ pub(super) fn present_frame(
     Ok(())
 }
 
-pub(super) fn begin_stop_teardown(state: &mut LayerState) -> Result<()> {
+pub(super) fn begin_stop_teardown(state: &mut LayerShellState) -> Result<()> {
     state.stopping = true;
     state.paused = true;
     state.frame_callback.pending = false;
@@ -481,19 +409,17 @@ pub(super) fn begin_stop_teardown(state: &mut LayerState) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn init_wayland(
     _conn: &Connection,
-    qh: &QueueHandle<LayerState>,
-    state: &mut LayerState,
+    qh: &QueueHandle<LayerShellState>,
+    state: &mut LayerShellState,
     globals: &wayland_client::globals::GlobalList,
     compositor: WlCompositor,
     layer_shell: Option<ZwlrLayerShellV1>,
-    xdg_wm_base: Option<XdgWmBase>,
     shm: WlShm,
     dmabuf: Option<ZwpLinuxDmabufV1>,
     dmabuf_version: u32,
     seat: Option<WlSeat>,
     viewporter: Option<WpViewporter>,
     fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
-    surface_role: SurfaceRole<'_>,
 ) -> Result<()> {
     state.objects.compositor = Some(compositor.clone());
     state.compositor_version = compositor.version();
@@ -550,44 +476,28 @@ pub(super) fn init_wayland(
         tracing::info!("fractional-scale-v1 unavailable, falling back to wl_output integer scale");
     }
 
-    match surface_role {
-        SurfaceRole::LayerShell => {
-            let layer_shell =
-                layer_shell.ok_or_else(|| anyhow!("zwlr_layer_shell_v1 unavailable"))?;
-            let layer_surface = layer_shell.get_layer_surface(
-                surface,
-                state.objects.output.as_ref(),
-                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
-                "wallpaper-engine-renderer".to_string(),
-                qh,
-                (),
-            );
-            layer_surface.set_anchor(
-                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
-                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Bottom
-                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left
-                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Right,
-            );
-            layer_surface.set_size(0, 0);
-            layer_surface.set_exclusive_zone(-1);
-            layer_surface.set_margin(0, 0, 0, 0);
-            layer_surface.set_keyboard_interactivity(
-                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
-            );
-            state.objects.layer_surface = Some(layer_surface);
-        }
-        SurfaceRole::XdgToplevel { title, app_id } => {
-            let xdg_wm_base =
-                xdg_wm_base.ok_or_else(|| anyhow!("xdg_wm_base unavailable"))?;
-            let xdg_surface = xdg_wm_base.get_xdg_surface(surface, qh, ());
-            let xdg_toplevel = xdg_surface.get_toplevel(qh, ());
-            xdg_toplevel.set_title(title.to_string());
-            xdg_toplevel.set_app_id(app_id.to_string());
-            xdg_toplevel.set_fullscreen(state.objects.output.as_ref());
-            state.objects.xdg_surface = Some(xdg_surface);
-            state.objects.xdg_toplevel = Some(xdg_toplevel);
-        }
-    }
+    let layer_shell = layer_shell.ok_or_else(|| anyhow!("zwlr_layer_shell_v1 unavailable"))?;
+    let layer_surface = layer_shell.get_layer_surface(
+        surface,
+        state.objects.output.as_ref(),
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
+        "wallpaper-engine-renderer".to_string(),
+        qh,
+        (),
+    );
+    layer_surface.set_anchor(
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Bottom
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Right,
+    );
+    layer_surface.set_size(0, 0);
+    layer_surface.set_exclusive_zone(-1);
+    layer_surface.set_margin(0, 0, 0, 0);
+    layer_surface.set_keyboard_interactivity(
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
+    );
+    state.objects.layer_surface = Some(layer_surface);
 
     if seat.is_some() {
         state.objects.pointer = None;
@@ -600,7 +510,7 @@ pub(super) fn init_wayland(
 // Input region helper
 // ---------------------------------------------------------------------------
 
-pub(super) fn update_input_region(state: &LayerState, qh: &QueueHandle<LayerState>) {
+pub(super) fn update_input_region(state: &LayerShellState, qh: &QueueHandle<LayerShellState>) {
     if let (Some(ref compositor), Some(ref surface)) =
         (&state.objects.compositor, &state.objects.surface)
     {

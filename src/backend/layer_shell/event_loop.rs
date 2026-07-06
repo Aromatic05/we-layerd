@@ -1,15 +1,13 @@
 use std::{
     io::ErrorKind,
     os::fd::AsRawFd,
-    sync::mpsc,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
-use tracing::{info, warn};
+use tracing::info;
 use wayland_backend::client::WaylandError;
 use wayland_client::{
-    globals::registry_queue_init,
     protocol::{wl_compositor::WlCompositor, wl_seat::WlSeat, wl_shm::WlShm},
     Connection,
 };
@@ -18,20 +16,25 @@ use wayland_protocols::wp::{
     linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     viewporter::client::wp_viewporter::WpViewporter,
 };
-use wayland_protocols::xdg::shell::client::xdg_wm_base::XdgWmBase;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use we_core::install_layout::{expand_tilde, resolve_renderer_library};
-use we_renderer::{Frame, RenderConfig, RendererLibrary, Source};
+use we_renderer::{Frame, RenderConfig, Source};
 
 use crate::{
-    config::Config,
+    backend::{
+        layer_shell::{
+            presenter,
+            state::{BufferBookkeeping, FrameCallbackState, LayerShellState, WaylandObjects},
+            surface,
+        },
+        traits::BackendContext,
+        wayland_common::{connection, output::OutputState, registry},
+    },
     ipc::{ControlCommand, RuntimeLoopExit},
-};
-
-use super::wayland::{self, SurfaceRole};
-use super::{
-    diagnostics::{OptionsJsonDiagnostics, PresentBackend, RuntimeDiagnostics},
-    state::{BufferBookkeeping, FrameCallbackState, LayerState, OutputState, WaylandObjects},
+    runtime::{
+        renderer_session::RendererSession,
+        status::{OptionsJsonDiagnostics, PresentBackend, RuntimeDiagnostics},
+    },
 };
 
 fn env_var_enabled(name: &str) -> bool {
@@ -42,7 +45,7 @@ fn env_var_equals(name: &str, expected: &str) -> bool {
     std::env::var(name).map(|v| v == expected).unwrap_or(false)
 }
 
-fn note_frame_acquired(state: &mut LayerState, frame: &Frame) {
+fn note_frame_acquired(state: &mut LayerShellState, frame: &Frame) {
     state.frame_stats.acquired = state.frame_stats.acquired.saturating_add(1);
     match frame {
         Frame::Dmabuf(dmabuf) => {
@@ -62,7 +65,7 @@ fn frame_interval(fps: u32) -> Duration {
     Duration::from_secs_f64(1.0 / fps.max(1) as f64)
 }
 
-fn can_present_next_frame(state: &LayerState) -> bool {
+fn can_present_next_frame(state: &LayerShellState) -> bool {
     !state.paused
         && !state.stopping
         && state.frame_callback.ready_for_next_frame
@@ -70,7 +73,7 @@ fn can_present_next_frame(state: &LayerState) -> bool {
         && state.buffers.in_flight.len() < state.buffers.max_in_flight
 }
 
-fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerState) -> i32 {
+fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerShellState) -> i32 {
     if can_present_next_frame(state) {
         return next_tick_at
             .checked_duration_since(now)
@@ -82,7 +85,7 @@ fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerState) -> i32 
     100
 }
 
-fn flush_wayland_stop(conn: &Connection, state: &mut LayerState) -> Result<()> {
+fn flush_wayland_stop(conn: &Connection, state: &mut LayerShellState) -> Result<()> {
     info!("flush begin");
     let deadline = Instant::now() + Duration::from_millis(500);
     loop {
@@ -122,31 +125,25 @@ fn flush_wayland_stop(conn: &Connection, state: &mut LayerState) -> Result<()> {
     }
 }
 
-fn stop_and_drop_session(state: &mut LayerState) {
-    let Some(mut session) = state.session.take() else {
+fn stop_and_drop_session(state: &mut LayerShellState) {
+    let Some(session) = state.session.take() else {
         return;
     };
 
     info!("session.stop begin");
-    if let Err(err) = session.stop() {
-        warn!(error = %err, "session.stop failed during teardown");
-    }
+    session.stop();
     info!("session.stop end");
-
-    info!("Session drop / we_session_destroy begin");
-    drop(session);
-    info!("Session drop / we_session_destroy end");
 }
 
 fn exit_runtime_loop(
     conn: &Connection,
-    state: &mut LayerState,
+    state: &mut LayerShellState,
     exit: RuntimeLoopExit,
     label: &'static str,
 ) -> Result<RuntimeLoopExit> {
     info!("{label} received");
     info!("detach surface begin");
-    wayland::begin_stop_teardown(state).context("failed to detach Wayland surface")?;
+    surface::begin_stop_teardown(state).context("failed to detach Wayland surface")?;
     info!("detach surface end");
 
     flush_wayland_stop(conn, state)?;
@@ -161,51 +158,22 @@ fn exit_runtime_loop(
     Ok(exit)
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
+pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
+    if ctx.shutdown_requested.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(RuntimeLoopExit::Stop);
+    }
 
-pub fn run_renderer_background_surface(
-    cfg: &Config,
-    control_rx: &mpsc::Receiver<ControlCommand>,
-    status_sink: &mut dyn FnMut(super::diagnostics::RuntimeStatusSnapshot),
-) -> Result<RuntimeLoopExit> {
-    run_renderer_surface(cfg, control_rx, status_sink, SurfaceRole::LayerShell)
-}
+    let cfg = ctx.cfg;
+    let control_rx = ctx.control_rx;
+    let status_sink = ctx.status_sink;
 
-pub fn run_renderer_window_surface(
-    cfg: &Config,
-    title: &str,
-    app_id: &str,
-    control_rx: &mpsc::Receiver<ControlCommand>,
-    status_sink: &mut dyn FnMut(super::diagnostics::RuntimeStatusSnapshot),
-) -> Result<RuntimeLoopExit> {
-    run_renderer_surface(
-        cfg,
-        control_rx,
-        status_sink,
-        SurfaceRole::XdgToplevel {
-            title,
-            app_id,
-        },
-    )
-}
-
-fn run_renderer_surface(
-    cfg: &Config,
-    control_rx: &mpsc::Receiver<ControlCommand>,
-    status_sink: &mut dyn FnMut(super::diagnostics::RuntimeStatusSnapshot),
-    surface_role: SurfaceRole<'_>,
-) -> Result<RuntimeLoopExit> {
-    let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
-    let (globals, mut event_queue) =
-        registry_queue_init::<LayerState>(&conn).context("failed to init Wayland registry")?;
+    let conn = connection::connect_to_env()?;
+    let (globals, mut event_queue) = registry::init_registry::<LayerShellState>(&conn)?;
     let qh = event_queue.handle();
 
     let compositor: WlCompositor =
         globals.bind(&qh, 4..=6, ()).context("failed to bind wl_compositor")?;
     let layer_shell = globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=5, ()).ok();
-    let xdg_wm_base = globals.bind::<XdgWmBase, _, _>(&qh, 1..=6, ()).ok();
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).context("failed to bind wl_shm")?;
 
     let dmabuf_global =
@@ -225,20 +193,16 @@ fn run_renderer_surface(
     if let Some(install_root) = option_env!("WE_LAYERD_RENDERER_INSTALL_ROOT") {
         std::env::set_var("WE_LAYERD_RENDERER_INSTALL_ROOT", install_root);
     }
-    let library_path = resolve_renderer_library(&cfg.renderer.library_path)?;
-    let library = RendererLibrary::load(&library_path)
-        .with_context(|| format!("failed to load renderer library {}", library_path.display()))?;
-
     let cache_path_arg =
         if cfg.renderer.cache_path.trim().is_empty() { None } else { Some(cache_path.as_path()) };
 
-    let mut session =
-        library.create_session(cache_path_arg).context("failed to create renderer session")?;
+    let library_path = resolve_renderer_library(&cfg.renderer.library_path)?;
+    let mut session = RendererSession::create(&library_path, cache_path_arg)?;
 
     let (options_json_present, options_json_len, options_json_valid) =
         cfg.renderer.options_json_diagnostics();
 
-    let mut state = LayerState {
+    let mut state = LayerShellState {
         objects: WaylandObjects::default(),
         output: OutputState::new(cfg.general.scale_mode),
         buffers: BufferBookkeeping::default(),
@@ -265,28 +229,25 @@ fn run_renderer_surface(
         running: true,
         configured: false,
         session: None,
-        _library: Some(library),
         interactive: cfg.general.interactive,
         paused: false,
         stopping: false,
-        pending_input_events: Vec::new(),
+        pending_input_events: crate::runtime::input::PendingInput::default(),
     };
 
-    wayland::init_wayland(
+    surface::init_wayland(
         &conn,
         &qh,
         &mut state,
         &globals,
         compositor,
         layer_shell,
-        xdg_wm_base,
         shm,
         dmabuf,
         dmabuf_version,
         seat,
         viewporter,
         fractional_scale_manager,
-        surface_role,
     )?;
     status_sink(state.snapshot());
 
@@ -338,7 +299,7 @@ fn run_renderer_surface(
         muted: cfg.renderer.muted,
         options_json: cfg.renderer.options_json.clone(),
     };
-    session.set_source(&source).context("failed to set renderer source")?;
+    session.set_source(source)?;
 
     // Determine dmabuf preference
     let prefer_dmabuf = if env_var_enabled("__NV_PRIME_RENDER_OFFLOAD")
@@ -361,9 +322,9 @@ fn run_renderer_surface(
             prefer_dmabuf,
             allow_shm_fallback: cfg.renderer.allow_shm_fallback,
         })
-        .context("failed to set render config")?;
+        ?;
 
-    session.play().context("failed to start renderer session")?;
+    session.play()?;
     state.session = Some(session);
     status_sink(state.snapshot());
 
@@ -393,14 +354,14 @@ fn run_renderer_surface(
                 }
                 ControlCommand::Pause => {
                     if let Some(ref mut session) = state.session {
-                        session.pause().ok();
+                        session.pause();
                     }
                     state.paused = true;
                     status_sink(state.snapshot());
                 }
                 ControlCommand::Resume => {
                     if let Some(ref mut session) = state.session {
-                        session.play().ok();
+                        session.resume();
                     }
                     state.paused = false;
                     state.frame_callback.ready_for_next_frame = true;
@@ -430,10 +391,10 @@ fn run_renderer_surface(
         }
 
         // Forward input events
-        let input_events = std::mem::take(&mut state.pending_input_events);
+        let input_events = state.pending_input_events.drain();
         if let Some(ref mut session) = state.session {
             for event in input_events {
-                session.send_input_event(event).ok();
+                let _ = session.session.send_input_event(event);
             }
         }
 
@@ -449,12 +410,12 @@ fn run_renderer_surface(
         }
         if can_present_next_frame(&state) && now >= next_tick_at {
             if let Some(ref mut session) = state.session {
-                session.tick().context("renderer tick failed")?;
+                session.tick()?;
                 next_tick_at = now + render_interval;
-                match session.acquire_frame().context("failed to acquire frame")? {
+                match session.acquire_frame()? {
                     Some(frame) => {
                         note_frame_acquired(&mut state, &frame);
-                        wayland::present_frame(&mut state, &qh, frame)
+                        presenter::present_frame(&mut state, &qh, frame)
                             .context("failed to present frame")?;
                         last_acquire_status = 0;
                         status_sink(state.snapshot());
@@ -554,7 +515,7 @@ fn run_renderer_surface(
             event_queue
                 .dispatch_pending(&mut state)
                 .context("failed to dispatch Wayland events after read")?;
-            wayland::update_input_region(&state, &qh);
+            surface::update_input_region(&state, &qh);
             status_sink(state.snapshot());
         } else {
             drop(read_guard);

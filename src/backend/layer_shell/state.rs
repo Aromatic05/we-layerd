@@ -15,21 +15,15 @@ use wayland_protocols::wp::{
     linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     viewporter::client::wp_viewport::WpViewport,
 };
-use wayland_protocols::xdg::shell::client::{
-    xdg_surface::XdgSurface,
-    xdg_toplevel::XdgToplevel,
-};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
-use we_renderer::{InputEvent, RendererLibrary, Session};
 
-use crate::config::ScaleMode;
-
-use super::{
-    diagnostics::{FrameStats, RuntimeDiagnostics, RuntimeStatusSnapshot},
-    geometry::{compute_geometry, GeometryInput, PresentationGeometry},
+use crate::{
+    backend::wayland_common::output::OutputState,
+    config::ScaleMode,
+    runtime::{input::PendingInput, renderer_session::RendererSession},
+    runtime::status::{FrameStats, RuntimeDiagnostics, RuntimeStatusSnapshot},
 };
 
-pub(super) const FRACTIONAL_SCALE_DENOMINATOR: u32 = 120;
 pub(super) const MAX_IN_FLIGHT_BUFFERS: usize = 3;
 
 // ---------------------------------------------------------------------------
@@ -58,86 +52,10 @@ pub(super) struct WaylandObjects {
     pub(super) output: Option<WlOutput>,
     pub(super) viewport: Option<WpViewport>,
     pub(super) layer_surface: Option<ZwlrLayerSurfaceV1>,
-    pub(super) xdg_surface: Option<XdgSurface>,
-    pub(super) xdg_toplevel: Option<XdgToplevel>,
     pub(super) dmabuf: Option<ZwpLinuxDmabufV1>,
     pub(super) shm: Option<WlShm>,
     pub(super) fractional_scale: Option<WpFractionalScaleV1>,
     pub(super) frame_callback: Option<WlCallback>,
-}
-
-pub(super) struct OutputState {
-    pub(super) output_scale: u32,
-    pub(super) preferred_fractional_scale: u32,
-    pub(super) output_mode_width: u32,
-    pub(super) output_mode_height: u32,
-    pub(super) logical_width: u32,
-    pub(super) logical_height: u32,
-    pub(super) fallback_width: u32,
-    pub(super) fallback_height: u32,
-    pub(super) scale_mode: ScaleMode,
-    pub(super) geometry: PresentationGeometry,
-    pub(super) pointer_x: f64,
-    pub(super) pointer_y: f64,
-}
-
-impl OutputState {
-    pub(super) fn new(scale_mode: ScaleMode) -> Self {
-        let mut output = Self {
-            output_scale: 1,
-            preferred_fractional_scale: 0,
-            output_mode_width: 0,
-            output_mode_height: 0,
-            logical_width: 0,
-            logical_height: 0,
-            fallback_width: 1920,
-            fallback_height: 1080,
-            scale_mode,
-            geometry: PresentationGeometry {
-                render_width: 1920,
-                render_height: 1080,
-                viewport_width: 1920,
-                viewport_height: 1080,
-                viewport_source: None,
-            },
-            pointer_x: 0.0,
-            pointer_y: 0.0,
-        };
-        output.recompute_geometry();
-        output
-    }
-
-    pub(super) fn render_scale_factor(&self) -> f64 {
-        if self.preferred_fractional_scale >= FRACTIONAL_SCALE_DENOMINATOR {
-            self.preferred_fractional_scale as f64 / FRACTIONAL_SCALE_DENOMINATOR as f64
-        } else {
-            self.output_scale.max(1) as f64
-        }
-    }
-
-    pub(super) fn recompute_geometry(&mut self) {
-        self.geometry = compute_geometry(GeometryInput {
-            logical_width: self.logical_width,
-            logical_height: self.logical_height,
-            output_mode_width: self.output_mode_width,
-            output_mode_height: self.output_mode_height,
-            fallback_width: self.fallback_width,
-            fallback_height: self.fallback_height,
-            output_scale: self.output_scale,
-            preferred_fractional_scale: self.preferred_fractional_scale,
-            scale_mode: self.scale_mode,
-        });
-    }
-
-    pub(super) fn normalized_pointer(&self) -> Option<(f32, f32)> {
-        if self.logical_width == 0 || self.logical_height == 0 {
-            return None;
-        }
-        Some((
-            (self.pointer_x / self.logical_width as f64) as f32,
-            (self.pointer_y / self.logical_height as f64) as f32,
-        ))
-    }
 }
 
 #[derive(Default)]
@@ -158,7 +76,7 @@ impl Default for BufferBookkeeping {
     }
 }
 
-pub(crate) struct LayerState {
+pub(crate) struct LayerShellState {
     pub(super) objects: WaylandObjects,
     pub(super) output: OutputState,
     pub(super) buffers: BufferBookkeeping,
@@ -170,15 +88,14 @@ pub(crate) struct LayerState {
     pub(super) output_count: u32,
     pub(super) running: bool,
     pub(super) configured: bool,
-    pub(super) session: Option<Session>,
-    pub(super) _library: Option<RendererLibrary>,
+    pub(super) session: Option<RendererSession>,
     pub(super) interactive: bool,
     pub(super) paused: bool,
     pub(super) stopping: bool,
-    pub(super) pending_input_events: Vec<InputEvent>,
+    pub(super) pending_input_events: PendingInput,
 }
 
-impl LayerState {
+impl LayerShellState {
     pub(super) fn update_render_extent(&mut self) {
         self.output.recompute_geometry();
     }
@@ -211,7 +128,7 @@ impl LayerState {
     pub(super) fn snapshot(&self) -> RuntimeStatusSnapshot {
         RuntimeStatusSnapshot {
             runtime: self.diagnostics.clone(),
-            presentation: super::diagnostics::PresentationStatus {
+            presentation: crate::runtime::status::PresentationStatus {
                 configured: self.configured,
                 logical_width: self.output.logical_width,
                 logical_height: self.output.logical_height,
@@ -272,11 +189,28 @@ impl LayerState {
             running: true,
             configured: false,
             session: None,
-            _library: None,
             interactive: false,
             paused: false,
             stopping: false,
-            pending_input_events: Vec::new(),
+            pending_input_events: PendingInput::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LayerShellState;
+    use crate::config::ScaleMode;
+
+    #[test]
+    fn snapshot_reflects_runtime_geometry_without_layer_shell_protocol_objects() {
+        let mut state = LayerShellState::test_default(ScaleMode::Stretch);
+        state.output.logical_width = 1280;
+        state.output.logical_height = 720;
+        state.update_render_extent();
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.presentation.render_width, 1280);
+        assert_eq!(snapshot.presentation.render_height, 720);
     }
 }
