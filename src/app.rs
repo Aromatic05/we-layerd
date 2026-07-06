@@ -15,11 +15,17 @@ use we_core::install_layout::{expand_tilde, resolve_renderer_library};
 use we_renderer::RendererLibrary;
 
 use crate::{
-    config::{Backend, Config},
+    config::Config,
     gnome,
     ipc::{self, ControlCommand, RuntimeLoopExit},
     wayland::{self, diagnostics::RuntimeStatusSnapshot},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeBackend {
+    LayerShell,
+    GnomeShell,
+}
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
@@ -152,7 +158,7 @@ impl RuntimePhase {
 
 #[derive(Debug, Clone)]
 struct RuntimeState {
-    backend: Backend,
+    backend: RuntimeBackend,
     phase: RuntimePhase,
     generation: u64,
     source: String,
@@ -163,7 +169,7 @@ struct RuntimeState {
 impl RuntimeState {
     fn new(cfg: &Config) -> Self {
         Self {
-            backend: cfg.general.backend,
+            backend: resolve_backend(),
             phase: RuntimePhase::Idle,
             generation: 0,
             source: cfg.renderer.source.clone(),
@@ -174,7 +180,7 @@ impl RuntimeState {
 
     fn begin_session(&mut self, cfg: &Config) -> u64 {
         self.generation = self.generation.saturating_add(1);
-        self.backend = cfg.general.backend;
+        self.backend = resolve_backend();
         self.phase = RuntimePhase::Starting;
         self.source = cfg.renderer.source.clone();
         self.error = None;
@@ -183,7 +189,7 @@ impl RuntimeState {
     }
 
     fn begin_switch(&mut self, cfg: &Config) {
-        self.backend = cfg.general.backend;
+        self.backend = resolve_backend();
         self.phase = RuntimePhase::Starting;
         self.source = cfg.renderer.source.clone();
         self.error = None;
@@ -248,10 +254,18 @@ impl RuntimeState {
     }
 }
 
-fn backend_name(backend: Backend) -> &'static str {
+fn backend_name(backend: RuntimeBackend) -> &'static str {
     match backend {
-        Backend::LayerShell => "layer_shell",
-        Backend::GnomeShell => "gnome_shell",
+        RuntimeBackend::LayerShell => "layer_shell",
+        RuntimeBackend::GnomeShell => "gnome_shell",
+    }
+}
+
+fn resolve_backend() -> RuntimeBackend {
+    if gnome::is_gnome_session() {
+        RuntimeBackend::GnomeShell
+    } else {
+        RuntimeBackend::LayerShell
     }
 }
 
@@ -299,8 +313,10 @@ fn run_runtime_loop(
         return Ok(RuntimeLoopExit::Stop);
     }
 
+    let backend = resolve_backend();
+
     info!(
-        backend = backend_name(cfg.general.backend),
+        backend = backend_name(backend),
         source = %cfg.renderer.source,
         assets_path = %cfg.renderer.assets_path,
         library_path = %cfg.renderer.library_path,
@@ -311,13 +327,13 @@ fn run_runtime_loop(
         state.mark_running(generation);
     }
 
-    match cfg.general.backend {
-        Backend::LayerShell => {
+    match backend {
+        RuntimeBackend::LayerShell => {
             wayland::run_renderer_background_surface(&cfg, control_rx, &mut |snapshot| {
                 update_runtime_snapshot(runtime_state, snapshot)
             })
         }
-        Backend::GnomeShell => gnome::run_session(&cfg, control_rx, |cfg, window, control_rx| {
+        RuntimeBackend::GnomeShell => gnome::run_session(&cfg, control_rx, |cfg, window, control_rx| {
             wayland::run_renderer_window_surface(
                 cfg,
                 &window.title,
@@ -366,8 +382,9 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     let mut lines = Vec::new();
     let (options_json_present, options_json_len, options_json_valid) =
         cfg.renderer.options_json_diagnostics();
+    let backend = resolve_backend();
 
-    lines.push(format!("OK backend = {}", backend_name(cfg.general.backend)));
+    lines.push(format!("OK backend = {}", backend_name(backend)));
     match loaded_from {
         Some(path) => lines.push(format!("OK config = {}", path.display())),
         None => lines.push("WARN config = using built-in defaults".to_string()),
@@ -380,9 +397,9 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
                 Ok((globals, _event_queue)) => {
                     let snapshot = globals.contents().clone_list();
                     let mut required = vec!["wl_compositor", "wl_shm"];
-                    match cfg.general.backend {
-                        Backend::LayerShell => required.push("zwlr_layer_shell_v1"),
-                        Backend::GnomeShell => required.push("xdg_wm_base"),
+                    match backend {
+                        RuntimeBackend::LayerShell => required.push("zwlr_layer_shell_v1"),
+                        RuntimeBackend::GnomeShell => required.push("xdg_wm_base"),
                     }
                     for interface in required {
                         push_global_check(&mut lines, &snapshot, interface, true);
@@ -471,7 +488,7 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
         lines.push("OK nvidia_prime_offload = not detected".to_string());
     }
 
-    if cfg.general.backend == Backend::GnomeShell {
+    if backend == RuntimeBackend::GnomeShell {
         gnome::doctor(&cfg, &mut lines);
     }
 

@@ -1,6 +1,6 @@
 mod dbus;
 
-use std::sync::mpsc;
+use std::{env, sync::mpsc};
 
 use anyhow::Result;
 use tracing::info;
@@ -28,6 +28,17 @@ pub(crate) fn registered_window() -> RegisteredWindow {
         title: format!("we-layerd-renderer-{pid}"),
         wm_class: RENDERER_APP_ID.to_string(),
     }
+}
+
+pub(crate) fn is_gnome_session() -> bool {
+    [
+        env::var("XDG_CURRENT_DESKTOP").ok(),
+        env::var("XDG_SESSION_DESKTOP").ok(),
+        env::var("DESKTOP_SESSION").ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_ascii_lowercase().contains("gnome"))
 }
 
 pub(crate) fn run_session(

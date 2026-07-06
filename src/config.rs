@@ -15,8 +15,6 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
-    #[serde(default)]
-    pub backend: Backend,
     #[serde(default = "default_interactive")]
     pub interactive: bool,
     #[serde(default)]
@@ -25,14 +23,6 @@ pub struct GeneralConfig {
     pub fps_report_interval_secs: u64,
     #[serde(default)]
     pub scale_mode: ScaleMode,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Backend {
-    #[default]
-    LayerShell,
-    GnomeShell,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,7 +109,6 @@ fn default_renderer_volume() -> f32 {
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
-            backend: Backend::default(),
             interactive: default_interactive(),
             show_fps: false,
             fps_report_interval_secs: default_fps_report_interval_secs(),
@@ -193,12 +182,11 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{Backend, Config, ScaleMode};
+    use super::{Config, ScaleMode};
 
     #[test]
     fn default_config_uses_renderer_native_defaults() {
         let cfg = Config::default();
-        assert_eq!(cfg.general.backend, Backend::LayerShell);
         assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert!(cfg.general.interactive);
         assert_eq!(cfg.general.scale_mode, ScaleMode::Cover);
@@ -228,17 +216,5 @@ mod tests {
         assert_eq!(cfg.renderer.assets_path, "/tmp/wallpaper_engine/assets");
         assert!(cfg.renderer.muted);
         assert_eq!(cfg.renderer.options_json.as_deref(), Some("{\"hello\":true}"));
-    }
-
-    #[test]
-    fn config_accepts_gnome_backend() {
-        let raw = r#"
-            [general]
-            backend = "gnome_shell"
-        "#;
-
-        let cfg: Config = toml::from_str(raw).expect("valid gnome backend config");
-
-        assert_eq!(cfg.general.backend, Backend::GnomeShell);
     }
 }
