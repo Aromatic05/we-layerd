@@ -1,3 +1,4 @@
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimePhase {
     Idle,
@@ -21,12 +22,14 @@ impl RuntimePhase {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RuntimeControl {
     paused: bool,
     stopping: bool,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl RuntimeControl {
     pub(crate) fn pause(&mut self) {
         self.paused = true;

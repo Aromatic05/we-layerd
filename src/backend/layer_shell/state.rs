@@ -19,9 +19,8 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrL
 
 use crate::{
     backend::wayland_common::output::OutputState,
-    config::ScaleMode,
-    runtime::{input::PendingInput, renderer_session::RendererSession},
     runtime::status::{FrameStats, RuntimeDiagnostics, RuntimeStatusSnapshot},
+    runtime::{input::PendingInput, renderer_session::RendererSession},
 };
 
 pub(super) const MAX_IN_FLIGHT_BUFFERS: usize = 3;
@@ -175,7 +174,7 @@ impl LayerShellState {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_default(scale_mode: ScaleMode) -> Self {
+    pub(crate) fn test_default(scale_mode: crate::config::ScaleMode) -> Self {
         Self {
             objects: WaylandObjects::default(),
             output: OutputState::new(scale_mode),

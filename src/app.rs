@@ -17,7 +17,7 @@ use crate::{
     backend::{
         self,
         layer_shell::state::LayerShellState,
-        traits::{BackendKind, BackendContext},
+        traits::{BackendContext, BackendKind},
         wayland_common::{connection, registry},
     },
     config::Config,
@@ -446,7 +446,9 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     }
 
     if backend == BackendKind::Gnome {
-        let capabilities = backend::create_backend(backend).capabilities();
+        let backend_impl = backend::create_backend(backend);
+        lines.push(format!("OK backend.kind = {}", backend_name(backend_impl.kind())));
+        let capabilities = backend_impl.capabilities();
         lines.push(format!(
             "OK backend.needs_external_extension = {}",
             capabilities.needs_external_extension

@@ -160,9 +160,8 @@ fn install_tree(source: &Path, destination: &Path) {
     }
 
     if destination.exists() {
-        fs::remove_dir_all(destination).unwrap_or_else(|err| {
-            panic!("failed to remove {}: {}", destination.display(), err)
-        });
+        fs::remove_dir_all(destination)
+            .unwrap_or_else(|err| panic!("failed to remove {}: {}", destination.display(), err));
     }
 
     copy_tree(source, destination);
@@ -176,8 +175,8 @@ fn copy_tree(source: &Path, destination: &Path) {
     let entries = fs::read_dir(source)
         .unwrap_or_else(|err| panic!("failed to read {}: {}", source.display(), err));
     for entry in entries {
-        let entry =
-            entry.unwrap_or_else(|err| panic!("failed to read entry in {}: {}", source.display(), err));
+        let entry = entry
+            .unwrap_or_else(|err| panic!("failed to read entry in {}: {}", source.display(), err));
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
         let file_type = entry.file_type().unwrap_or_else(|err| {

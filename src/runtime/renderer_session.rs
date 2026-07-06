@@ -10,8 +10,9 @@ pub(crate) struct RendererSession {
 
 impl RendererSession {
     pub(crate) fn create(library_path: &Path, cache_path: Option<&Path>) -> Result<Self> {
-        let library = RendererLibrary::load(library_path)
-            .with_context(|| format!("failed to load renderer library {}", library_path.display()))?;
+        let library = RendererLibrary::load(library_path).with_context(|| {
+            format!("failed to load renderer library {}", library_path.display())
+        })?;
         let session =
             library.create_session(cache_path).context("failed to create renderer session")?;
         Ok(Self { session, _library: library })

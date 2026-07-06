@@ -271,7 +271,9 @@ impl Dispatch<WlBuffer, std::sync::Arc<std::sync::atomic::AtomicBool>> for Layer
     }
 }
 
-impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListContents> for LayerShellState {
+impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListContents>
+    for LayerShellState
+{
     fn event(
         _state: &mut Self,
         _proxy: &wl_registry::WlRegistry,

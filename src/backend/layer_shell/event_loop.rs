@@ -314,15 +314,13 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     };
 
     // Set render config BEFORE play
-    session
-        .configure(RenderConfig {
-            width: state.output.geometry.render_width,
-            height: state.output.geometry.render_height,
-            enable_valid_layer: false,
-            prefer_dmabuf,
-            allow_shm_fallback: cfg.renderer.allow_shm_fallback,
-        })
-        ?;
+    session.configure(RenderConfig {
+        width: state.output.geometry.render_width,
+        height: state.output.geometry.render_height,
+        enable_valid_layer: false,
+        prefer_dmabuf,
+        allow_shm_fallback: cfg.renderer.allow_shm_fallback,
+    })?;
 
     session.play()?;
     state.session = Some(session);

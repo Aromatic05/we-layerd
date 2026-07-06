@@ -7,14 +7,17 @@ use crate::backend::traits::{BackendKind, WallpaperBackend};
 
 pub(crate) fn create_backend(kind: BackendKind) -> Box<dyn WallpaperBackend> {
     match kind {
-        BackendKind::LayerShell => Box::new(layer_shell::backend::LayerShellBackend::default()),
-        BackendKind::Gnome => Box::new(gnome::backend::GnomeBackend::default()),
+        BackendKind::LayerShell => Box::new(layer_shell::backend::LayerShellBackend),
+        BackendKind::Gnome => Box::new(gnome::backend::GnomeBackend),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::{Path, PathBuf}};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::{create_backend, gnome, traits::BackendKind};
 
@@ -77,10 +80,14 @@ mod tests {
     #[test]
     fn backend_architecture_boundaries_are_enforced_in_source_tree() {
         let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let layer_shell_refs = find_refs(
-            &src_root,
-            &["ZwlrLayerShellV1", "ZwlrLayerSurfaceV1", "wayland_protocols_wlr::layer_shell"],
-        );
+        let layer_shell_type = ["Zwlr", "LayerShellV1"].concat();
+        let layer_surface_type = ["Zwlr", "LayerSurfaceV1"].concat();
+        let layer_shell_module = ["wayland_protocols_wlr", "layer_shell"].join("::");
+        let legacy_entry = ["run_renderer", "background_surface"].join("_");
+        let layer_needles =
+            [layer_shell_type.as_str(), layer_surface_type.as_str(), layer_shell_module.as_str()];
+
+        let layer_shell_refs = find_refs(&src_root, &layer_needles);
 
         assert!(!layer_shell_refs.is_empty());
         for path in layer_shell_refs {
@@ -91,26 +98,12 @@ mod tests {
             );
         }
 
+        assert!(find_refs(&src_root.join("runtime"), &layer_needles[..2]).is_empty());
+        assert!(find_refs(&src_root.join("backend/wayland_common"), &layer_needles).is_empty());
+        assert!(find_refs(&src_root.join("backend/gnome"), &layer_needles).is_empty());
         assert!(
-            find_refs(&src_root.join("runtime"), &["ZwlrLayerShellV1", "ZwlrLayerSurfaceV1"]).is_empty()
-        );
-        assert!(
-            find_refs(
-                &src_root.join("backend/wayland_common"),
-                &["ZwlrLayerShellV1", "ZwlrLayerSurfaceV1", "wayland_protocols_wlr::layer_shell"],
-            )
-            .is_empty()
-        );
-        assert!(
-            find_refs(
-                &src_root.join("backend/gnome"),
-                &["ZwlrLayerShellV1", "ZwlrLayerSurfaceV1", "wayland_protocols_wlr::layer_shell"],
-            )
-            .is_empty()
-        );
-        assert!(
-            find_refs(&src_root, &["run_renderer_background_surface"]).is_empty(),
-            "legacy run_renderer_background_surface entry must be removed"
+            find_refs(&src_root, &[legacy_entry.as_str()]).is_empty(),
+            "legacy background-surface entry must be removed"
         );
     }
 
