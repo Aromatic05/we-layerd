@@ -65,6 +65,7 @@ $prefix/bin/we-layerd
 $prefix/bin/we-gui
 $prefix/lib/libwallpaper-engine-renderer.so
 $prefix/lib/we-cef-helper
+$prefix/share/gnome-shell/extensions/we-layerd@aromatic/
 ```
 
 ## Config

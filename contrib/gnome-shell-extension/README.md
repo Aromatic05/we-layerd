@@ -1,6 +1,11 @@
 # GNOME Shell Extension
 
-Install the extension directory into:
+`cargo xtask install` now installs the extension into the matching prefix automatically:
+
+- `~/.local/share/gnome-shell/extensions/we-layerd@aromatic/`
+- `/usr/share/gnome-shell/extensions/we-layerd@aromatic/`
+
+If you need a manual install, copy the extension directory into:
 
 ```bash
 ~/.local/share/gnome-shell/extensions/we-layerd@aromatic/
