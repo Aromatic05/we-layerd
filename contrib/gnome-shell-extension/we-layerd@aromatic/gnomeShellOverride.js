@@ -15,19 +15,17 @@ function logDebug(message) {
 }
 
 export class GnomeShellOverride {
-    constructor(matchWindow, isVideoActive, isVideoWindow) {
+    constructor(matchWindow, isWallpaperActive) {
         this._injectionManager = new InjectionManager();
         this._matchWindow = matchWindow;
-        this._isVideoActive = isVideoActive;
-        this._isVideoWindow = isVideoWindow;
+        this._isWallpaperActive = isWallpaperActive;
         this._wallpaperActors = new Set();
     }
 
     enable() {
         logDebug('gnomeShellOverride.enable()');
         const matchWindow = this._matchWindow;
-        const isVideoActive = this._isVideoActive;
-        const isVideoWindow = this._isVideoWindow;
+        const isWallpaperActive = this._isWallpaperActive;
         const self = this;
 
         this._injectionManager.overrideMethod(
@@ -36,10 +34,10 @@ export class GnomeShellOverride {
             originalMethod => {
                 return function () {
                     const backgroundActor = originalMethod.call(this);
-                    if (!isVideoActive())
+                    if (!isWallpaperActive())
                         return backgroundActor;
 
-                    const wallpaper = new LiveWallpaper(backgroundActor, isVideoWindow);
+                    const wallpaper = new LiveWallpaper(backgroundActor, matchWindow);
                     this.videoActor = wallpaper;
                     self._wallpaperActors.add(wallpaper);
                     wallpaper.connect('destroy', actor => {

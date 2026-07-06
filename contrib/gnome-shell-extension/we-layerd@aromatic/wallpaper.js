@@ -8,7 +8,7 @@ const POLL_INTERVAL_MS = 1000;
 
 export const LiveWallpaper = GObject.registerClass(
     class LiveWallpaper extends St.Widget {
-        constructor(backgroundActor, isVideoWindow) {
+        constructor(backgroundActor, matchWindow) {
             super({
                 layout_manager: new Clutter.BinLayout(),
                 reactive: false,
@@ -17,7 +17,7 @@ export const LiveWallpaper = GObject.registerClass(
             });
 
             this._backgroundActor = backgroundActor;
-            this._isVideoWindow = isVideoWindow;
+            this._matchWindow = matchWindow;
             this._wallpaper = null;
             this._sourceDestroyId = 0;
             this._pollId = 0;
@@ -90,7 +90,7 @@ export const LiveWallpaper = GObject.registerClass(
             const monitorIndex = this._backgroundActor.monitor;
             for (const actor of global.get_window_actors(false)) {
                 const metaWindow = actor?.meta_window;
-                if (!metaWindow || !this._isVideoWindow(metaWindow))
+                if (!metaWindow || !this._matchWindow(metaWindow))
                     continue;
                 if (metaWindow.get_monitor() === monitorIndex)
                     return actor;
