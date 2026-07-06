@@ -23,14 +23,13 @@ assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 
 ```toml
 [general]
-backend = "layer_shell"
 interactive = true
 show_fps = false
 fps_report_interval_secs = 1
 scale_mode = "cover"
 ```
 
-- `backend`：当前使用 `layer_shell`
+- 后端自动选择：GNOME 会话走 GNOME actor clone，其它桌面环境走 layer-shell
 - `interactive`：为 `false` 时会设置空 input region，让壁纸不阻挡桌面鼠标交互
 - `show_fps`：保留 FPS 统计开关
 - `scale_mode`：`fit`、`cover`、`stretch`

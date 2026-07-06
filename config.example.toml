@@ -1,5 +1,4 @@
 [general]
-backend = "layer_shell"
 interactive = true
 show_fps = false
 fps_report_interval_secs = 1

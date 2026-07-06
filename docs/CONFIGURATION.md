@@ -23,14 +23,13 @@ assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 
 ```toml
 [general]
-backend = "layer_shell"
 interactive = true
 show_fps = false
 fps_report_interval_secs = 1
 scale_mode = "cover"
 ```
 
-- `backend`: currently `layer_shell`
+- backend selection is automatic: GNOME sessions use the GNOME actor-clone path; other desktops use layer-shell
 - `interactive`: when `false`, `we-layerd` sets an empty input region so the wallpaper does not consume pointer input
 - `show_fps`: keeps the renderer FPS counters enabled in config/status
 - `scale_mode`: `fit`, `cover`, or `stretch`
