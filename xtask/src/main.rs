@@ -5,6 +5,8 @@ use std::{
     process::Command,
 };
 
+const GNOME_EXTENSION_UUID: &str = "we-layerd@aromatic";
+
 fn main() {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
@@ -80,6 +82,10 @@ fn install(args: InstallArgs) {
         &stage_root.join("lib/we-cef-helper"),
         &install_root.join("lib/we-cef-helper"),
     );
+    install_tree(
+        &workspace_root.join("contrib/gnome-shell-extension").join(GNOME_EXTENSION_UUID),
+        &install_root.join("share/gnome-shell/extensions").join(GNOME_EXTENSION_UUID),
+    );
 }
 
 fn resolve_install_root(prefix: &Path) -> PathBuf {
@@ -146,6 +152,65 @@ fn install_artifact(source: &Path, destination: &Path) {
         Command::new("strip").arg("--strip-unneeded").arg(destination),
         &format!("strip {}", destination.display()),
     );
+}
+
+fn install_tree(source: &Path, destination: &Path) {
+    if !source.is_dir() {
+        panic!("missing install tree {}", source.display());
+    }
+
+    if destination.exists() {
+        fs::remove_dir_all(destination).unwrap_or_else(|err| {
+            panic!("failed to remove {}: {}", destination.display(), err)
+        });
+    }
+
+    copy_tree(source, destination);
+}
+
+fn copy_tree(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination)
+        .unwrap_or_else(|err| panic!("failed to create {}: {}", destination.display(), err));
+    set_mode(destination, 0o755);
+
+    let entries = fs::read_dir(source)
+        .unwrap_or_else(|err| panic!("failed to read {}: {}", source.display(), err));
+    for entry in entries {
+        let entry =
+            entry.unwrap_or_else(|err| panic!("failed to read entry in {}: {}", source.display(), err));
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type().unwrap_or_else(|err| {
+            panic!("failed to determine file type for {}: {}", source_path.display(), err)
+        });
+
+        if file_type.is_dir() {
+            copy_tree(&source_path, &destination_path);
+            continue;
+        }
+        if !file_type.is_file() {
+            panic!("unsupported non-file entry in install tree: {}", source_path.display());
+        }
+
+        fs::copy(&source_path, &destination_path).unwrap_or_else(|err| {
+            panic!(
+                "failed to copy {} to {}: {}",
+                source_path.display(),
+                destination_path.display(),
+                err
+            )
+        });
+        set_mode(&destination_path, 0o644);
+    }
+}
+
+fn set_mode(path: &Path, mode: u32) {
+    let mut permissions = fs::metadata(path)
+        .unwrap_or_else(|err| panic!("failed to stat {}: {}", path.display(), err))
+        .permissions();
+    permissions.set_mode(mode);
+    fs::set_permissions(path, permissions)
+        .unwrap_or_else(|err| panic!("failed to chmod {}: {}", path.display(), err));
 }
 
 fn expand_tilde(raw: &str) -> PathBuf {
