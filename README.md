@@ -29,7 +29,7 @@ For this repository itself:
 sudo pacman -S --needed \
   rustup gcc cmake pkgconf git \
   wayland wayland-protocols libxkbcommon \
-  gtk3
+  gtk3 xdotool
 ```
 
 For the renderer build:
@@ -39,7 +39,7 @@ sudo pacman -S --needed \
   vulkan-headers vulkan-icd-loader mesa libglvnd \
   gstreamer gst-plugins-base-libs \
   lz4 pango fontconfig freetype2 \
-  directx-shader-compiler
+  directx-shader-compiler cef
 ```
 
 Notes:
