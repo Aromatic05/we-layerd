@@ -16,6 +16,7 @@ use we_renderer::RendererLibrary;
 
 use crate::{
     config::{Backend, Config},
+    gnome,
     ipc::{self, ControlCommand, RuntimeLoopExit},
     wayland::{self, diagnostics::RuntimeStatusSnapshot},
 };
@@ -250,6 +251,7 @@ impl RuntimeState {
 fn backend_name(backend: Backend) -> &'static str {
     match backend {
         Backend::LayerShell => "layer_shell",
+        Backend::GnomeShell => "gnome_shell",
     }
 }
 
@@ -298,6 +300,7 @@ fn run_runtime_loop(
     }
 
     info!(
+        backend = backend_name(cfg.general.backend),
         source = %cfg.renderer.source,
         assets_path = %cfg.renderer.assets_path,
         library_path = %cfg.renderer.library_path,
@@ -314,6 +317,17 @@ fn run_runtime_loop(
                 update_runtime_snapshot(runtime_state, snapshot)
             })
         }
+        Backend::GnomeShell => gnome::run_session(&cfg, control_rx, |cfg, window, control_rx| {
+            wayland::run_renderer_window_surface(
+                cfg,
+                &window.title,
+                &window.wm_class,
+                control_rx,
+                &mut |snapshot| {
+                    update_runtime_snapshot(runtime_state, snapshot)
+                },
+            )
+        }),
     }
 }
 
@@ -353,7 +367,7 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     let (options_json_present, options_json_len, options_json_valid) =
         cfg.renderer.options_json_diagnostics();
 
-    lines.push("OK backend = layer_shell".to_string());
+    lines.push(format!("OK backend = {}", backend_name(cfg.general.backend)));
     match loaded_from {
         Some(path) => lines.push(format!("OK config = {}", path.display())),
         None => lines.push("WARN config = using built-in defaults".to_string()),
@@ -365,8 +379,13 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
             match registry_queue_init::<wayland::state::LayerState>(&conn) {
                 Ok((globals, _event_queue)) => {
                     let snapshot = globals.contents().clone_list();
-                    for required in ["wl_compositor", "zwlr_layer_shell_v1", "wl_shm"] {
-                        push_global_check(&mut lines, &snapshot, required, true);
+                    let mut required = vec!["wl_compositor", "wl_shm"];
+                    match cfg.general.backend {
+                        Backend::LayerShell => required.push("zwlr_layer_shell_v1"),
+                        Backend::GnomeShell => required.push("xdg_wm_base"),
+                    }
+                    for interface in required {
+                        push_global_check(&mut lines, &snapshot, interface, true);
                     }
                     for optional in
                         ["zwp_linux_dmabuf_v1", "wp_viewporter", "wp_fractional_scale_manager_v1"]
@@ -450,6 +469,10 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
         );
     } else {
         lines.push("OK nvidia_prime_offload = not detected".to_string());
+    }
+
+    if cfg.general.backend == Backend::GnomeShell {
+        gnome::doctor(&cfg, &mut lines);
     }
 
     println!("{}", lines.join("\n"));

@@ -15,6 +15,10 @@ use wayland_protocols::wp::{
     linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     viewporter::client::wp_viewport::WpViewport,
 };
+use wayland_protocols::xdg::shell::client::{
+    xdg_surface::XdgSurface,
+    xdg_toplevel::XdgToplevel,
+};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
 use we_renderer::{InputEvent, RendererLibrary, Session};
 
@@ -54,6 +58,8 @@ pub(super) struct WaylandObjects {
     pub(super) output: Option<WlOutput>,
     pub(super) viewport: Option<WpViewport>,
     pub(super) layer_surface: Option<ZwlrLayerSurfaceV1>,
+    pub(super) xdg_surface: Option<XdgSurface>,
+    pub(super) xdg_toplevel: Option<XdgToplevel>,
     pub(super) dmabuf: Option<ZwpLinuxDmabufV1>,
     pub(super) shm: Option<WlShm>,
     pub(super) fractional_scale: Option<WpFractionalScaleV1>,

@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod config;
+mod gnome;
 mod ipc;
 mod logging;
 mod wayland;

@@ -18,6 +18,7 @@ use wayland_protocols::wp::{
     linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     viewporter::client::wp_viewporter::WpViewporter,
 };
+use wayland_protocols::xdg::shell::client::xdg_wm_base::XdgWmBase;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use we_core::install_layout::{expand_tilde, resolve_renderer_library};
 use we_renderer::{Frame, RenderConfig, RendererLibrary, Source};
@@ -27,7 +28,7 @@ use crate::{
     ipc::{ControlCommand, RuntimeLoopExit},
 };
 
-use super::wayland;
+use super::wayland::{self, SurfaceRole};
 use super::{
     diagnostics::{OptionsJsonDiagnostics, PresentBackend, RuntimeDiagnostics},
     state::{BufferBookkeeping, FrameCallbackState, LayerState, OutputState, WaylandObjects},
@@ -169,6 +170,33 @@ pub fn run_renderer_background_surface(
     control_rx: &mpsc::Receiver<ControlCommand>,
     status_sink: &mut dyn FnMut(super::diagnostics::RuntimeStatusSnapshot),
 ) -> Result<RuntimeLoopExit> {
+    run_renderer_surface(cfg, control_rx, status_sink, SurfaceRole::LayerShell)
+}
+
+pub fn run_renderer_window_surface(
+    cfg: &Config,
+    title: &str,
+    app_id: &str,
+    control_rx: &mpsc::Receiver<ControlCommand>,
+    status_sink: &mut dyn FnMut(super::diagnostics::RuntimeStatusSnapshot),
+) -> Result<RuntimeLoopExit> {
+    run_renderer_surface(
+        cfg,
+        control_rx,
+        status_sink,
+        SurfaceRole::XdgToplevel {
+            title,
+            app_id,
+        },
+    )
+}
+
+fn run_renderer_surface(
+    cfg: &Config,
+    control_rx: &mpsc::Receiver<ControlCommand>,
+    status_sink: &mut dyn FnMut(super::diagnostics::RuntimeStatusSnapshot),
+    surface_role: SurfaceRole<'_>,
+) -> Result<RuntimeLoopExit> {
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
     let (globals, mut event_queue) =
         registry_queue_init::<LayerState>(&conn).context("failed to init Wayland registry")?;
@@ -176,8 +204,8 @@ pub fn run_renderer_background_surface(
 
     let compositor: WlCompositor =
         globals.bind(&qh, 4..=6, ()).context("failed to bind wl_compositor")?;
-    let layer_shell: ZwlrLayerShellV1 =
-        globals.bind(&qh, 1..=5, ()).context("failed to bind zwlr_layer_shell_v1")?;
+    let layer_shell = globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=5, ()).ok();
+    let xdg_wm_base = globals.bind::<XdgWmBase, _, _>(&qh, 1..=6, ()).ok();
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).context("failed to bind wl_shm")?;
 
     let dmabuf_global =
@@ -251,12 +279,14 @@ pub fn run_renderer_background_surface(
         &globals,
         compositor,
         layer_shell,
+        xdg_wm_base,
         shm,
         dmabuf,
         dmabuf_version,
         seat,
         viewporter,
         fractional_scale_manager,
+        surface_role,
     )?;
     status_sink(state.snapshot());
 
@@ -284,7 +314,7 @@ pub fn run_renderer_background_surface(
 
     // Wait for the first configure
     while !state.configured {
-        event_queue.roundtrip(&mut state).context("failed waiting for layer configure")?;
+        event_queue.roundtrip(&mut state).context("failed waiting for surface configure")?;
         state.update_render_extent();
         state.update_viewport_destination();
     }
@@ -343,7 +373,7 @@ pub fn run_renderer_background_surface(
         render_width = state.output.geometry.render_width,
         render_height = state.output.geometry.render_height,
         scale = state.output.render_scale_factor(),
-        "starting renderer-backed layer-shell surface"
+        "starting renderer-backed wayland surface"
     );
 
     let mut last_acquire_status: i32 = 1;

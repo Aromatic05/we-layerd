@@ -8,4 +8,4 @@ mod wayland;
 #[cfg(test)]
 mod tests;
 
-pub use renderer::run_renderer_background_surface;
+pub use renderer::{run_renderer_background_surface, run_renderer_window_surface};

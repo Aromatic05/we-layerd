@@ -28,6 +28,11 @@ use wayland_protocols::wp::{
     },
     viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter},
 };
+use wayland_protocols::xdg::shell::client::{
+    xdg_surface::{Event as XdgSurfaceEvent, XdgSurface},
+    xdg_toplevel::{Event as XdgToplevelEvent, XdgToplevel},
+    xdg_wm_base::{Event as XdgWmBaseEvent, XdgWmBase},
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
     zwlr_layer_surface_v1::{Event as LayerSurfaceEvent, ZwlrLayerSurfaceV1},
@@ -35,6 +40,11 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use we_renderer::Frame;
 
 use super::state::{LayerState, WaylandBuffer, FRACTIONAL_SCALE_DENOMINATOR};
+
+pub(super) enum SurfaceRole<'a> {
+    LayerShell,
+    XdgToplevel { title: &'a str, app_id: &'a str },
+}
 
 // ---------------------------------------------------------------------------
 // DRM format helper
@@ -77,6 +87,71 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerState {
                 state.update_viewport_destination();
             }
             LayerSurfaceEvent::Closed => state.running = false,
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<XdgWmBase, ()> for LayerState {
+    fn event(
+        _state: &mut Self,
+        wm_base: &XdgWmBase,
+        event: XdgWmBaseEvent,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let XdgWmBaseEvent::Ping { serial } = event {
+            wm_base.pong(serial);
+        }
+    }
+}
+
+impl Dispatch<XdgSurface, ()> for LayerState {
+    fn event(
+        state: &mut Self,
+        xdg_surface: &XdgSurface,
+        event: XdgSurfaceEvent,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let XdgSurfaceEvent::Configure { serial } = event {
+            xdg_surface.ack_configure(serial);
+            state.configured = true;
+            if state.output.logical_width == 0 {
+                state.output.logical_width = state.output.fallback_width;
+            }
+            if state.output.logical_height == 0 {
+                state.output.logical_height = state.output.fallback_height;
+            }
+            state.update_render_extent();
+            state.update_viewport_destination();
+        }
+    }
+}
+
+impl Dispatch<XdgToplevel, ()> for LayerState {
+    fn event(
+        state: &mut Self,
+        _toplevel: &XdgToplevel,
+        event: XdgToplevelEvent,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            XdgToplevelEvent::Configure { width, height, .. } => {
+                if width > 0 {
+                    state.output.logical_width = width as u32;
+                }
+                if height > 0 {
+                    state.output.logical_height = height as u32;
+                }
+                state.update_render_extent();
+                state.update_viewport_destination();
+            }
+            XdgToplevelEvent::Close => state.running = false,
             _ => {}
         }
     }
@@ -410,13 +485,15 @@ pub(super) fn init_wayland(
     state: &mut LayerState,
     globals: &wayland_client::globals::GlobalList,
     compositor: WlCompositor,
-    layer_shell: ZwlrLayerShellV1,
+    layer_shell: Option<ZwlrLayerShellV1>,
+    xdg_wm_base: Option<XdgWmBase>,
     shm: WlShm,
     dmabuf: Option<ZwpLinuxDmabufV1>,
     dmabuf_version: u32,
     seat: Option<WlSeat>,
     viewporter: Option<WpViewporter>,
     fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    surface_role: SurfaceRole<'_>,
 ) -> Result<()> {
     state.objects.compositor = Some(compositor.clone());
     state.compositor_version = compositor.version();
@@ -473,27 +550,44 @@ pub(super) fn init_wayland(
         tracing::info!("fractional-scale-v1 unavailable, falling back to wl_output integer scale");
     }
 
-    let layer_surface = layer_shell.get_layer_surface(
-        surface,
-        state.objects.output.as_ref(),
-        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
-        "wallpaper-engine-renderer".to_string(),
-        qh,
-        (),
-    );
-    layer_surface.set_anchor(
-        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
-            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Bottom
-            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left
-            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Right,
-    );
-    layer_surface.set_size(0, 0);
-    layer_surface.set_exclusive_zone(-1);
-    layer_surface.set_margin(0, 0, 0, 0);
-    layer_surface.set_keyboard_interactivity(
-        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
-    );
-    state.objects.layer_surface = Some(layer_surface);
+    match surface_role {
+        SurfaceRole::LayerShell => {
+            let layer_shell =
+                layer_shell.ok_or_else(|| anyhow!("zwlr_layer_shell_v1 unavailable"))?;
+            let layer_surface = layer_shell.get_layer_surface(
+                surface,
+                state.objects.output.as_ref(),
+                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
+                "wallpaper-engine-renderer".to_string(),
+                qh,
+                (),
+            );
+            layer_surface.set_anchor(
+                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
+                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Bottom
+                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left
+                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Right,
+            );
+            layer_surface.set_size(0, 0);
+            layer_surface.set_exclusive_zone(-1);
+            layer_surface.set_margin(0, 0, 0, 0);
+            layer_surface.set_keyboard_interactivity(
+                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
+            );
+            state.objects.layer_surface = Some(layer_surface);
+        }
+        SurfaceRole::XdgToplevel { title, app_id } => {
+            let xdg_wm_base =
+                xdg_wm_base.ok_or_else(|| anyhow!("xdg_wm_base unavailable"))?;
+            let xdg_surface = xdg_wm_base.get_xdg_surface(surface, qh, ());
+            let xdg_toplevel = xdg_surface.get_toplevel(qh, ());
+            xdg_toplevel.set_title(title.to_string());
+            xdg_toplevel.set_app_id(app_id.to_string());
+            xdg_toplevel.set_fullscreen(state.objects.output.as_ref());
+            state.objects.xdg_surface = Some(xdg_surface);
+            state.objects.xdg_toplevel = Some(xdg_toplevel);
+        }
+    }
 
     if seat.is_some() {
         state.objects.pointer = None;

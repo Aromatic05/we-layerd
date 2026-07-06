@@ -5548,6 +5548,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "we-core",
  "we-renderer",
+ "zbus 4.4.0",
 ]
 
 [[package]]

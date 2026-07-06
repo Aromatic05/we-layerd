@@ -8,6 +8,8 @@ pub struct Config {
     #[serde(default)]
     pub general: GeneralConfig,
     #[serde(default)]
+    pub gnome: GnomeConfig,
+    #[serde(default)]
     pub renderer: RendererConfig,
 }
 
@@ -30,6 +32,13 @@ pub struct GeneralConfig {
 pub enum Backend {
     #[default]
     LayerShell,
+    GnomeShell,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GnomeConfig {
+    #[serde(default = "default_gnome_extension_dbus_name")]
+    pub extension_dbus_name: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,6 +88,10 @@ fn default_renderer_library_path() -> String {
     String::new()
 }
 
+fn default_gnome_extension_dbus_name() -> String {
+    "io.github.weLayerd.Gnome".to_string()
+}
+
 fn default_renderer_cache_path() -> String {
     "~/.cache/we-layerd/renderer".to_string()
 }
@@ -112,6 +125,12 @@ impl Default for GeneralConfig {
             fps_report_interval_secs: default_fps_report_interval_secs(),
             scale_mode: ScaleMode::default(),
         }
+    }
+}
+
+impl Default for GnomeConfig {
+    fn default() -> Self {
+        Self { extension_dbus_name: default_gnome_extension_dbus_name() }
     }
 }
 
@@ -180,6 +199,7 @@ mod tests {
     fn default_config_uses_renderer_native_defaults() {
         let cfg = Config::default();
         assert_eq!(cfg.general.backend, Backend::LayerShell);
+        assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert!(cfg.general.interactive);
         assert_eq!(cfg.general.scale_mode, ScaleMode::Cover);
         assert!(cfg.renderer.library_path.is_empty());
@@ -196,13 +216,29 @@ mod tests {
             assets_path = "/tmp/wallpaper_engine/assets"
             muted = true
             options_json = "{\"hello\":true}"
+
+            [gnome]
+            extension_dbus_name = "io.github.weLayerd.Gnome"
         "#;
 
         let cfg: Config = toml::from_str(raw).expect("valid renderer config");
 
+        assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert_eq!(cfg.renderer.source, "/tmp/workshop/item");
         assert_eq!(cfg.renderer.assets_path, "/tmp/wallpaper_engine/assets");
         assert!(cfg.renderer.muted);
         assert_eq!(cfg.renderer.options_json.as_deref(), Some("{\"hello\":true}"));
+    }
+
+    #[test]
+    fn config_accepts_gnome_backend() {
+        let raw = r#"
+            [general]
+            backend = "gnome_shell"
+        "#;
+
+        let cfg: Config = toml::from_str(raw).expect("valid gnome backend config");
+
+        assert_eq!(cfg.general.backend, Backend::GnomeShell);
     }
 }
