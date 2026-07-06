@@ -10,22 +10,20 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use tracing::{info, warn};
-use wayland_client::{globals::registry_queue_init, Connection};
 use we_core::install_layout::{expand_tilde, resolve_renderer_library};
 use we_renderer::RendererLibrary;
 
 use crate::{
+    backend::{
+        self,
+        layer_shell::state::LayerShellState,
+        traits::{BackendKind, BackendContext},
+        wayland_common::{connection, registry},
+    },
     config::Config,
-    gnome,
     ipc::{self, ControlCommand, RuntimeLoopExit},
-    wayland::{self, diagnostics::RuntimeStatusSnapshot},
+    runtime::{control::RuntimePhase, status::RuntimeStatusSnapshot},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeBackend {
-    LayerShell,
-    GnomeShell,
-}
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let cfg = Config::load(config_path)?;
@@ -133,32 +131,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimePhase {
-    Idle,
-    Starting,
-    Running,
-    Paused,
-    Stopping,
-    Failed,
-}
-
-impl RuntimePhase {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Starting => "starting",
-            Self::Running => "running",
-            Self::Paused => "paused",
-            Self::Stopping => "stopping",
-            Self::Failed => "failed",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct RuntimeState {
-    backend: RuntimeBackend,
+    backend: BackendKind,
     phase: RuntimePhase,
     generation: u64,
     source: String,
@@ -169,7 +144,7 @@ struct RuntimeState {
 impl RuntimeState {
     fn new(cfg: &Config) -> Self {
         Self {
-            backend: resolve_backend(),
+            backend: resolve_backend(cfg),
             phase: RuntimePhase::Idle,
             generation: 0,
             source: cfg.renderer.source.clone(),
@@ -180,7 +155,7 @@ impl RuntimeState {
 
     fn begin_session(&mut self, cfg: &Config) -> u64 {
         self.generation = self.generation.saturating_add(1);
-        self.backend = resolve_backend();
+        self.backend = resolve_backend(cfg);
         self.phase = RuntimePhase::Starting;
         self.source = cfg.renderer.source.clone();
         self.error = None;
@@ -189,7 +164,7 @@ impl RuntimeState {
     }
 
     fn begin_switch(&mut self, cfg: &Config) {
-        self.backend = resolve_backend();
+        self.backend = resolve_backend(cfg);
         self.phase = RuntimePhase::Starting;
         self.source = cfg.renderer.source.clone();
         self.error = None;
@@ -254,19 +229,12 @@ impl RuntimeState {
     }
 }
 
-fn backend_name(backend: RuntimeBackend) -> &'static str {
-    match backend {
-        RuntimeBackend::LayerShell => "layer_shell",
-        RuntimeBackend::GnomeShell => "gnome_shell",
-    }
+fn backend_name(backend: BackendKind) -> &'static str {
+    backend.as_config_str()
 }
 
-fn resolve_backend() -> RuntimeBackend {
-    if gnome::is_gnome_session() {
-        RuntimeBackend::GnomeShell
-    } else {
-        RuntimeBackend::LayerShell
-    }
+fn resolve_backend(cfg: &Config) -> BackendKind {
+    cfg.general.backend.kind()
 }
 
 fn env_var_enabled(name: &str) -> bool {
@@ -313,7 +281,7 @@ fn run_runtime_loop(
         return Ok(RuntimeLoopExit::Stop);
     }
 
-    let backend = resolve_backend();
+    let backend = resolve_backend(&cfg);
 
     info!(
         backend = backend_name(backend),
@@ -327,24 +295,13 @@ fn run_runtime_loop(
         state.mark_running(generation);
     }
 
-    match backend {
-        RuntimeBackend::LayerShell => {
-            wayland::run_renderer_background_surface(&cfg, control_rx, &mut |snapshot| {
-                update_runtime_snapshot(runtime_state, snapshot)
-            })
-        }
-        RuntimeBackend::GnomeShell => gnome::run_session(&cfg, control_rx, |cfg, window, control_rx| {
-            wayland::run_renderer_window_surface(
-                cfg,
-                &window.title,
-                &window.wm_class,
-                control_rx,
-                &mut |snapshot| {
-                    update_runtime_snapshot(runtime_state, snapshot)
-                },
-            )
-        }),
-    }
+    let mut backend_impl = backend::create_backend(backend);
+    backend_impl.run(BackendContext {
+        cfg: &cfg,
+        shutdown_requested,
+        control_rx,
+        status_sink: &mut |snapshot| update_runtime_snapshot(runtime_state, snapshot),
+    })
 }
 
 fn handle_runtime_control_command(
@@ -382,7 +339,7 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     let mut lines = Vec::new();
     let (options_json_present, options_json_len, options_json_valid) =
         cfg.renderer.options_json_diagnostics();
-    let backend = resolve_backend();
+    let backend = resolve_backend(&cfg);
 
     lines.push(format!("OK backend = {}", backend_name(backend)));
     match loaded_from {
@@ -390,16 +347,16 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
         None => lines.push("WARN config = using built-in defaults".to_string()),
     }
 
-    match Connection::connect_to_env() {
+    match connection::connect_to_env() {
         Ok(conn) => {
             lines.push("OK wayland_display = connected".to_string());
-            match registry_queue_init::<wayland::state::LayerState>(&conn) {
+            match registry::init_registry::<LayerShellState>(&conn) {
                 Ok((globals, _event_queue)) => {
                     let snapshot = globals.contents().clone_list();
                     let mut required = vec!["wl_compositor", "wl_shm"];
                     match backend {
-                        RuntimeBackend::LayerShell => required.push("zwlr_layer_shell_v1"),
-                        RuntimeBackend::GnomeShell => required.push("xdg_wm_base"),
+                        BackendKind::LayerShell => required.push("zwlr_layer_shell_v1"),
+                        BackendKind::Gnome => required.push("xdg_wm_base"),
                     }
                     for interface in required {
                         push_global_check(&mut lines, &snapshot, interface, true);
@@ -488,8 +445,12 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
         lines.push("OK nvidia_prime_offload = not detected".to_string());
     }
 
-    if backend == RuntimeBackend::GnomeShell {
-        gnome::doctor(&cfg, &mut lines);
+    if backend == BackendKind::Gnome {
+        let capabilities = backend::create_backend(backend).capabilities();
+        lines.push(format!(
+            "OK backend.needs_external_extension = {}",
+            capabilities.needs_external_extension
+        ));
     }
 
     println!("{}", lines.join("\n"));

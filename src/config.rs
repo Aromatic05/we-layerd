@@ -3,6 +3,8 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::backend::{gnome::protocol, traits::BackendKind};
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -15,6 +17,8 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
+    #[serde(default = "default_backend")]
+    pub backend: ConfigBackend,
     #[serde(default = "default_interactive")]
     pub interactive: bool,
     #[serde(default)]
@@ -38,6 +42,23 @@ pub enum ScaleMode {
     #[default]
     Cover,
     Stretch,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConfigBackend {
+    #[default]
+    LayerShell,
+    Gnome,
+}
+
+impl ConfigBackend {
+    pub fn kind(self) -> BackendKind {
+        match self {
+            Self::LayerShell => BackendKind::LayerShell,
+            Self::Gnome => BackendKind::Gnome,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +91,10 @@ fn default_interactive() -> bool {
     true
 }
 
+fn default_backend() -> ConfigBackend {
+    ConfigBackend::LayerShell
+}
+
 fn default_fps_report_interval_secs() -> u64 {
     1
 }
@@ -79,7 +104,7 @@ fn default_renderer_library_path() -> String {
 }
 
 fn default_gnome_extension_dbus_name() -> String {
-    "io.github.weLayerd.Gnome".to_string()
+    protocol::BUS_NAME.to_string()
 }
 
 fn default_renderer_cache_path() -> String {
@@ -109,6 +134,7 @@ fn default_renderer_volume() -> f32 {
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
+            backend: default_backend(),
             interactive: default_interactive(),
             show_fps: false,
             fps_report_interval_secs: default_fps_report_interval_secs(),
@@ -182,11 +208,12 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ScaleMode};
+    use super::{Config, ConfigBackend, ScaleMode};
 
     #[test]
     fn default_config_uses_renderer_native_defaults() {
         let cfg = Config::default();
+        assert_eq!(cfg.general.backend, ConfigBackend::LayerShell);
         assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert!(cfg.general.interactive);
         assert_eq!(cfg.general.scale_mode, ScaleMode::Cover);
@@ -199,6 +226,9 @@ mod tests {
     #[test]
     fn config_accepts_renderer_block() {
         let raw = r#"
+            [general]
+            backend = "gnome"
+
             [renderer]
             source = "/tmp/workshop/item"
             assets_path = "/tmp/wallpaper_engine/assets"
@@ -211,10 +241,25 @@ mod tests {
 
         let cfg: Config = toml::from_str(raw).expect("valid renderer config");
 
+        assert_eq!(cfg.general.backend, ConfigBackend::Gnome);
         assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert_eq!(cfg.renderer.source, "/tmp/workshop/item");
         assert_eq!(cfg.renderer.assets_path, "/tmp/wallpaper_engine/assets");
         assert!(cfg.renderer.muted);
         assert_eq!(cfg.renderer.options_json.as_deref(), Some("{\"hello\":true}"));
+    }
+
+    #[test]
+    fn config_accepts_layer_shell_backend() {
+        let cfg: Config = toml::from_str("[general]\nbackend = \"layer-shell\"\n")
+            .expect("valid layer-shell backend");
+        assert_eq!(cfg.general.backend, ConfigBackend::LayerShell);
+    }
+
+    #[test]
+    fn config_rejects_unknown_backend() {
+        let err = toml::from_str::<Config>("[general]\nbackend = \"bad\"\n")
+            .expect_err("invalid backend must fail");
+        assert!(err.to_string().contains("backend"));
     }
 }

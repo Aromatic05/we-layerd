@@ -1,10 +1,10 @@
 mod app;
+mod backend;
 mod cli;
 mod config;
-mod gnome;
 mod ipc;
 mod logging;
-mod wayland;
+mod runtime;
 
 use anyhow::Result;
 use clap::Parser;
