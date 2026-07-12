@@ -1,6 +1,6 @@
 pkgname=we-layerd-git
 _gitname=we-layerd
-pkgver=.r159.gc165999
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Wayland daemon and GUI for running Wallpaper Engine wallpapers through wallpaper-engine-renderer'
 arch=('x86_64')

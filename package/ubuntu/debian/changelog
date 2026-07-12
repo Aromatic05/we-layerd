@@ -1,3 +1,9 @@
+we-layerd (0.2.0-1) unstable; urgency=medium
+
+  * Release 0.2.0.
+
+ -- we-layerd contributors <noreply@example.invalid>  Sun, 12 Jul 2026 21:00:00 +0900
+
 we-layerd (0.1.0-1) unstable; urgency=medium
 
   * Add a local Ubuntu 26.04 package definition.
