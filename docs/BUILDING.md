@@ -198,3 +198,33 @@ Both packages install:
 ```
 
 The Ubuntu package additionally owns `/usr/lib/cef`, and both packages own `/usr/lib/we-layerd/dxc`.
+
+## AppImage
+
+The AppImage is an x86_64 portable bundle intended to be built on Ubuntu 24.04 or another old supported baseline. Building on a newer distribution raises the minimum required host glibc version even though glibc itself is not bundled.
+
+Install the Ubuntu 24.04 source dependencies listed above, a current Rust toolchain through rustup, plus the runtime plugin packages used by the bundle:
+
+```bash
+sudo apt install \
+  file binutils patchelf xdotool \
+  gstreamer1.0-tools gstreamer1.0-libav \
+  gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad
+```
+
+Build from the repository root:
+
+```bash
+package/appimage/build.sh
+```
+
+The result is written to:
+
+```text
+package/appimage/out/we-layerd-<version>-x86_64.AppImage
+```
+
+The AppImage starts `we-gui`. Run the daemon CLI with `--cli`, or copy the bundled GNOME extension into the current user's extension directory with `--install-gnome-extension`.
+
+The build explicitly excludes glibc, the ELF dynamic loader, and the host OpenGL/Vulkan/VA-API stack from dependency deployment. It audits both the AppDir and the extracted final AppImage and fails if `libc.so`, `libpthread.so`, `libdl.so`, `librt.so`, `libm.so`, an `ld-linux` loader, or related glibc files are present. CEF's own private EGL/GLES/SwiftShader files remain under `usr/lib/cef`; the native renderer continues to use the host graphics stack.

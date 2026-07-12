@@ -1,0 +1,34 @@
+# glibc and the host dynamic loader must never be shipped in the AppImage.
+ld-linux*.so*
+libc.so*
+libpthread.so*
+libdl.so*
+librt.so*
+libm.so*
+libresolv.so*
+libnss_*.so*
+libutil.so*
+libanl.so*
+libBrokenLocale.so*
+libmemusage.so*
+libpcprofile.so*
+libSegFault.so*
+
+# These are placed in private application directories before linuxdeploy runs.
+# Exclude them from dependency deployment to prevent duplicate copies in usr/lib.
+libcef.so*
+libdxcompiler.so*
+libdxil.so*
+libdxildll.so*
+
+# The graphics loader and driver stack must come from the host system.
+libGL*.so*
+libEGL*.so*
+libGLES*.so*
+libOpenGL*.so*
+libglapi*.so*
+libdrm*.so*
+libgbm*.so*
+libvulkan*.so*
+libva*.so*
+libvdpau*.so*

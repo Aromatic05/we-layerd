@@ -4,6 +4,7 @@ The packaging tree contains reproducible local package builds for the supported 
 
 ```text
 package/
+├── appimage/ portable x86_64 AppImage build
 ├── common/   shared source-vendoring, dependency pins, and patches
 ├── fedora/   Fedora 43 RPM/SRPM build
 └── ubuntu/   Ubuntu 26.04 DEB build
@@ -12,6 +13,7 @@ package/
 Run the build entry points from any directory:
 
 ```bash
+package/appimage/build.sh
 package/fedora/build.sh
 package/ubuntu/build.sh
 ```

@@ -7,7 +7,7 @@ source "${script_dir}/versions.env"
 
 usage() {
   cat <<'EOF'
-Usage: package/common/fetch-dependencies.sh {dxc|cef|all}
+Usage: package/common/fetch-dependencies.sh {dxc|cef|appimage|all}
 
 Downloads pinned package-build dependencies into WE_LAYERD_DOWNLOAD_CACHE
 and verifies every file with SHA-256.
@@ -41,6 +41,12 @@ case "${1:-}" in
     ;;
   cef)
     fetch "${CEF_ARCHIVE}" "${CEF_URL}" "${CEF_SHA256}"
+    ;;
+  appimage)
+    fetch "${DXC_ARCHIVE}" "${DXC_URL}" "${DXC_SHA256}"
+    fetch "${CEF_ARCHIVE}" "${CEF_URL}" "${CEF_SHA256}"
+    fetch "${LINUXDEPLOY_ARCHIVE}" "${LINUXDEPLOY_URL}" "${LINUXDEPLOY_SHA256}"
+    fetch "${APPIMAGE_RUNTIME_ARCHIVE}" "${APPIMAGE_RUNTIME_URL}" "${APPIMAGE_RUNTIME_SHA256}"
     ;;
   all)
     fetch "${DXC_ARCHIVE}" "${DXC_URL}" "${DXC_SHA256}"

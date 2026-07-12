@@ -1,0 +1,50 @@
+#!/bin/sh
+set -eu
+
+if [ -z "${APPDIR:-}" ]; then
+  APPDIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+fi
+
+export PATH="${APPDIR}/usr/bin${PATH:+:${PATH}}"
+private_library_path="${APPDIR}/usr/lib:${APPDIR}/usr/lib/cef:${APPDIR}/usr/lib/we-layerd/dxc"
+export LD_LIBRARY_PATH="${private_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export XDG_DATA_DIRS="${APPDIR}/usr/share${XDG_DATA_DIRS:+:${XDG_DATA_DIRS}}"
+
+export WE_CEF_HELPER_PATH="${APPDIR}/usr/lib/we-cef-helper"
+export WE_CEF_RESOURCES_DIR="${APPDIR}/usr/lib/cef"
+export WE_CEF_LOCALES_DIR="${APPDIR}/usr/lib/cef/locales"
+
+export GST_REGISTRY_REUSE_PLUGIN_SCANNER=no
+export GST_PLUGIN_SYSTEM_PATH_1_0="${APPDIR}/usr/lib/gstreamer-1.0"
+export GST_PLUGIN_PATH_1_0="${APPDIR}/usr/lib/gstreamer-1.0"
+export GST_PLUGIN_SCANNER_1_0="${APPDIR}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner"
+if [ -x "${APPDIR}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-ptp-helper" ]; then
+  export GST_PTP_HELPER_1_0="${APPDIR}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-ptp-helper"
+fi
+registry_root="${XDG_CACHE_HOME:-${HOME}/.cache}/we-layerd"
+mkdir -p "${registry_root}"
+export GST_REGISTRY_1_0="${registry_root}/gstreamer-appimage-registry.bin"
+
+case "${1:-}" in
+  --cli)
+    shift
+    exec "${APPDIR}/usr/bin/we-layerd" "$@"
+    ;;
+  --install-gnome-extension)
+    extension_source="${APPDIR}/usr/share/we-layerd/gnome-shell-extension/we-layerd@aromatic"
+    extension_root="${XDG_DATA_HOME:-${HOME}/.local/share}/gnome-shell/extensions"
+    extension_target="${extension_root}/we-layerd@aromatic"
+    if [ ! -d "${extension_source}" ]; then
+      printf '%s\n' 'Bundled GNOME extension is missing.' >&2
+      exit 1
+    fi
+    mkdir -p "${extension_root}"
+    rm -rf "${extension_target}"
+    cp -a "${extension_source}" "${extension_target}"
+    printf 'Installed GNOME extension to %s\n' "${extension_target}"
+    printf '%s\n' 'Enable it after logging in again: gnome-extensions enable we-layerd@aromatic'
+    exit 0
+    ;;
+esac
+
+exec "${APPDIR}/usr/bin/we-gui" "$@"

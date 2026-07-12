@@ -198,3 +198,33 @@ rustup default stable
 ```
 
 Ubuntu 包额外包含 `/usr/lib/cef`，两套包都包含 `/usr/lib/we-layerd/dxc`。
+
+## AppImage
+
+AppImage 当前只生成 x86_64 包，建议在 Ubuntu 24.04 或其他较老的受支持基线上构建。虽然包内不会携带 glibc，但如果在更新的发行版上编译，生成的二进制仍会提高宿主机所需的最低 glibc 版本。
+
+安装前文列出的 Ubuntu 24.04 源码依赖和 rustup 工具链，并补充 AppImage 会携带的 GStreamer 运行插件：
+
+```bash
+sudo apt install \
+  file binutils patchelf xdotool \
+  gstreamer1.0-tools gstreamer1.0-libav \
+  gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad
+```
+
+在仓库根目录运行：
+
+```bash
+package/appimage/build.sh
+```
+
+输出位于：
+
+```text
+package/appimage/out/we-layerd-<version>-x86_64.AppImage
+```
+
+AppImage 默认启动 `we-gui`。使用 `--cli` 可以进入 `we-layerd` 命令行；使用 `--install-gnome-extension` 可以把随包携带的 GNOME 扩展复制到当前用户的扩展目录。
+
+构建脚本会明确排除 glibc、ELF 动态加载器以及宿主 OpenGL/Vulkan/VA-API 驱动栈，并分别检查 AppDir 和最终 AppImage 的解包内容。只要发现 `libc.so`、`libpthread.so`、`libdl.so`、`librt.so`、`libm.so`、`ld-linux` 或其他相关 glibc 文件，构建立即失败。CEF 自带的 EGL/GLES/SwiftShader 文件仍保留在 `usr/lib/cef`；原生 renderer 继续使用宿主机图形栈。

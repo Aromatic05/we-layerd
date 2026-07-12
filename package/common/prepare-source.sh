@@ -31,6 +31,7 @@ tar \
   --exclude='./.deps' \
   --exclude='./package/source-out' \
   --exclude='./package/fedora/out' \
+  --exclude='./package/appimage/out' \
   --exclude='./package/ubuntu/out' \
   -C "${repo_root}" -cf - . | tar -C "${source_dir}" -xf -
 
