@@ -1,0 +1,34 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: we-layerd
+Source: https://github.com/Aromatic05/we-layerd
+Disclaimer: The upstream source tree currently does not publish a project
+ license. This packaging is intended for local testing and is not suitable for
+ redistribution until the project adopts a license.
+
+Files: *
+Copyright: 2026 we-layerd contributors
+License: all-rights-reserved
+ No permission to copy, modify, or redistribute the we-layerd source is
+ granted by the current repository contents.
+
+Files: debian/*
+Copyright: 2026 we-layerd contributors
+License: all-rights-reserved
+ This packaging follows the licensing status of the upstream repository.
+
+Files: usr/lib/cef/*
+Copyright: Chromium Embedded Framework and Chromium contributors
+License: BSD-3-clause and other Chromium licenses
+ The complete CEF license text is installed as
+ /usr/share/doc/we-layerd/third-party/CEF-LICENSE.txt.
+
+Files: usr/lib/we-layerd/dxc/*
+Copyright: Microsoft Corporation and LLVM contributors
+License: NCSA and Microsoft notices
+ The complete DXC license texts are installed as
+ /usr/share/doc/we-layerd/third-party/DXC-LICENSE-MS.txt and
+ /usr/share/doc/we-layerd/third-party/DXC-LICENSE-LLVM.txt.
+
+License: all-rights-reserved
+ All rights are reserved unless and until the upstream project publishes a
+ license granting redistribution rights.

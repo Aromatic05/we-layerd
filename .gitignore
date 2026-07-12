@@ -1,1 +1,4 @@
 /target
+package/source-out/
+package/fedora/out/
+package/ubuntu/out/

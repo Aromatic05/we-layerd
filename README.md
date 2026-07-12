@@ -48,6 +48,18 @@ Notes:
 - `gtk3` is needed by the current tray/GUI stack on Linux.
 - `directx-shader-compiler` satisfies the upstream DXC probe used by the renderer submodule.
 
+Fedora and Ubuntu dependency installation, source-build, distrobox, and native package instructions are documented in:
+
+- [docs/BUILDING.md](./docs/BUILDING.md)
+- [docs/BUILDING.zh-CN.md](./docs/BUILDING.zh-CN.md)
+
+Native package entry points:
+
+```bash
+package/fedora/build.sh
+package/ubuntu/build.sh
+```
+
 ## Install binaries
 
 `cargo xtask install` follows the prefix recorded by the build. The default build prefix is `~/.local`.
@@ -101,5 +113,7 @@ we-layerd doctor --config ~/.config/we-layerd/config.toml
 ## More docs
 
 - [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
+- [docs/BUILDING.md](./docs/BUILDING.md)
+- [docs/BUILDING.zh-CN.md](./docs/BUILDING.zh-CN.md)
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 - [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)

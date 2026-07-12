@@ -1,0 +1,6 @@
+we-layerd (0.1.0-1) unstable; urgency=medium
+
+  * Add a local Ubuntu 26.04 package definition.
+  * Bundle pinned CEF and DXC private runtimes.
+
+ -- we-layerd contributors <noreply@example.invalid>  Sun, 12 Jul 2026 02:00:00 +0900

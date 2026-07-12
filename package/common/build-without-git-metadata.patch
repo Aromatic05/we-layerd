@@ -1,0 +1,32 @@
+--- a/build.rs
++++ b/build.rs
+@@ -129,6 +129,16 @@
+ }
+
+ fn ensure_recursive_submodules(upstream_root: &Path) {
++    let required_files = [
++        upstream_root.join("third_party/Eigen/CMakeLists.txt"),
++        upstream_root.join("third_party/SPIRV-Reflect/CMakeLists.txt"),
++        upstream_root.join("third_party/glslang/CMakeLists.txt"),
++        upstream_root.join("third_party/quickjs/quickjs.c"),
++    ];
++    if required_files.iter().all(|path| path.is_file()) {
++        return;
++    }
++
+     run(
+         Command::new("git")
+             .arg("-C")
+@@ -139,6 +149,12 @@
+             .arg("--recursive"),
+         "initialize wallpaper-engine-renderer recursive submodules",
+     );
++
++    for path in required_files {
++        if !path.is_file() {
++            panic!("missing initialized renderer dependency at {}", path.display());
++        }
++    }
+ }
+
+ fn ensure_cmake_cache_value(cache_path: &Path, key: &str, expected: &str) -> std::io::Result<()> {

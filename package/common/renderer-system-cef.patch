@@ -1,0 +1,34 @@
+--- a/third_party/wallpaper-engine-renderer/CMakeLists.txt
++++ b/third_party/wallpaper-engine-renderer/CMakeLists.txt
+@@ -22,10 +22,7 @@
+
+ set(_default_build_weweb OFF)
+ if((DEFINED ENV{CEF_ROOT} AND EXISTS "$ENV{CEF_ROOT}/cmake/FindCEF.cmake")
+-   OR (EXISTS "/usr/share/cmake/Modules/FindCEF.cmake"
+-       AND EXISTS "/usr/include/cef/include/cef_version.h"
+-       AND EXISTS "/usr/lib/cef/libcef.so"
+-       AND EXISTS "/usr/src/cef/libcef_dll/CMakeLists.txt"))
++   OR EXISTS "/usr/share/cmake/Modules/FindCEF.cmake")
+     set(_default_build_weweb ON)
+ endif()
+ pkg_check_modules(WEVIDEO_GSTREAMER QUIET
+@@ -203,15 +200,10 @@
+     elseif(DEFINED ENV{CEF_ROOT})
+         set(CEF_ROOT $ENV{CEF_ROOT})
+         set(_cef_layout "binary distribution at ${CEF_ROOT} (from env)")
+-    elseif(EXISTS "/usr/share/cmake/Modules/FindCEF.cmake"
+-           AND EXISTS "/usr/include/cef/include/cef_version.h"
+-           AND EXISTS "/usr/lib/cef/libcef.so"
+-           AND EXISTS "/usr/src/cef/libcef_dll/CMakeLists.txt")
+-        # System libcef-dev layout. Use the system FindCEF.cmake which
+-        # already probes /usr/include/cef + /usr/lib/cef + /usr/src/cef.
+-        # CEF_ROOT stays empty in this case so the rest of the build
+-        # can fall back to /usr/lib/cef for the CefSettings paths.
+-        set(_cef_layout "system libcef-dev (Debian/Ubuntu)")
++    elseif(EXISTS "/usr/share/cmake/Modules/FindCEF.cmake")
++        # Let the distribution-provided FindCEF.cmake define the system
++        # header, library, wrapper-source, resource, and locale layout.
++        set(_cef_layout "system CEF")
+     else()
+         message(FATAL_ERROR
+             "BUILD_WEWEB=ON requires CEF. Set -DCEF_ROOT=/path/to/cef_binary_distro, "

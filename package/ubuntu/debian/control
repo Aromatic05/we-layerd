@@ -1,0 +1,55 @@
+Source: we-layerd
+Section: utils
+Priority: optional
+Maintainer: we-layerd contributors <noreply@example.invalid>
+Build-Depends:
+ binutils,
+ debhelper-compat (= 13),
+ cargo (>= 1.88),
+ cmake,
+ g++,
+ libasound2-dev,
+ libdrm-dev,
+ libfontconfig1-dev,
+ libfreetype-dev,
+ libgl-dev,
+ libgstreamer-plugins-bad1.0-dev,
+ libgstreamer-plugins-base1.0-dev,
+ libgstreamer1.0-dev,
+ libgtk-3-dev,
+ liblz4-dev,
+ libpango1.0-dev,
+ libva-dev,
+ libvulkan-dev,
+ libwayland-dev,
+ libxkbcommon-dev,
+ libxdo-dev,
+ patchelf,
+ pkg-config,
+ rustc (>= 1.88),
+ wayland-protocols
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/Aromatic05/we-layerd
+
+Package: we-layerd
+Architecture: amd64
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends},
+ xdotool
+Recommends:
+ gstreamer1.0-libav,
+ gstreamer1.0-plugins-bad,
+ gstreamer1.0-plugins-base,
+ gstreamer1.0-plugins-good
+Suggests:
+ gnome-shell
+Description: native Wallpaper Engine wallpaper daemon for Wayland
+ we-layerd runs Wallpaper Engine wallpapers through a native renderer on
+ Wayland. It supports layer-shell compositors and GNOME, DMA-BUF and SHM
+ presentation, interactive pointer input, video wallpapers, web wallpapers,
+ and a companion GUI.
+ .
+ This local package bundles private CEF and DXC runtimes because Ubuntu does
+ not provide the required CEF development layout or DirectX Shader Compiler.
