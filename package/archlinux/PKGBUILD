@@ -71,6 +71,8 @@ package() {
 
   install -Dm755 target/release/we-layerd "${pkgdir}/usr/bin/we-layerd"
   install -Dm755 target/release/we-gui "${pkgdir}/usr/bin/we-gui"
+  install -Dm644 apps/we-gui/assets/we-gui.desktop \
+    "${pkgdir}/usr/share/applications/we-gui.desktop"
   install -Dm755 \
     target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so \
     "${pkgdir}/usr/lib/libwallpaper-engine-renderer.so"
