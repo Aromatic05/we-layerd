@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "dev-*"
 
 permissions:
   contents: read
@@ -35,7 +36,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate release tag
+    name: Validate build ref
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -48,18 +49,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            printf 'Release tag must use vMAJOR.MINOR.PATCH, got %s\n' "${tag}" >&2
+          manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n1)"
+          if [[ -z "${manifest_version}" ]]; then
+            printf 'Failed to read package version from Cargo.toml\n' >&2
             exit 1
           fi
 
-          version="${tag#v}"
-          manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n1)"
-          if [[ "${version}" != "${manifest_version}" ]]; then
-            printf 'Tag version %s does not match Cargo.toml version %s\n' \
-              "${version}" "${manifest_version}" >&2
-            exit 1
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              printf 'Release tag must use vMAJOR.MINOR.PATCH, got %s\n' "${tag}" >&2
+              exit 1
+            fi
+            version="${tag#v}"
+            if [[ "${version}" != "${manifest_version}" ]]; then
+              printf 'Tag version %s does not match Cargo.toml version %s\n' \
+                "${version}" "${manifest_version}" >&2
+              exit 1
+            fi
+          else
+            version="${manifest_version}"
           fi
 
           printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
@@ -249,6 +258,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - validate
       - ubuntu
