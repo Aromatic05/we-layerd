@@ -18,7 +18,7 @@ use wayland_protocols::wp::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use we_core::install_layout::{expand_tilde, resolve_renderer_library};
-use we_renderer::{FillMode, Frame, RenderConfig, RuntimeSettings, Source};
+use we_renderer::{FillMode, Frame, RenderConfig, Source};
 
 use crate::{
     backend::{
@@ -341,14 +341,6 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         fill_mode: renderer_fill_mode(cfg.renderer.fill_mode),
         rotation_degrees: cfg.renderer.rotation_degrees,
     })?;
-    session.apply_runtime_settings(RuntimeSettings {
-        fps: Some(cfg.renderer.fps as i32),
-        speed: Some(cfg.renderer.speed),
-        volume: Some(cfg.renderer.volume),
-        muted: Some(cfg.renderer.muted),
-        fill_mode: Some(renderer_fill_mode(cfg.renderer.fill_mode)),
-    })?;
-
     session.play()?;
     let renderer_frame_fd = session.frame_ready_fd()?;
     state.session = Some(session);
