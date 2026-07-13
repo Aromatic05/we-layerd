@@ -1,9 +1,13 @@
 use std::{
+    collections::HashMap,
     env,
+    fs::File,
+    io::BufReader,
     path::{Path, PathBuf},
     process::{Child, Command},
     time::Duration,
 };
+use image_rs::AnimationDecoder;
 
 use iced::{
     alignment::{Horizontal, Vertical},
@@ -38,6 +42,21 @@ enum Sidebar {
     Settings,
 }
 
+#[derive(Debug, Clone)]
+struct GifFrame {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    delay: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct AnimatedPreview {
+    frames: Vec<GifFrame>,
+    current: usize,
+    elapsed: Duration,
+}
+
 fn main() -> iced::Result {
     iced::daemon(App::init, update, view)
         .title("we-gui")
@@ -66,6 +85,7 @@ struct App {
     search_query: String,
     type_filter: Option<WallpaperType>,
     panes: pane_grid::State<Pane>,
+    animated_previews: HashMap<PathBuf, AnimatedPreview>,
     tray: Option<tray::TrayController>,
     main_window_id: Option<window::Id>,
     theme: Theme,
@@ -75,6 +95,8 @@ struct App {
 enum Message {
     AutoScan,
     Scanned(Result<Vec<WallpaperEntry>, String>),
+    GifLoaded(PathBuf, Result<Vec<GifFrame>, String>),
+    GifTick,
     SelectWallpaper(usize),
     PlayPressed,
     StopPressed,
@@ -117,7 +139,13 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Scanned(result) => match result {
             Ok(entries) => {
                 app.entries = entries;
-                Task::none()
+                app.animated_previews.clear();
+                Task::batch(app.entries.iter().filter_map(|entry| {
+                    let path = entry.preview.as_ref()?.clone();
+                    (path.extension().and_then(|ext| ext.to_str()) == Some("gif")).then(|| {
+                        Task::perform(decode_gif(path.clone()), move |result| Message::GifLoaded(path, result))
+                    })
+                }))
             }
             Err(_err) => Task::none(),
         },
@@ -135,6 +163,24 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             let _ = save_config(&app.config_path, &cfg);
             app.sidebar = Some(Sidebar::Detail);
             app.detail_tab = wallpaper_detail::DetailTab::Actions;
+            Task::none()
+        }
+        Message::GifLoaded(path, result) => {
+            if let Ok(frames) = result {
+                if !frames.is_empty() {
+                    app.animated_previews.insert(path, AnimatedPreview { frames, current: 0, elapsed: Duration::ZERO });
+                }
+            }
+            Task::none()
+        }
+        Message::GifTick => {
+            for preview in app.animated_previews.values_mut() {
+                preview.elapsed += Duration::from_millis(16);
+                while preview.elapsed >= preview.frames[preview.current].delay {
+                    preview.elapsed -= preview.frames[preview.current].delay;
+                    preview.current = (preview.current + 1) % preview.frames.len();
+                }
+            }
             Task::none()
         }
         Message::Detail(message) => update_wallpaper_detail(app, message),
@@ -401,7 +447,7 @@ fn library_view(app: &App) -> Element<'_, Message> {
         app.type_filter.is_none_or(|ty| entry.ty == ty)
             && entry.title.to_lowercase().contains(&app.search_query.to_lowercase())
     });
-    let grid = build_wallpaper_grid(matches, app.selected_id.as_ref(), app.viewport_width);
+    let grid = build_wallpaper_grid(matches, app.selected_id.as_ref(), app.viewport_width, &app.animated_previews);
     let filters = row![
         filter_chip("All", app.type_filter.is_none(), None),
         filter_chip("Web", app.type_filter == Some(WallpaperType::Web), Some(WallpaperType::Web)),
@@ -416,8 +462,10 @@ fn library_view(app: &App) -> Element<'_, Message> {
     .align_y(Vertical::Center);
     container(column![
         toolbar,
-        text_input("Search wallpapers", &app.search_query).on_input(Message::SearchChanged).padding(12).style(search_style),
-        filters,
+        row![
+            text_input("Search wallpapers", &app.search_query).on_input(Message::SearchChanged).padding(12).style(search_style).width(Fill),
+            filters,
+        ].spacing(12).align_y(Vertical::Center),
         scrollable(grid).width(Fill).height(Fill),
     ]
     .spacing(16))
@@ -458,6 +506,19 @@ async fn scan_wallpapers_from(workshop_path: String) -> Result<Vec<WallpaperEntr
     wallpaper::scan_workshop_wallpapers(&workshop_root).map_err(|e| e.to_string())
 }
 
+async fn decode_gif(path: PathBuf) -> Result<Vec<GifFrame>, String> {
+    let decoder = image_rs::codecs::gif::GifDecoder::new(BufReader::new(File::open(path).map_err(|err| err.to_string())?))
+        .map_err(|err| err.to_string())?;
+    decoder.into_frames().collect_frames().map_err(|err| err.to_string()).map(|frames| {
+        frames.into_iter().map(|frame| {
+            let (numerator, denominator) = frame.delay().numer_denom_ms();
+            let milliseconds = (numerator / denominator.max(1)).max(16);
+            let buffer = frame.into_buffer();
+            GifFrame { width: buffer.width(), height: buffer.height(), pixels: buffer.into_raw(), delay: Duration::from_millis(milliseconds.into()) }
+        }).collect()
+    })
+}
+
 fn wallpaper_type_name(ty: WallpaperType) -> &'static str {
     match ty {
         WallpaperType::Video => "video",
@@ -476,6 +537,7 @@ fn subscription(_app: &App) -> Subscription<Message> {
         iced::time::every(std::time::Duration::from_millis(250)).map(|_| Message::TrayTick),
         iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::ThemeTick),
         iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::StatusTick),
+        iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::GifTick),
     ])
 }
 
@@ -529,6 +591,7 @@ impl App {
                     a: Box::new(pane_grid::Configuration::Pane(Pane::Library)),
                     b: Box::new(pane_grid::Configuration::Pane(Pane::Sidebar)),
                 }),
+                animated_previews: HashMap::new(),
                 tray: tray::TrayController::new().ok(),
                 main_window_id: None,
                 theme: detect_system_theme(),
@@ -549,6 +612,7 @@ fn build_wallpaper_grid<'a>(
     entries: impl Iterator<Item = (usize, &'a WallpaperEntry)>,
     selected_id: Option<&String>,
     width: f32,
+    animated_previews: &'a HashMap<PathBuf, AnimatedPreview>,
 ) -> Element<'a, Message> {
     let spacing = 12.0;
     let card_width = 360.0;
@@ -561,7 +625,7 @@ fn build_wallpaper_grid<'a>(
         let mut r = row!().spacing(spacing);
         for (index, entry) in chunk.iter() {
             let is_selected = selected_id.map(|id| id == &entry.id).unwrap_or(false);
-            r = r.push(make_wallpaper_card(entry, *index, card_width, is_selected));
+            r = r.push(make_wallpaper_card(entry, *index, card_width, is_selected, animated_previews));
         }
         root = root.push(r);
     }
@@ -574,11 +638,16 @@ fn make_wallpaper_card<'a>(
     index: usize,
     card_width: f32,
     is_selected: bool,
+    animated_previews: &'a HashMap<PathBuf, AnimatedPreview>,
 ) -> Element<'a, Message> {
     let card_height = (card_width * 9.0 / 16.0).round();
 
     let media: Element<'a, Message> = if let Some(path) = &entry.preview {
-        image(image::Handle::from_path(path))
+        let handle = animated_previews.get(path).map(|preview| {
+            let frame = &preview.frames[preview.current];
+            image::Handle::from_rgba(frame.width, frame.height, frame.pixels.clone())
+        }).unwrap_or_else(|| image::Handle::from_path(path));
+        image(handle)
             .width(card_width)
             .height(card_height)
             .content_fit(ContentFit::Cover)

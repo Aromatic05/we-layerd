@@ -82,21 +82,22 @@ pub fn view<'a>(
     .spacing(8);
 
     let body = match active_tab {
-        DetailTab::Actions => actions_view(settings, resolution_width, resolution_height, is_running, is_paused),
+        DetailTab::Actions => actions_view(settings, resolution_width, resolution_height),
         DetailTab::UserProperties => properties_view(schema, settings),
     };
 
-    let apply = button(text("✓").size(20))
-        .on_press(DetailMessage::Apply)
-        .width(Fill)
-        .padding([13, 20])
-        .style(primary_button_style);
+    let actions = row![
+        icon_action("✓", DetailMessage::Apply, primary_button_style),
+        icon_action(if !is_running || is_paused { "▶" } else { "Ⅱ" }, DetailMessage::TogglePlayback, tonal_button_style),
+        icon_action("■", DetailMessage::Stop, outlined_button_style),
+    ]
+    .spacing(12);
 
     container(column![
         column![text(&entry.title).size(24), text(entry.id.as_str()).size(12)].spacing(4),
         tabs,
         scrollable(body).height(Fill),
-        apply,
+        actions,
     ]
     .spacing(18))
     .width(Fill)
@@ -110,20 +111,12 @@ fn actions_view<'a>(
     settings: &'a WallpaperSettings,
     resolution_width: &'a str,
     resolution_height: &'a str,
-    is_running: bool,
-    is_paused: bool,
 ) -> Element<'a, DetailMessage> {
     let resolution_mode = match settings.render_resolution {
         RenderResolution::Automatic => ResolutionMode::Automatic,
         RenderResolution::Fixed { .. } => ResolutionMode::Fixed,
     };
-    let playback_label = if !is_running || is_paused { "Play" } else { "Pause" };
     let playback = section("Playback", column![
-        row![
-            button(text(if playback_label == "Play" { "▶" } else { "Ⅱ" }).size(18)).on_press(DetailMessage::TogglePlayback).style(tonal_button_style),
-            button(text("■").size(16)).on_press(DetailMessage::Stop).style(outlined_button_style),
-        ]
-        .spacing(10),
         field_label("Frame rate"),
         text_input("60", &settings.fps.to_string()).on_input(DetailMessage::FpsChanged).padding(10).style(md_text_input_style),
         text(format!("Speed  {:.2}×", settings.speed)).size(13).color(Color::from_rgb8(196, 199, 204)),
@@ -155,7 +148,7 @@ fn properties_view<'a>(schema: &'a UserPropertySchema, settings: &'a WallpaperSe
     ]
     .spacing(12);
     for property in &schema.entries {
-        properties = properties.push(section(&property.label, column![property_control(property, settings)]));
+        properties = properties.push(container(row![text(&property.label).size(14).width(Fill), property_control(property, settings)].align_y(iced::Alignment::Center).spacing(12)).padding(12).style(section_style));
     }
     if schema.entries.is_empty() {
         properties = properties.push(container(text("This wallpaper does not declare user properties.").size(14)).padding(16).style(section_style));
@@ -218,6 +211,10 @@ fn tab_button<'a>(label: &'a str, tab: DetailTab, active: DetailTab) -> iced::wi
     })
 }
 
+fn icon_action<'a>(icon: &'a str, message: DetailMessage, style: fn(&Theme, button::Status) -> button::Style) -> iced::widget::Button<'a, DetailMessage> {
+    button(text(icon).size(19)).on_press(message).width(48).height(48).style(style)
+}
+
 fn sidebar_style(_theme: &Theme) -> container::Style {
     container::Style { background: Some(Background::Color(Color::from_rgb8(30, 31, 34))), ..Default::default() }
 }
@@ -232,11 +229,11 @@ fn primary_button_style(_theme: &Theme, status: button::Status) -> button::Style
 }
 
 fn tonal_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
-    button::Style { background: Some(Background::Color(Color::from_rgb8(65, 83, 116))), text_color: Color::from_rgb8(220, 231, 255), border: Border { radius: 20.0.into(), ..Default::default() }, ..Default::default() }
+    button::Style { background: Some(Background::Color(Color::from_rgb8(65, 83, 116))), text_color: Color::from_rgb8(220, 231, 255), border: Border { radius: 24.0.into(), ..Default::default() }, ..Default::default() }
 }
 
 fn outlined_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
-    button::Style { text_color: Color::from_rgb8(198, 210, 242), border: Border { radius: 20.0.into(), width: 1.0, color: Color::from_rgb8(143, 147, 156) }, ..Default::default() }
+    button::Style { text_color: Color::from_rgb8(198, 210, 242), border: Border { radius: 24.0.into(), width: 1.0, color: Color::from_rgb8(143, 147, 156) }, ..Default::default() }
 }
 
 fn md_text_input_style(_theme: &Theme, status: iced::widget::text_input::Status) -> iced::widget::text_input::Style {
