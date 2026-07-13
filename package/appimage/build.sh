@@ -41,7 +41,6 @@ source_dir="${work_dir}/we-layerd-${version}"
 (
   cd "${source_dir}"
   patch -p1 < "${common_dir}/build-without-git-metadata.patch"
-  patch -p1 < "${common_dir}/renderer-binary-cef-include.patch"
 )
 
 tar -xjf "${WE_LAYERD_DOWNLOAD_CACHE}/${CEF_ARCHIVE}" \
