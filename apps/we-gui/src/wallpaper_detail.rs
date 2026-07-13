@@ -95,7 +95,10 @@ pub fn view<'a>(
     container(column![
         column![text(&entry.title).size(24), text(entry.id.as_str()).size(12)].spacing(4),
         tabs,
-        scrollable(body).height(Fill),
+        scrollable(body)
+            .height(Fill)
+            .direction(iced::widget::scrollable::Direction::Vertical(iced::widget::scrollable::Scrollbar::new().width(12).margin(6).scroller_width(6)))
+            .style(md_scrollable_style),
         actions,
     ]
     .spacing(18))
@@ -294,6 +297,18 @@ fn md_slider_style(_theme: &Theme, _status: iced::widget::slider::Status) -> ice
             border_color: Color::TRANSPARENT,
         },
     }
+}
+
+fn md_scrollable_style(_theme: &Theme, _status: iced::widget::scrollable::Status) -> iced::widget::scrollable::Style {
+    let rail = iced::widget::scrollable::Rail {
+        background: Some(Background::Color(Color::from_rgb8(39, 40, 44))),
+        border: Border { radius: 6.0.into(), ..Default::default() },
+        scroller: iced::widget::scrollable::Scroller {
+            background: Background::Color(Color::from_rgb8(143, 147, 156)),
+            border: Border { radius: 3.0.into(), ..Default::default() },
+        },
+    };
+    iced::widget::scrollable::Style { container: iced::widget::container::Style::default(), vertical_rail: rail, horizontal_rail: rail, gap: None, auto_scroll: iced::widget::scrollable::AutoScroll { background: Background::Color(Color::from_rgb8(48, 49, 53)), border: Border::default(), shadow: iced::Shadow::default(), icon: Color::from_rgb8(230, 225, 229) } }
 }
 
 fn value_text(value: &Value) -> String {
