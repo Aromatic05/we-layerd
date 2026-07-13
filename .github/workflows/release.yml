@@ -75,9 +75,7 @@ jobs:
 
   ubuntu:
     name: Ubuntu 26.04 DEB
-    needs:
-      - validate
-      - fedora
+    needs: validate
     runs-on: ubuntu-24.04
     container: ubuntu:26.04
     steps:
@@ -135,69 +133,9 @@ jobs:
           path: release-assets/*.deb
           if-no-files-found: error
 
-  fedora:
-    name: Fedora 43 RPM
-    needs: validate
-    runs-on: ubuntu-24.04
-    container: fedora:43
-    steps:
-      - name: Install build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          dnf -y install \
-            alsa-lib-devel binutils bzip2 ca-certificates cargo ccache cef cef-devel \
-            cmake curl desktop-file-utils findutils fontconfig-devel \
-            freetype-devel gcc-c++ git gstreamer1-devel \
-            gstreamer1-plugins-bad-free-devel gstreamer1-plugins-base-devel \
-            gtk3-devel libatomic libdrm-devel libva-devel libxdo-devel \
-            libxkbcommon-devel lz4-devel mesa-libGL-devel pango-devel \
-            patchelf pkgconf-pkg-config rpm-build rpmdevtools rust tar \
-            vulkan-headers vulkan-loader-devel wayland-devel \
-            wayland-protocols-devel xdotool xz
-
-      - name: Check out source and submodules
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Set up release toolchain and caches
-        uses: ./.github/actions/setup-release-build
-        with:
-          ccache-namespace: fedora43
-          source-cache-key: ${{ hashFiles('Cargo.lock', 'package/common/versions.env') }}
-
-      - name: Build RPM package
-        shell: bash
-        run: package/fedora/build.sh
-
-      - name: Report C/C++ compiler cache
-        if: always()
-        shell: bash
-        run: ccache --show-stats
-
-      - name: Collect binary RPM package
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
-          find package/fedora/out/RPMS -type f -name '*.rpm' \
-            -exec cp -v {} release-assets/ \;
-          test -n "$(find release-assets -maxdepth 1 -type f -name '*.rpm' -print -quit)"
-
-      - name: Upload Fedora artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: we-layerd-${{ needs.validate.outputs.version }}-fedora-x86_64
-          path: release-assets/*.rpm
-          if-no-files-found: error
-
   appimage:
     name: Ubuntu 24.04 AppImage
-    needs:
-      - validate
-      - ubuntu
+    needs: validate
     runs-on: ubuntu-24.04
     container: ubuntu:24.04
     steps:
@@ -262,7 +200,6 @@ jobs:
     needs:
       - validate
       - ubuntu
-      - fedora
       - appimage
     runs-on: ubuntu-24.04
     permissions:
@@ -288,7 +225,6 @@ jobs:
           done < <(find downloaded-artifacts -type f -print0)
 
           test -n "$(find release-assets -maxdepth 1 -type f -name '*.deb' -print -quit)"
-          test -n "$(find release-assets -maxdepth 1 -type f -name '*.rpm' -print -quit)"
           test -n "$(find release-assets -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
           sha256sum release-assets/* > release-assets/SHA256SUMS
 
