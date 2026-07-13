@@ -2,6 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use we_core::wallpaper::settings::WallpaperFillMode;
 
 use crate::backend::{gnome::protocol, traits::BackendKind};
 
@@ -85,6 +86,14 @@ pub struct RendererConfig {
     pub muted: bool,
     #[serde(default)]
     pub options_json: Option<String>,
+    #[serde(default)]
+    pub render_width: Option<u32>,
+    #[serde(default)]
+    pub render_height: Option<u32>,
+    #[serde(default)]
+    pub fill_mode: WallpaperFillMode,
+    #[serde(default)]
+    pub rotation_degrees: u32,
 }
 
 fn default_interactive() -> bool {
@@ -163,6 +172,10 @@ impl Default for RendererConfig {
             volume: default_renderer_volume(),
             muted: false,
             options_json: None,
+            render_width: None,
+            render_height: None,
+            fill_mode: WallpaperFillMode::Cover,
+            rotation_degrees: 0,
         }
     }
 }
@@ -234,6 +247,10 @@ mod tests {
             assets_path = "/tmp/wallpaper_engine/assets"
             muted = true
             options_json = "{\"hello\":true}"
+            render_width = 1920
+            render_height = 1080
+            fill_mode = "fit"
+            rotation_degrees = 90
 
             [gnome]
             extension_dbus_name = "io.github.weLayerd.Gnome"
@@ -247,6 +264,10 @@ mod tests {
         assert_eq!(cfg.renderer.assets_path, "/tmp/wallpaper_engine/assets");
         assert!(cfg.renderer.muted);
         assert_eq!(cfg.renderer.options_json.as_deref(), Some("{\"hello\":true}"));
+        assert_eq!(cfg.renderer.render_width, Some(1920));
+        assert_eq!(cfg.renderer.render_height, Some(1080));
+        assert_eq!(cfg.renderer.fill_mode, we_core::wallpaper::settings::WallpaperFillMode::Fit);
+        assert_eq!(cfg.renderer.rotation_degrees, 90);
     }
 
     #[test]

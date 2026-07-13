@@ -18,7 +18,7 @@ use wayland_protocols::wp::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use we_core::install_layout::{expand_tilde, resolve_renderer_library};
-use we_renderer::{Frame, RenderConfig, Source};
+use we_renderer::{FillMode, Frame, RenderConfig, Source};
 
 use crate::{
     backend::{
@@ -63,6 +63,15 @@ fn note_frame_acquired(state: &mut LayerShellState, frame: &Frame) {
 
 fn frame_interval(fps: u32) -> Duration {
     Duration::from_secs_f64(1.0 / fps.max(1) as f64)
+}
+
+fn renderer_fill_mode(value: we_core::wallpaper::settings::WallpaperFillMode) -> FillMode {
+    match value {
+        we_core::wallpaper::settings::WallpaperFillMode::Cover => FillMode::Cover,
+        we_core::wallpaper::settings::WallpaperFillMode::Fit => FillMode::Fit,
+        we_core::wallpaper::settings::WallpaperFillMode::Stretch => FillMode::Stretch,
+        we_core::wallpaper::settings::WallpaperFillMode::Center => FillMode::Center,
+    }
 }
 
 fn can_present_next_frame(state: &LayerShellState) -> bool {
@@ -314,12 +323,17 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     };
 
     // Set render config BEFORE play
+    let render_width = cfg.renderer.render_width.unwrap_or(state.output.geometry.render_width);
+    let render_height = cfg.renderer.render_height.unwrap_or(state.output.geometry.render_height);
     session.configure(RenderConfig {
-        width: state.output.geometry.render_width,
-        height: state.output.geometry.render_height,
+        width: render_width,
+        height: render_height,
         enable_valid_layer: false,
         prefer_dmabuf,
         allow_shm_fallback: cfg.renderer.allow_shm_fallback,
+        msaa_samples: 0,
+        fill_mode: renderer_fill_mode(cfg.renderer.fill_mode),
+        rotation_degrees: cfg.renderer.rotation_degrees,
     })?;
 
     session.play()?;
