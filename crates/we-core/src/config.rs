@@ -311,6 +311,8 @@ mod tests {
     #[test]
     fn build_config_for_wallpaper_uses_only_the_selected_wallpaper_profile() {
         let mut settings = LaunchSettings::default();
+        let mut user_properties = std::collections::BTreeMap::new();
+        user_properties.insert("language".to_string(), serde_json::json!("3"));
         settings.wallpapers.insert(
             "alpha".to_string(),
             WallpaperSettings {
@@ -321,6 +323,7 @@ mod tests {
                 render_resolution: RenderResolution::Fixed { width: 2560, height: 1440 },
                 fill_mode: WallpaperFillMode::Fit,
                 rotation_degrees: Rotation::Deg90,
+                user_properties,
                 ..WallpaperSettings::default()
             },
         );
@@ -334,6 +337,16 @@ mod tests {
         assert_eq!(cfg.renderer.render_height, Some(1440));
         assert_eq!(cfg.renderer.fill_mode, WallpaperFillMode::Fit);
         assert_eq!(cfg.renderer.rotation_degrees, 90);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                cfg.renderer.options_json.as_deref().expect("source options"),
+            )
+            .expect("valid source options"),
+            serde_json::json!({
+                "version": 1,
+                "scene": { "userProperties": { "language": "3" } }
+            })
+        );
     }
 
     #[test]
