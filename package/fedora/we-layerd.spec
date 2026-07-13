@@ -11,7 +11,6 @@ Source0:        %{name}-%{version}.tar.xz
 Source1:        linux_dxc_2026_05_26.x86_64.tar.gz
 Patch0:         renderer-system-cef.patch
 Patch1:         build-without-git-metadata.patch
-Patch2:         renderer-binary-cef-include.patch
 
 ExclusiveArch:  x86_64
 
