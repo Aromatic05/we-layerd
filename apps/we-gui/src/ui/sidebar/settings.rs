@@ -6,7 +6,7 @@ use iced::{
 };
 use we_core::config::ScaleMode;
 
-use crate::Message;
+use crate::app::Message;
 
 #[derive(Debug, Clone)]
 pub struct UiSettings {
