@@ -67,7 +67,11 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
     let cache_path_display = format_path_for_display(&ui_settings.renderer_cache_path, 64);
 
     let content = column![
-        text("Settings").size(26),
+        row![
+            column![text("Settings").size(26), text("Renderer and library preferences").size(13)].spacing(3).width(Fill),
+            button(text("Close")).on_press(Message::SettingsPressed).style(outlined_button_style),
+        ].align_y(iced::Alignment::Center),
+        section_title("Wallpaper Engine"),
         text("Wallpaper Engine Assets Path").size(14),
         row![
             text_input("/path/to/wallpaper_engine/assets", &ui_settings.assets_path)
@@ -90,6 +94,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
         ]
         .spacing(10),
         text(workshop_path_display).size(12),
+        section_title("Renderer"),
         text("Renderer Library").size(14),
         text_input("Leave blank for automatic search", &ui_settings.renderer_library_path)
             .on_input(Message::RendererLibraryPathChanged)
@@ -100,6 +105,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
             .on_input(Message::RendererCachePathChanged)
             .padding(10),
         text(cache_path_display).size(12),
+        section_title("Presentation"),
         text("Frame Rate Limit (FPS)").size(14),
         text_input("60", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding(10),
         text("Scale Mode").size(14),
@@ -109,6 +115,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
             Message::ScaleModeSelected,
         )
         .padding(10),
+        section_title("Behaviour"),
         checkbox(ui_settings.interactive)
             .label("Enable wallpaper input")
             .on_toggle(Message::InteractiveToggled),
@@ -121,7 +128,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
         checkbox(ui_settings.allow_shm_fallback)
             .label("Allow SHM fallback")
             .on_toggle(Message::AllowShmFallbackToggled),
-        text("Runtime Status").size(18),
+        section_title("Runtime status"),
         container(text(&ui_settings.status_text).size(14))
             .padding(12)
             .width(Fill)
@@ -130,7 +137,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
     .spacing(10);
 
     container(scrollable(content).height(Fill))
-        .width(420)
+        .width(Fill)
         .height(Fill)
         .padding(18)
         .style(settings_overlay_style)
@@ -155,21 +162,12 @@ fn format_path_for_display(path: &str, limit: usize) -> String {
 }
 
 fn settings_overlay_style(theme: &Theme) -> container::Style {
-    let is_light = matches!(theme, Theme::Light);
     container::Style {
-        background: Some(Background::Color(if is_light {
-            Color::from_rgba(0.98, 0.98, 0.98, 0.98)
-        } else {
-            Color::from_rgba(0.08, 0.08, 0.08, 0.96)
-        })),
+        background: Some(Background::Color(if matches!(theme, Theme::Light) { Color::from_rgb8(247, 245, 250) } else { Color::from_rgb8(30, 31, 34) })),
         border: Border {
-            radius: 12.0.into(),
-            width: 1.0,
-            color: if is_light {
-                Color::from_rgba(0.0, 0.0, 0.0, 0.08)
-            } else {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.08)
-            },
+            radius: 0.0.into(),
+            width: 0.0,
+            color: Color::TRANSPARENT,
         },
         ..Default::default()
     }
@@ -184,7 +182,7 @@ fn status_box_style(theme: &Theme) -> container::Style {
             Color::from_rgba(0.12, 0.14, 0.16, 1.0)
         })),
         border: Border {
-            radius: 8.0.into(),
+            radius: 16.0.into(),
             width: 1.0,
             color: if is_light {
                 Color::from_rgba(0.0, 0.0, 0.0, 0.06)
@@ -192,6 +190,18 @@ fn status_box_style(theme: &Theme) -> container::Style {
                 Color::from_rgba(1.0, 1.0, 1.0, 0.06)
             },
         },
+        ..Default::default()
+    }
+}
+
+fn section_title<'a>(title: &'a str) -> iced::widget::Text<'a> {
+    text(title).size(16).color(Color::from_rgb8(178, 198, 255))
+}
+
+fn outlined_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
+    button::Style {
+        text_color: Color::from_rgb8(198, 210, 242),
+        border: Border { radius: 20.0.into(), width: 1.0, color: Color::from_rgb8(143, 147, 156) },
         ..Default::default()
     }
 }

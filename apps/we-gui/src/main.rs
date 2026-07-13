@@ -839,58 +839,6 @@ fn top_bar_button_style(_theme: &Theme, status: button::Status) -> button::Style
     button::Style { background: Some(Background::Color(background)), text_color: Color::from_rgb8(220, 225, 235), border: Border { radius: 20.0.into(), ..Default::default() }, ..Default::default() }
 }
 
-fn primary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let is_light = matches!(_theme, Theme::Light);
-    let (r, g, b) = match (is_light, status) {
-        (true, button::Status::Hovered) => (0.08, 0.47, 0.86),
-        (true, button::Status::Pressed) => (0.06, 0.40, 0.78),
-        (true, _) => (0.07, 0.44, 0.82),
-        (false, button::Status::Hovered) => (0.13, 0.56, 0.96),
-        (false, button::Status::Pressed) => (0.09, 0.48, 0.88),
-        (false, _) => (0.11, 0.53, 0.93),
-    };
-
-    button::Style {
-        background: Some(Background::Color(Color::from_rgb(r, g, b))),
-        text_color: Color::WHITE,
-        border: Border { radius: 30.0.into(), ..Default::default() },
-        shadow: iced::Shadow {
-            color: Color { a: 0.35, ..Color::BLACK },
-            blur_radius: 12.0,
-            offset: iced::Vector::new(0.0, 4.0),
-        },
-        ..Default::default()
-    }
-}
-
-fn secondary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let is_light = matches!(_theme, Theme::Light);
-    let bg = match (is_light, status) {
-        (true, button::Status::Hovered) => Color::from_rgba(0.95, 0.95, 0.95, 0.95),
-        (true, button::Status::Pressed) => Color::from_rgba(0.90, 0.90, 0.90, 0.98),
-        (true, _) => Color::from_rgba(0.93, 0.93, 0.93, 0.92),
-        (false, button::Status::Hovered) => Color::from_rgba(0.14, 0.14, 0.14, 0.82),
-        (false, button::Status::Pressed) => Color::from_rgba(0.10, 0.10, 0.10, 0.88),
-        (false, _) => Color::from_rgba(0.12, 0.12, 0.12, 0.78),
-    };
-
-    button::Style {
-        background: Some(Background::Color(bg)),
-        text_color: Color::WHITE,
-        border: Border {
-            radius: 26.0.into(),
-            width: 1.0,
-            color: Color::from_rgba(1.0, 1.0, 1.0, 0.14),
-        },
-        shadow: iced::Shadow {
-            color: Color { a: 0.28, ..Color::BLACK },
-            blur_radius: 10.0,
-            offset: iced::Vector::new(0.0, 3.0),
-        },
-        ..Default::default()
-    }
-}
-
 fn detect_system_theme() -> Theme {
     match dark_light::detect() {
         dark_light::Mode::Light => Theme::Light,
