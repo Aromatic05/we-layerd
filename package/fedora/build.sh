@@ -34,8 +34,6 @@ cp -f "${common_dir}/renderer-system-cef.patch" \
   "${top_dir}/SOURCES/renderer-system-cef.patch"
 cp -f "${common_dir}/build-without-git-metadata.patch" \
   "${top_dir}/SOURCES/build-without-git-metadata.patch"
-cp -f "${common_dir}/renderer-binary-cef-include.patch" \
-  "${top_dir}/SOURCES/renderer-binary-cef-include.patch"
 cp -f "${script_dir}/we-layerd.spec" "${top_dir}/SPECS/we-layerd.spec"
 
 rpmbuild \
