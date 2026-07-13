@@ -612,25 +612,21 @@ fn make_wallpaper_card<'a>(
 
     let composed = stack![media, chip_overlay];
 
-    let border_color = if is_selected {
-        Color::from_rgb8(45, 175, 255)
-    } else {
-        Color { r: 1.0, g: 1.0, b: 1.0, a: 0.1 }
-    };
+    let border_color = if is_selected { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(70, 72, 78) };
 
     let frame =
         container(composed).width(card_width).height(card_height).style(move |_theme: &Theme| {
             container::Style {
                 border: Border {
-                    radius: 14.0.into(),
-                    width: if is_selected { 6.0 } else { 1.0 },
+                    radius: 16.0.into(),
+                    width: if is_selected { 2.0 } else { 1.0 },
                     color: border_color,
                 },
                 shadow: if is_selected {
                     iced::Shadow {
-                        color: Color::from_rgba8(45, 175, 255, 0.85),
-                        blur_radius: 24.0,
-                        offset: iced::Vector::new(0.0, 0.0),
+                        color: Color::from_rgba8(0, 0, 0, 0.35),
+                        blur_radius: 8.0,
+                        offset: iced::Vector::new(0.0, 2.0),
                     }
                 } else {
                     iced::Shadow::default()
