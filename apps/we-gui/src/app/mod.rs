@@ -27,33 +27,10 @@ use we_core::{
 };
 
 use crate::ui::sidebar::detail as wallpaper_detail;
+mod state;
+use state::{App, Pane, Sidebar, GifFrame, AnimatedPreview};
+pub(crate) use state::Message;
 
-#[derive(Debug, Clone, Copy)]
-enum Pane {
-    Library,
-    Sidebar,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Sidebar {
-    Detail,
-    Settings,
-}
-
-#[derive(Debug, Clone)]
-struct GifFrame {
-    width: u32,
-    height: u32,
-    pixels: Vec<u8>,
-    delay: Duration,
-}
-
-#[derive(Debug, Clone)]
-struct AnimatedPreview {
-    frames: Vec<GifFrame>,
-    current: usize,
-    elapsed: Duration,
-}
 
 pub fn run() -> iced::Result {
     iced::daemon(App::init, update, view)
@@ -63,7 +40,7 @@ pub fn run() -> iced::Result {
         .run()
 }
 
-struct App {
+/*struct App {
     entries: Vec<WallpaperEntry>,
     selected_id: Option<String>,
     selected_schema: UserPropertySchema,
@@ -126,7 +103,7 @@ pub(crate) enum Message {
     TrayTick,
     ThemeTick,
     TrayAction(tray::TrayAction),
-}
+}*/
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
