@@ -6,6 +6,8 @@ use std::{
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+pub mod properties;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WallpaperType {
     Video,
