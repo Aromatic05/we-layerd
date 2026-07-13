@@ -62,6 +62,28 @@ impl Rotation {
     }
 }
 
+impl std::fmt::Display for WallpaperFillMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Cover => "Cover",
+            Self::Fit => "Fit",
+            Self::Stretch => "Stretch",
+            Self::Center => "Center",
+        })
+    }
+}
+
+impl std::fmt::Display for Rotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Deg0 => "0°",
+            Self::Deg90 => "90°",
+            Self::Deg180 => "180°",
+            Self::Deg270 => "270°",
+        })
+    }
+}
+
 impl Default for WallpaperSettings {
     fn default() -> Self {
         Self {

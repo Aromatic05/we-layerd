@@ -12,13 +12,19 @@ use iced::{
 };
 use settings_panel::{build_settings_overlay, ScaleModeOption, UiSettings};
 use we_core::{
-    config::{build_config, load_launch_settings, save_config, LaunchSettings, ScaleMode},
+    config::{build_config_for_wallpaper, load_launch_settings, save_config, LaunchSettings, ScaleMode},
     steam,
-    wallpaper::{self, WallpaperEntry, WallpaperType},
+    wallpaper::{
+        self,
+        properties::UserPropertySchema,
+        settings::{RenderResolution, WallpaperSettings},
+        WallpaperEntry, WallpaperType,
+    },
 };
 
 mod settings_panel;
 mod tray;
+mod wallpaper_detail;
 
 fn main() -> iced::Result {
     iced::daemon(App::init, update, view)
@@ -31,6 +37,9 @@ fn main() -> iced::Result {
 struct App {
     entries: Vec<WallpaperEntry>,
     selected_id: Option<String>,
+    selected_schema: UserPropertySchema,
+    resolution_width: String,
+    resolution_height: String,
     config_path: PathBuf,
     runtime_child: Option<Child>,
     viewport_width: f32,
@@ -65,6 +74,7 @@ enum Message {
     ScaleModeSelected(ScaleModeOption),
     PreferDmabufToggled(bool),
     AllowShmFallbackToggled(bool),
+    Detail(wallpaper_detail::DetailMessage),
     StatusLoaded(Result<String, String>),
     StatusTick,
     WindowResized(Size),
@@ -95,10 +105,15 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             };
 
             app.selected_id = Some(entry.id.clone());
-            let cfg = build_config(&app.launch_settings, &entry.project_json);
+            app.selected_schema = UserPropertySchema::from_project_file(&entry.project_json)
+                .unwrap_or(UserPropertySchema { entries: Vec::new() });
+            let profile = app.launch_settings.wallpapers.entry(entry.id.clone()).or_default().clone();
+            set_resolution_inputs(app, &profile);
+            let cfg = build_config_for_wallpaper(&app.launch_settings, &entry.id, &entry.project_json);
             let _ = save_config(&app.config_path, &cfg);
             Task::none()
         }
+        Message::Detail(message) => update_wallpaper_detail(app, message),
         Message::PlayPressed => {
             if !app.layerd_available {
                 app.ui_settings.status_text = "we-layerd not found in PATH".to_string();
@@ -302,8 +317,28 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
 
 fn view(app: &App, _window: window::Id) -> Element<'_, Message> {
     let grid = build_wallpaper_grid(&app.entries, app.selected_id.as_ref(), app.viewport_width);
-
-    let content = container(scrollable(grid).width(Fill).height(Fill)).width(Fill).height(Fill);
+    let grid = container(scrollable(grid).width(Fill).height(Fill)).width(Fill).height(Fill);
+    let content: Element<'_, Message> = match app.selected_id.as_deref() {
+        Some(selected_id) => match app.entries.iter().find(|entry| entry.id == selected_id) {
+            Some(entry) => row![
+                grid,
+                wallpaper_detail::view(
+                    entry,
+                    app.launch_settings
+                        .wallpapers
+                        .get(selected_id)
+                        .expect("selected wallpaper must have a profile"),
+                    &app.selected_schema,
+                    &app.resolution_width,
+                    &app.resolution_height,
+                )
+                .map(Message::Detail),
+            ]
+            .into(),
+            None => grid.into(),
+        },
+        None => grid.into(),
+    };
 
     let floating = container(
         column![
@@ -427,6 +462,9 @@ impl App {
             Self {
                 entries: Vec::new(),
                 selected_id: None,
+                selected_schema: UserPropertySchema { entries: Vec::new() },
+                resolution_width: String::new(),
+                resolution_height: String::new(),
                 config_path,
                 runtime_child: None,
                 viewport_width: 1280.0,
@@ -567,6 +605,98 @@ fn sync_launch_settings(app: &mut App) {
     sync_launch_settings_from_ui(&app.ui_settings, &mut app.launch_settings);
 }
 
+fn update_wallpaper_detail(
+    app: &mut App,
+    message: wallpaper_detail::DetailMessage,
+) -> Task<Message> {
+    use wallpaper_detail::{DetailMessage, ResolutionMode};
+
+    if matches!(message, DetailMessage::Apply) {
+        persist_current_config(app);
+        return update(app, Message::PlayPressed);
+    }
+    if let DetailMessage::PickPath { key, directory } = message {
+        return Task::perform(
+            async move {
+                let dialog = rfd::FileDialog::new().set_title("Select wallpaper property path");
+                let path = if directory { dialog.pick_folder() } else { dialog.pick_file() };
+                DetailMessage::PathPicked { key, path: path.map(|path| path.display().to_string()) }
+            },
+            Message::Detail,
+        );
+    }
+
+    let Some(selected_id) = app.selected_id.clone() else {
+        return Task::none();
+    };
+    let profile = app.launch_settings.wallpapers.entry(selected_id).or_default();
+    match message {
+        DetailMessage::Apply => unreachable!("apply handled before profile mutation"),
+        DetailMessage::FpsChanged(value) => {
+            if let Ok(fps) = value.parse::<u32>() {
+                profile.fps = fps.clamp(1, 360);
+            }
+        }
+        DetailMessage::SpeedChanged(value) => profile.speed = value,
+        DetailMessage::VolumeChanged(value) => profile.volume = value,
+        DetailMessage::MutedChanged(value) => profile.muted = value,
+        DetailMessage::ResolutionModeChanged(ResolutionMode::Automatic) => {
+            profile.render_resolution = RenderResolution::Automatic;
+            app.resolution_width.clear();
+            app.resolution_height.clear();
+        }
+        DetailMessage::ResolutionModeChanged(ResolutionMode::Fixed) => {
+            let width = app.resolution_width.parse().unwrap_or(1920).max(1);
+            let height = app.resolution_height.parse().unwrap_or(1080).max(1);
+            profile.render_resolution = RenderResolution::Fixed { width, height };
+            app.resolution_width = width.to_string();
+            app.resolution_height = height.to_string();
+        }
+        DetailMessage::ResolutionWidthChanged(value) => {
+            app.resolution_width = value;
+            sync_fixed_resolution(profile, &app.resolution_width, &app.resolution_height);
+        }
+        DetailMessage::ResolutionHeightChanged(value) => {
+            app.resolution_height = value;
+            sync_fixed_resolution(profile, &app.resolution_width, &app.resolution_height);
+        }
+        DetailMessage::FillModeChanged(value) => profile.fill_mode = value,
+        DetailMessage::RotationChanged(value) => profile.rotation_degrees = value,
+        DetailMessage::PropertyChanged { key, value } => {
+            profile.user_properties.insert(key, value);
+        }
+        DetailMessage::PathPicked { key, path } => {
+            if let Some(path) = path {
+                profile.user_properties.insert(key, serde_json::Value::String(path));
+            }
+        }
+        DetailMessage::PickPath { .. } => unreachable!("path picker handled before profile mutation"),
+        DetailMessage::ResetProperties => profile.user_properties.clear(),
+    }
+    persist_current_config(app);
+    Task::none()
+}
+
+fn sync_fixed_resolution(profile: &mut WallpaperSettings, width: &str, height: &str) {
+    let (Ok(width), Ok(height)) = (width.parse::<u32>(), height.parse::<u32>()) else {
+        return;
+    };
+    profile.render_resolution = RenderResolution::Fixed { width: width.max(1), height: height.max(1) };
+}
+
+fn set_resolution_inputs(app: &mut App, profile: &WallpaperSettings) {
+    match profile.render_resolution {
+        RenderResolution::Automatic => {
+            app.resolution_width.clear();
+            app.resolution_height.clear();
+        }
+        RenderResolution::Fixed { width, height } => {
+            app.resolution_width = width.to_string();
+            app.resolution_height = height.to_string();
+        }
+    }
+}
+
 fn persist_current_config(app: &App) {
     let Some(selected_id) = app.selected_id.as_deref() else {
         return;
@@ -575,7 +705,7 @@ fn persist_current_config(app: &App) {
         return;
     };
 
-    let cfg = build_config(&app.launch_settings, &entry.project_json);
+    let cfg = build_config_for_wallpaper(&app.launch_settings, &entry.id, &entry.project_json);
     let _ = save_config(&app.config_path, &cfg);
 }
 
