@@ -1,7 +1,9 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::wallpaper::settings::{RenderResolution, WallpaperFillMode, WallpaperSettings};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
@@ -9,6 +11,8 @@ pub struct AppConfig {
     pub general: GeneralConfig,
     #[serde(default)]
     pub renderer: RendererConfig,
+    #[serde(default)]
+    pub wallpapers: BTreeMap<String, WallpaperSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +69,14 @@ pub struct RendererConfig {
     pub muted: bool,
     #[serde(default)]
     pub options_json: Option<String>,
+    #[serde(default)]
+    pub render_width: Option<u32>,
+    #[serde(default)]
+    pub render_height: Option<u32>,
+    #[serde(default)]
+    pub fill_mode: WallpaperFillMode,
+    #[serde(default)]
+    pub rotation_degrees: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +92,7 @@ pub struct LaunchSettings {
     pub show_fps: bool,
     pub scale_mode: ScaleMode,
     pub options_json: Option<String>,
+    pub wallpapers: BTreeMap<String, WallpaperSettings>,
 }
 
 fn default_interactive() -> bool {
@@ -132,6 +145,10 @@ impl Default for RendererConfig {
             volume: default_renderer_volume(),
             muted: false,
             options_json: None,
+            render_width: None,
+            render_height: None,
+            fill_mode: WallpaperFillMode::Cover,
+            rotation_degrees: 0,
         }
     }
 }
@@ -162,6 +179,7 @@ impl Default for LaunchSettings {
             show_fps: false,
             scale_mode: ScaleMode::Cover,
             options_json: None,
+            wallpapers: BTreeMap::new(),
         }
     }
 }
@@ -180,6 +198,37 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path = settings.assets_path.clone();
     cfg
+}
+
+pub fn build_config_for_wallpaper(
+    settings: &LaunchSettings,
+    wallpaper_id: &str,
+    project_json: &Path,
+) -> AppConfig {
+    let mut config = build_config(settings, project_json);
+    let wallpaper = settings.wallpapers.get(wallpaper_id).cloned().unwrap_or_default();
+    config.renderer.fps = wallpaper.fps.clamp(1, 360);
+    config.renderer.speed = wallpaper.speed;
+    config.renderer.volume = wallpaper.volume;
+    config.renderer.muted = wallpaper.muted;
+    config.renderer.fill_mode = wallpaper.fill_mode;
+    config.renderer.rotation_degrees = wallpaper.rotation_degrees.degrees();
+    match wallpaper.render_resolution {
+        RenderResolution::Automatic => {
+            config.renderer.render_width = None;
+            config.renderer.render_height = None;
+        }
+        RenderResolution::Fixed { width, height } => {
+            config.renderer.render_width = Some(width.max(1));
+            config.renderer.render_height = Some(height.max(1));
+        }
+    }
+    config.renderer.options_json = Some(
+        serde_json::to_string(&wallpaper.user_properties)
+            .expect("user property map should always serialize"),
+    );
+    config.wallpapers = settings.wallpapers.clone();
+    config
 }
 
 pub fn save_config(path: &Path, config: &AppConfig) -> Result<()> {
@@ -210,6 +259,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         show_fps: cfg.general.show_fps,
         scale_mode: cfg.general.scale_mode,
         options_json: cfg.renderer.options_json,
+        wallpapers: cfg.wallpapers,
     })
 }
 
@@ -226,7 +276,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{build_config, load_launch_settings, LaunchSettings, ScaleMode};
+    use super::{build_config, build_config_for_wallpaper, load_launch_settings, LaunchSettings, ScaleMode};
+    use crate::wallpaper::settings::{RenderResolution, Rotation, WallpaperFillMode, WallpaperSettings};
 
     fn unique_temp_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -255,6 +306,34 @@ mod tests {
         assert_eq!(cfg.renderer.options_json.as_deref(), Some("{\"demo\":true}"));
         assert!(!cfg.general.interactive);
         assert_eq!(cfg.general.scale_mode, ScaleMode::Fit);
+    }
+
+    #[test]
+    fn build_config_for_wallpaper_uses_only_the_selected_wallpaper_profile() {
+        let mut settings = LaunchSettings::default();
+        settings.wallpapers.insert(
+            "alpha".to_string(),
+            WallpaperSettings {
+                fps: 144,
+                speed: 1.5,
+                volume: 0.4,
+                muted: true,
+                render_resolution: RenderResolution::Fixed { width: 2560, height: 1440 },
+                fill_mode: WallpaperFillMode::Fit,
+                rotation_degrees: Rotation::Deg90,
+                ..WallpaperSettings::default()
+            },
+        );
+
+        let cfg = build_config_for_wallpaper(&settings, "alpha", Path::new("/tmp/alpha/project.json"));
+        assert_eq!(cfg.renderer.fps, 144);
+        assert_eq!(cfg.renderer.speed, 1.5);
+        assert_eq!(cfg.renderer.volume, 0.4);
+        assert!(cfg.renderer.muted);
+        assert_eq!(cfg.renderer.render_width, Some(2560));
+        assert_eq!(cfg.renderer.render_height, Some(1440));
+        assert_eq!(cfg.renderer.fill_mode, WallpaperFillMode::Fit);
+        assert_eq!(cfg.renderer.rotation_degrees, 90);
     }
 
     #[test]
