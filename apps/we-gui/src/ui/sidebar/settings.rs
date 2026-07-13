@@ -1,64 +1,8 @@
-use std::fmt;
-
 use iced::{
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
     Background, Border, Color, Element, Fill, Theme,
 };
-use we_core::config::ScaleMode;
-
-use crate::app::Message;
-
-#[derive(Debug, Clone)]
-pub struct UiSettings {
-    pub assets_path: String,
-    pub workshop_path: String,
-    pub renderer_library_path: String,
-    pub renderer_cache_path: String,
-    pub prefer_dmabuf: bool,
-    pub allow_shm_fallback: bool,
-    pub interactive: bool,
-    pub fps_limit: String,
-    pub show_fps: bool,
-    pub scale_mode: ScaleModeOption,
-    pub status_text: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScaleModeOption {
-    Fit,
-    Cover,
-    Stretch,
-}
-
-impl fmt::Display for ScaleModeOption {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Fit => write!(f, "Fit"),
-            Self::Cover => write!(f, "Cover"),
-            Self::Stretch => write!(f, "Stretch"),
-        }
-    }
-}
-
-impl From<ScaleMode> for ScaleModeOption {
-    fn from(value: ScaleMode) -> Self {
-        match value {
-            ScaleMode::Fit => Self::Fit,
-            ScaleMode::Cover => Self::Cover,
-            ScaleMode::Stretch => Self::Stretch,
-        }
-    }
-}
-
-impl From<ScaleModeOption> for ScaleMode {
-    fn from(value: ScaleModeOption) -> Self {
-        match value {
-            ScaleModeOption::Fit => Self::Fit,
-            ScaleModeOption::Cover => Self::Cover,
-            ScaleModeOption::Stretch => Self::Stretch,
-        }
-    }
-}
+use crate::{app::Message, domain::settings::{ScaleModeOption, UiSettings}, ui::theme::scrollbar};
 
 pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Message> {
     let assets_path_display = format_path_for_display(&ui_settings.assets_path, 64);
@@ -139,7 +83,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
     container(scrollable(container(content).padding(iced::Padding { top: 0.0, right: 18.0, bottom: 0.0, left: 0.0 }))
         .height(Fill)
         .direction(iced::widget::scrollable::Direction::Vertical(iced::widget::scrollable::Scrollbar::new().width(12).margin(6).scroller_width(6)))
-        .style(md_scrollable_style))
+        .style(scrollbar::md_style))
         .width(Fill)
         .height(Fill)
         .padding(18)
@@ -250,16 +194,4 @@ fn md_menu_style(_theme: &Theme) -> iced::overlay::menu::Style {
         selected_background: Background::Color(Color::from_rgb8(174, 198, 255)),
         shadow: iced::Shadow { color: Color::from_rgba8(0, 0, 0, 0.35), blur_radius: 12.0, offset: iced::Vector::new(0.0, 4.0) },
     }
-}
-
-fn md_scrollable_style(_theme: &Theme, _status: iced::widget::scrollable::Status) -> iced::widget::scrollable::Style {
-    let rail = iced::widget::scrollable::Rail {
-        background: Some(Background::Color(Color::from_rgb8(39, 40, 44))),
-        border: Border { radius: 6.0.into(), ..Default::default() },
-        scroller: iced::widget::scrollable::Scroller {
-            background: Background::Color(Color::from_rgb8(143, 147, 156)),
-            border: Border { radius: 3.0.into(), ..Default::default() },
-        },
-    };
-    iced::widget::scrollable::Style { container: iced::widget::container::Style::default(), vertical_rail: rail, horizontal_rail: rail, gap: None, auto_scroll: iced::widget::scrollable::AutoScroll { background: Background::Color(Color::from_rgb8(48, 49, 53)), border: Border::default(), shadow: iced::Shadow::default(), icon: Color::from_rgb8(230, 225, 229) } }
 }
