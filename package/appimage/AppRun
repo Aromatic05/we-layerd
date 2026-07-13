@@ -23,6 +23,7 @@ if [ -x "${APPDIR}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-ptp-helper" ]; then
 fi
 registry_root="${XDG_CACHE_HOME:-${HOME}/.cache}/we-layerd"
 mkdir -p "${registry_root}"
+export WE_CEF_CACHE_DIR="${registry_root}/appimage/cef-144.0.7559.257"
 export GST_REGISTRY_1_0="${registry_root}/gstreamer-appimage-registry.bin"
 
 case "${1:-}" in
