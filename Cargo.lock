@@ -5525,6 +5525,7 @@ dependencies = [
  "iced",
  "resvg 0.42.0",
  "rfd",
+ "serde_json",
  "tray-icon",
  "we-core",
 ]
