@@ -33,11 +33,8 @@ chmod 0755 "${source_dir}/debian/rules"
 mkdir -p "${source_dir}/debian/patches"
 cp -f "${common_dir}/build-without-git-metadata.patch" \
   "${source_dir}/debian/patches/build-without-git-metadata.patch"
-cp -f "${common_dir}/renderer-binary-cef-include.patch" \
-  "${source_dir}/debian/patches/renderer-binary-cef-include.patch"
 printf '%s\n' \
   build-without-git-metadata.patch \
-  renderer-binary-cef-include.patch \
   > "${source_dir}/debian/patches/series"
 
 tar -xjf "${WE_LAYERD_DOWNLOAD_CACHE}/${CEF_ARCHIVE}" \
