@@ -86,7 +86,7 @@ pub fn view<'a>(
         DetailTab::UserProperties => properties_view(schema, settings),
     };
 
-    let apply = button(text("Apply wallpaper").size(15))
+    let apply = button(text("✓").size(20))
         .on_press(DetailMessage::Apply)
         .width(Fill)
         .padding([13, 20])
@@ -120,29 +120,29 @@ fn actions_view<'a>(
     let playback_label = if !is_running || is_paused { "Play" } else { "Pause" };
     let playback = section("Playback", column![
         row![
-            button(text(playback_label)).on_press(DetailMessage::TogglePlayback).style(tonal_button_style),
-            button(text("Stop")).on_press(DetailMessage::Stop).style(outlined_button_style),
+            button(text(if playback_label == "Play" { "▶" } else { "Ⅱ" }).size(18)).on_press(DetailMessage::TogglePlayback).style(tonal_button_style),
+            button(text("■").size(16)).on_press(DetailMessage::Stop).style(outlined_button_style),
         ]
         .spacing(10),
         field_label("Frame rate"),
-        text_input("60", &settings.fps.to_string()).on_input(DetailMessage::FpsChanged).padding(10),
+        text_input("60", &settings.fps.to_string()).on_input(DetailMessage::FpsChanged).padding(10).style(md_text_input_style),
         text(format!("Speed  {:.2}×", settings.speed)).size(13).color(Color::from_rgb8(196, 199, 204)),
-        slider(0.1..=3.0, settings.speed, DetailMessage::SpeedChanged),
+        slider(0.1..=3.0, settings.speed, DetailMessage::SpeedChanged).style(md_slider_style),
         text(format!("Volume  {:.0}%", settings.volume * 100.0)).size(13).color(Color::from_rgb8(196, 199, 204)),
-        slider(0.0..=1.0, settings.volume, DetailMessage::VolumeChanged),
-        checkbox(settings.muted).label("Mute wallpaper audio").on_toggle(DetailMessage::MutedChanged),
+        slider(0.0..=1.0, settings.volume, DetailMessage::VolumeChanged).style(md_slider_style),
+        checkbox(settings.muted).label("Mute wallpaper audio").on_toggle(DetailMessage::MutedChanged).style(md_checkbox_style),
     ].spacing(10));
     let presentation = section("Display", column![
         field_label("Render resolution"),
-        pick_list(vec![ResolutionMode::Automatic, ResolutionMode::Fixed], Some(resolution_mode), DetailMessage::ResolutionModeChanged).padding(10),
+        pick_list(vec![ResolutionMode::Automatic, ResolutionMode::Fixed], Some(resolution_mode), DetailMessage::ResolutionModeChanged).padding(10).style(md_pick_list_style).menu_style(md_menu_style),
         row![
-            text_input("Width", resolution_width).on_input(DetailMessage::ResolutionWidthChanged).width(Fill),
-            text_input("Height", resolution_height).on_input(DetailMessage::ResolutionHeightChanged).width(Fill),
+            text_input("Width", resolution_width).on_input(DetailMessage::ResolutionWidthChanged).width(Fill).style(md_text_input_style),
+            text_input("Height", resolution_height).on_input(DetailMessage::ResolutionHeightChanged).width(Fill).style(md_text_input_style),
         ].spacing(8),
         field_label("Scaling"),
-        pick_list(vec![WallpaperFillMode::Cover, WallpaperFillMode::Fit, WallpaperFillMode::Stretch, WallpaperFillMode::Center], Some(settings.fill_mode), DetailMessage::FillModeChanged).padding(10),
+        pick_list(vec![WallpaperFillMode::Cover, WallpaperFillMode::Fit, WallpaperFillMode::Stretch, WallpaperFillMode::Center], Some(settings.fill_mode), DetailMessage::FillModeChanged).padding(10).style(md_pick_list_style).menu_style(md_menu_style),
         field_label("Rotation"),
-        pick_list(vec![Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270], Some(settings.rotation_degrees), DetailMessage::RotationChanged).padding(10),
+        pick_list(vec![Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270], Some(settings.rotation_degrees), DetailMessage::RotationChanged).padding(10).style(md_pick_list_style).menu_style(md_menu_style),
     ].spacing(10));
 
     column![playback, presentation].spacing(16).into()
@@ -150,7 +150,7 @@ fn actions_view<'a>(
 
 fn properties_view<'a>(schema: &'a UserPropertySchema, settings: &'a WallpaperSettings) -> Element<'a, DetailMessage> {
     let mut properties = column![
-        row![text("User properties").size(20), button(text("Reset")).on_press(DetailMessage::ResetProperties).style(outlined_button_style)].spacing(12),
+        row![text("User properties").size(20), button(text("↺").size(18)).on_press(DetailMessage::ResetProperties).style(outlined_button_style)].spacing(12),
         text("Wallpaper-specific controls are saved when applied.").size(13),
     ]
     .spacing(12);
@@ -169,7 +169,7 @@ fn property_control<'a>(property: &'a UserProperty, settings: &'a WallpaperSetti
         UserPropertyKind::Boolean => checkbox(current.as_bool().unwrap_or(false)).label("Enabled").on_toggle({
             let key = property.key.clone();
             move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::Bool(value) }
-        }).into(),
+        }).style(md_checkbox_style).into(),
         UserPropertyKind::Slider => {
             let minimum = property.minimum.unwrap_or(0.0) as f32;
             let maximum = property.maximum.unwrap_or(1.0) as f32;
@@ -177,7 +177,7 @@ fn property_control<'a>(property: &'a UserProperty, settings: &'a WallpaperSetti
             slider(minimum..=maximum.max(minimum), value.clamp(minimum, maximum.max(minimum)), {
                 let key = property.key.clone();
                 move |value| DetailMessage::PropertyChanged { key: key.clone(), value: serde_json::json!(value) }
-            }).into()
+            }).style(md_slider_style).into()
         }
         UserPropertyKind::Combo => {
             let choices = property.options.iter().map(|option| PropertyOption { label: option.label.clone(), value: option.value.clone() }).collect::<Vec<_>>();
@@ -185,18 +185,18 @@ fn property_control<'a>(property: &'a UserProperty, settings: &'a WallpaperSetti
             pick_list(choices, selected, {
                 let key = property.key.clone();
                 move |choice| DetailMessage::PropertyChanged { key: key.clone(), value: choice.value }
-            }).padding(10).into()
+            }).padding(10).style(md_pick_list_style).menu_style(md_menu_style).into()
         }
         UserPropertyKind::Color | UserPropertyKind::Text => text_input("Value", &value_text(current)).on_input({
             let key = property.key.clone();
             move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::String(value) }
-        }).padding(10).into(),
+        }).padding(10).style(md_text_input_style).into(),
         UserPropertyKind::File | UserPropertyKind::Directory => row![
             text_input("Path", &value_text(current)).on_input({
                 let key = property.key.clone();
                 move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::String(value) }
-            }).padding(10).width(Fill),
-            button(text("Browse")).on_press(DetailMessage::PickPath { key: property.key.clone(), directory: matches!(property.kind, UserPropertyKind::Directory) }).style(outlined_button_style),
+            }).padding(10).width(Fill).style(md_text_input_style),
+            button(text("…").size(20)).on_press(DetailMessage::PickPath { key: property.key.clone(), directory: matches!(property.kind, UserPropertyKind::Directory) }).style(outlined_button_style),
         ].spacing(8).into(),
         UserPropertyKind::Unsupported(_) => text("Unsupported by this renderer").size(13).into(),
     }
@@ -237,6 +237,66 @@ fn tonal_button_style(_theme: &Theme, _status: button::Status) -> button::Style 
 
 fn outlined_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
     button::Style { text_color: Color::from_rgb8(198, 210, 242), border: Border { radius: 20.0.into(), width: 1.0, color: Color::from_rgb8(143, 147, 156) }, ..Default::default() }
+}
+
+fn md_text_input_style(_theme: &Theme, status: iced::widget::text_input::Status) -> iced::widget::text_input::Style {
+    let border = if matches!(status, iced::widget::text_input::Status::Focused { .. }) { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(143, 147, 156) };
+    iced::widget::text_input::Style {
+        background: Background::Color(Color::from_rgb8(43, 44, 48)),
+        border: Border { radius: 8.0.into(), width: 1.0, color: border },
+        icon: Color::from_rgb8(196, 199, 204),
+        placeholder: Color::from_rgb8(196, 199, 204),
+        value: Color::from_rgb8(230, 225, 229),
+        selection: Color::from_rgb8(78, 99, 139),
+    }
+}
+
+fn md_checkbox_style(_theme: &Theme, status: iced::widget::checkbox::Status) -> iced::widget::checkbox::Style {
+    let checked = matches!(status, iced::widget::checkbox::Status::Active { is_checked: true } | iced::widget::checkbox::Status::Hovered { is_checked: true } | iced::widget::checkbox::Status::Disabled { is_checked: true });
+    iced::widget::checkbox::Style {
+        background: Background::Color(if checked { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(43, 44, 48) }),
+        icon_color: Color::from_rgb8(26, 39, 64),
+        border: Border { radius: 2.0.into(), width: if checked { 0.0 } else { 2.0 }, color: Color::from_rgb8(196, 199, 204) },
+        text_color: Some(Color::from_rgb8(230, 225, 229)),
+    }
+}
+
+fn md_pick_list_style(_theme: &Theme, status: iced::widget::pick_list::Status) -> iced::widget::pick_list::Style {
+    let focused = matches!(status, iced::widget::pick_list::Status::Opened { .. });
+    iced::widget::pick_list::Style {
+        text_color: Color::from_rgb8(230, 225, 229),
+        placeholder_color: Color::from_rgb8(196, 199, 204),
+        handle_color: Color::from_rgb8(196, 199, 204),
+        background: Background::Color(Color::from_rgb8(43, 44, 48)),
+        border: Border { radius: 8.0.into(), width: 1.0, color: if focused { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(143, 147, 156) } },
+    }
+}
+
+fn md_menu_style(_theme: &Theme) -> iced::overlay::menu::Style {
+    iced::overlay::menu::Style {
+        background: Background::Color(Color::from_rgb8(48, 49, 53)),
+        border: Border { radius: 8.0.into(), width: 1.0, color: Color::from_rgb8(72, 74, 80) },
+        text_color: Color::from_rgb8(230, 225, 229),
+        selected_text_color: Color::from_rgb8(26, 39, 64),
+        selected_background: Background::Color(Color::from_rgb8(174, 198, 255)),
+        shadow: iced::Shadow { color: Color::from_rgba8(0, 0, 0, 0.35), blur_radius: 12.0, offset: iced::Vector::new(0.0, 4.0) },
+    }
+}
+
+fn md_slider_style(_theme: &Theme, _status: iced::widget::slider::Status) -> iced::widget::slider::Style {
+    iced::widget::slider::Style {
+        rail: iced::widget::slider::Rail {
+            backgrounds: (Background::Color(Color::from_rgb8(174, 198, 255)), Background::Color(Color::from_rgb8(75, 77, 84))),
+            width: 4.0,
+            border: Border::default(),
+        },
+        handle: iced::widget::slider::Handle {
+            shape: iced::widget::slider::HandleShape::Circle { radius: 10.0 },
+            background: Background::Color(Color::from_rgb8(174, 198, 255)),
+            border_width: 0.0,
+            border_color: Color::TRANSPARENT,
+        },
+    }
 }
 
 fn value_text(value: &Value) -> String {
