@@ -224,8 +224,11 @@ pub fn build_config_for_wallpaper(
         }
     }
     config.renderer.options_json = Some(
-        serde_json::to_string(&wallpaper.user_properties)
-            .expect("user property map should always serialize"),
+        serde_json::json!({
+            "version": 1,
+            "scene": { "userProperties": wallpaper.user_properties },
+        })
+        .to_string(),
     );
     config.wallpapers = settings.wallpapers.clone();
     config
