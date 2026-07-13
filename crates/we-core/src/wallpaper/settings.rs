@@ -83,7 +83,7 @@ fn default_volume() -> f32 { 1.0 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RenderResolution, Rotation, WallpaperFillMode, WallpaperSettings};
+    use super::{RenderResolution, WallpaperFillMode, WallpaperSettings};
 
     #[test]
     fn settings_default_to_dynamic_neutral_rendering() {
