@@ -199,7 +199,7 @@ fn simple_icon() -> Result<Icon, Box<dyn std::error::Error + Send + Sync>> {
 }
 
 fn icon_from_svg(size: u32) -> Result<Icon, Box<dyn std::error::Error + Send + Sync>> {
-    let svg = include_str!("../assets/we-gui-logo.svg");
+    let svg = include_str!("../../assets/we-gui-logo.svg");
     let options = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_str(svg, &options)?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).ok_or("failed to alloc pixmap")?;

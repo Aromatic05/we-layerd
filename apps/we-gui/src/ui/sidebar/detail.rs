@@ -87,9 +87,9 @@ pub fn view<'a>(
     };
 
     let actions = container(row![
-        icon_action(include_bytes!("../assets/icons/check.svg"), DetailMessage::Apply, primary_button_style),
-        icon_action(if !is_running || is_paused { include_bytes!("../assets/icons/play_arrow.svg") } else { include_bytes!("../assets/icons/pause.svg") }, DetailMessage::TogglePlayback, tonal_button_style),
-        icon_action(include_bytes!("../assets/icons/stop.svg"), DetailMessage::Stop, outlined_button_style),
+        icon_action(include_bytes!("../../../assets/icons/check.svg"), DetailMessage::Apply, primary_button_style),
+        icon_action(if !is_running || is_paused { include_bytes!("../../../assets/icons/play_arrow.svg") } else { include_bytes!("../../../assets/icons/pause.svg") }, DetailMessage::TogglePlayback, tonal_button_style),
+        icon_action(include_bytes!("../../../assets/icons/stop.svg"), DetailMessage::Stop, outlined_button_style),
     ].spacing(12)).width(Fill).align_x(Horizontal::Right);
 
     container(column![

@@ -14,7 +14,8 @@ use iced::{
     widget::{button, column, container, image, pane_grid, responsive, row, scrollable, stack, text, text_input},
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
-use settings_panel::{build_settings_overlay, ScaleModeOption, UiSettings};
+use ui::sidebar::settings::{build_settings_overlay, ScaleModeOption, UiSettings};
+use platform::tray;
 use we_core::{
     config::{build_config_for_wallpaper, load_launch_settings, save_config, LaunchSettings, ScaleMode},
     steam,
@@ -26,9 +27,9 @@ use we_core::{
     },
 };
 
-mod settings_panel;
-mod tray;
-mod wallpaper_detail;
+mod platform;
+mod ui;
+use ui::sidebar::detail as wallpaper_detail;
 
 #[derive(Debug, Clone, Copy)]
 enum Pane {
@@ -1006,7 +1007,7 @@ fn wait_child_exit(child: &mut Child, attempts: usize, sleep_ms: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        settings_panel::{ScaleModeOption, UiSettings},
+        ui::sidebar::settings::{ScaleModeOption, UiSettings},
         sync_launch_settings_from_ui,
     };
     use we_core::config::{LaunchSettings, ScaleMode};
