@@ -95,7 +95,7 @@ pub fn view<'a>(
     container(column![
         column![text(&entry.title).size(24), text(entry.id.as_str()).size(12)].spacing(4),
         tabs,
-        scrollable(body)
+        scrollable(container(body).padding(iced::Padding { top: 0.0, right: 18.0, bottom: 0.0, left: 0.0 }))
             .height(Fill)
             .direction(iced::widget::scrollable::Direction::Vertical(iced::widget::scrollable::Scrollbar::new().width(12).margin(6).scroller_width(6)))
             .style(md_scrollable_style),

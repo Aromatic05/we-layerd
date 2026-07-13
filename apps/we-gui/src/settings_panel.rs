@@ -136,7 +136,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
     ]
     .spacing(10);
 
-    container(scrollable(content)
+    container(scrollable(container(content).padding(iced::Padding { top: 0.0, right: 18.0, bottom: 0.0, left: 0.0 }))
         .height(Fill)
         .direction(iced::widget::scrollable::Direction::Vertical(iced::widget::scrollable::Scrollbar::new().width(12).margin(6).scroller_width(6)))
         .style(md_scrollable_style))
