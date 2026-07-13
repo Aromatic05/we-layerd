@@ -239,9 +239,15 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         configured: false,
         session: None,
         interactive: cfg.general.interactive,
+        render_resolution_follows_output: cfg.renderer.render_width.is_none()
+            && cfg.renderer.render_height.is_none(),
         paused: false,
         stopping: false,
         pending_input_events: crate::runtime::input::PendingInput::default(),
+    };
+    state.output.render_size_override = match (cfg.renderer.render_width, cfg.renderer.render_height) {
+        (Some(width), Some(height)) => Some((width.max(1), height.max(1))),
+        _ => None,
     };
 
     surface::init_wayland(

@@ -30,6 +30,7 @@ pub(crate) struct GeometryInput {
     pub(crate) output_scale: u32,
     pub(crate) preferred_fractional_scale: u32,
     pub(crate) scale_mode: ScaleMode,
+    pub(crate) render_size_override: Option<(u32, u32)>,
 }
 
 fn render_scale_factor(input: GeometryInput) -> f64 {
@@ -45,6 +46,16 @@ pub(crate) fn compute_geometry(input: GeometryInput) -> PresentationGeometry {
         if input.logical_width > 0 { input.logical_width } else { input.fallback_width }.max(1);
     let viewport_height =
         if input.logical_height > 0 { input.logical_height } else { input.fallback_height }.max(1);
+
+    if let Some((render_width, render_height)) = input.render_size_override {
+        return geometry_with_render_extent(
+            input.scale_mode,
+            render_width.max(1),
+            render_height.max(1),
+            viewport_width,
+            viewport_height,
+        );
+    }
 
     if input.output_mode_width > 0 && input.output_mode_height > 0 {
         return geometry_with_render_extent(
@@ -170,6 +181,7 @@ pub(crate) struct OutputState {
     pub(crate) fallback_width: u32,
     pub(crate) fallback_height: u32,
     pub(crate) scale_mode: ScaleMode,
+    pub(crate) render_size_override: Option<(u32, u32)>,
     pub(crate) geometry: PresentationGeometry,
     pub(crate) pointer_x: f64,
     pub(crate) pointer_y: f64,
@@ -187,6 +199,7 @@ impl OutputState {
             fallback_width: 1920,
             fallback_height: 1080,
             scale_mode,
+            render_size_override: None,
             geometry: PresentationGeometry {
                 render_width: 1920,
                 render_height: 1080,
@@ -220,6 +233,7 @@ impl OutputState {
             output_scale: self.output_scale,
             preferred_fractional_scale: self.preferred_fractional_scale,
             scale_mode: self.scale_mode,
+            render_size_override: self.render_size_override,
         });
     }
 
@@ -277,6 +291,22 @@ mod tests {
         output.recompute_geometry();
         assert_eq!(output.geometry.render_width, 150);
         assert_eq!(output.geometry.render_height, 75);
+    }
+
+    #[test]
+    fn fixed_render_resolution_is_presented_at_its_configured_extent() {
+        let mut output = OutputState::new(ScaleMode::Cover);
+        output.logical_width = 1920;
+        output.logical_height = 1080;
+        output.output_mode_width = 3840;
+        output.output_mode_height = 2160;
+        output.render_size_override = Some((1280, 720));
+        output.recompute_geometry();
+
+        assert_eq!(output.geometry.render_width, 1280);
+        assert_eq!(output.geometry.render_height, 720);
+        assert_eq!(output.geometry.viewport_width, 1920);
+        assert_eq!(output.geometry.viewport_height, 1080);
     }
 
     #[test]

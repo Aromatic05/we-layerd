@@ -26,6 +26,10 @@ impl RendererSession {
         self.session.configure(config).context("failed to set render config")
     }
 
+    pub(crate) fn resize_output(&mut self, width: u32, height: u32) -> Result<()> {
+        self.session.resize_output(width, height).context("failed to resize renderer output")
+    }
+
     pub(crate) fn play(&mut self) -> Result<()> {
         self.session.play().context("failed to start renderer session")
     }

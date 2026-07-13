@@ -89,6 +89,7 @@ pub(crate) struct LayerShellState {
     pub(super) configured: bool,
     pub(super) session: Option<RendererSession>,
     pub(super) interactive: bool,
+    pub(super) render_resolution_follows_output: bool,
     pub(super) paused: bool,
     pub(super) stopping: bool,
     pub(super) pending_input_events: PendingInput,
@@ -96,7 +97,16 @@ pub(crate) struct LayerShellState {
 
 impl LayerShellState {
     pub(super) fn update_render_extent(&mut self) {
+        let old_size = (self.output.geometry.render_width, self.output.geometry.render_height);
         self.output.recompute_geometry();
+        let new_size = (self.output.geometry.render_width, self.output.geometry.render_height);
+        if self.render_resolution_follows_output && old_size != new_size {
+            if let Some(session) = &mut self.session {
+                if let Err(error) = session.resize_output(new_size.0, new_size.1) {
+                    tracing::warn!(%error, width = new_size.0, height = new_size.1, "failed to resize renderer output");
+                }
+            }
+        }
     }
 
     pub(super) fn update_viewport_destination(&self) {
@@ -189,6 +199,7 @@ impl LayerShellState {
             configured: false,
             session: None,
             interactive: false,
+            render_resolution_follows_output: true,
             paused: false,
             stopping: false,
             pending_input_events: PendingInput::default(),
