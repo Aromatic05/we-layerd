@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{os::fd::RawFd, path::Path};
 
 use anyhow::{Context, Result};
 use we_renderer::{Frame, RenderConfig, RendererLibrary, RuntimeSettings, Session, Source};
@@ -20,6 +20,10 @@ impl RendererSession {
 
     pub(crate) fn set_source(&mut self, source: Source) -> Result<()> {
         self.session.set_source(&source).context("failed to set renderer source")
+    }
+
+    pub(crate) fn frame_ready_fd(&self) -> Result<RawFd> {
+        self.session.frame_ready_fd().context("failed to get renderer frame-ready fd")
     }
 
     pub(crate) fn configure(&mut self, config: RenderConfig) -> Result<()> {

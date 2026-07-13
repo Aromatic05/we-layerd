@@ -350,6 +350,7 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     })?;
 
     session.play()?;
+    let renderer_frame_fd = session.frame_ready_fd()?;
     state.session = Some(session);
     status_sink(state.snapshot());
 
@@ -426,7 +427,7 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         state.collect_released_buffers();
         status_sink(state.snapshot());
 
-        // Tick and acquire frame
+        // Tick at the configured rate. The renderer eventfd signals when that work produces a frame.
         let now = Instant::now();
         let blocked_by_backpressure = state.buffers.in_flight.len() >= state.buffers.max_in_flight;
         if blocked_by_backpressure && now >= next_tick_at && !state.paused {
@@ -437,20 +438,6 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
             if let Some(ref mut session) = state.session {
                 session.tick()?;
                 next_tick_at = now + render_interval;
-                match session.acquire_frame()? {
-                    Some(frame) => {
-                        note_frame_acquired(&mut state, &frame);
-                        presenter::present_frame(&mut state, &qh, frame)
-                            .context("failed to present frame")?;
-                        last_acquire_status = 0;
-                        status_sink(state.snapshot());
-                    }
-                    None => {
-                        state.frame_stats.no_frame_polls =
-                            state.frame_stats.no_frame_polls.saturating_add(1);
-                        last_acquire_status = 1;
-                    }
-                }
             }
         }
 
@@ -506,14 +493,19 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
             continue;
         };
 
-        let fd = read_guard.connection_fd().as_raw_fd();
-        let mut poll_fd = libc::pollfd {
-            fd,
-            events: libc::POLLIN | if flush_blocked { libc::POLLOUT } else { 0 },
-            revents: 0,
-        };
+        let wayland_fd = read_guard.connection_fd().as_raw_fd();
+        let mut poll_fds = [
+            libc::pollfd {
+                fd: wayland_fd,
+                events: libc::POLLIN | if flush_blocked { libc::POLLOUT } else { 0 },
+                revents: 0,
+            },
+            libc::pollfd { fd: renderer_frame_fd, events: libc::POLLIN, revents: 0 },
+        ];
         let timeout_ms = poll_timeout(Instant::now(), next_tick_at, &state);
-        let poll_result = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
+        let poll_result = unsafe {
+            libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as libc::nfds_t, timeout_ms)
+        };
 
         if poll_result < 0 {
             let err = std::io::Error::last_os_error();
@@ -530,12 +522,16 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
             status_sink(state.snapshot());
             continue;
         }
-        if (poll_fd.revents & (libc::POLLERR | libc::POLLHUP)) != 0 {
+        if (poll_fds[0].revents & (libc::POLLERR | libc::POLLHUP)) != 0 {
             state.running = false;
             drop(read_guard);
             continue;
         }
-        if (poll_fd.revents & libc::POLLIN) != 0 {
+        if (poll_fds[1].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL)) != 0 {
+            drop(read_guard);
+            return Err(anyhow::anyhow!("renderer frame-ready fd became invalid"));
+        }
+        if (poll_fds[0].revents & libc::POLLIN) != 0 {
             read_guard.read().context("failed to read Wayland events")?;
             event_queue
                 .dispatch_pending(&mut state)
@@ -545,11 +541,30 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         } else {
             drop(read_guard);
         }
-        if flush_blocked && (poll_fd.revents & libc::POLLOUT) != 0 {
+        if flush_blocked && (poll_fds[0].revents & libc::POLLOUT) != 0 {
             match event_queue.flush() {
                 Ok(()) => state.release_pending_send_fds(),
                 Err(WaylandError::Io(err)) if err.kind() == ErrorKind::WouldBlock => {}
                 Err(err) => return Err(err).context("failed to flush Wayland fd after POLLOUT"),
+            }
+        }
+
+        if (poll_fds[1].revents & libc::POLLIN) != 0 && can_present_next_frame(&state) {
+            if let Some(ref mut session) = state.session {
+                match session.acquire_frame()? {
+                    Some(frame) => {
+                        note_frame_acquired(&mut state, &frame);
+                        presenter::present_frame(&mut state, &qh, frame)
+                            .context("failed to present frame")?;
+                        last_acquire_status = 0;
+                        status_sink(state.snapshot());
+                    }
+                    None => {
+                        state.frame_stats.no_frame_polls =
+                            state.frame_stats.no_frame_polls.saturating_add(1);
+                        last_acquire_status = 1;
+                    }
+                }
             }
         }
 
