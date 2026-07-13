@@ -30,6 +30,7 @@ pub enum UserPropertyKind {
     Text,
     File,
     Directory,
+    Html,
     Unsupported(String),
 }
 
@@ -93,6 +94,7 @@ fn parse_entry(key: &str, descriptor: &Value) -> Option<UserProperty> {
         "text" | "textinput" => UserPropertyKind::Text,
         "file" | "replacetexture" | "texture" | "scenetexture" => UserPropertyKind::File,
         "directory" => UserPropertyKind::Directory,
+        "html" => UserPropertyKind::Html,
         _ => UserPropertyKind::Unsupported(raw_kind),
     };
     let options = descriptor
