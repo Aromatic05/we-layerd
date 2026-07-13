@@ -1,21 +1,9 @@
-use std::{collections::HashMap, path::PathBuf, process::Child, time::Duration};
+use std::{collections::HashMap, path::PathBuf, process::Child};
 
 use iced::{widget::pane_grid, window, Size, Theme};
 use we_core::{config::LaunchSettings, wallpaper::{properties::UserPropertySchema, WallpaperEntry, WallpaperType}};
 
-use crate::{platform::tray, ui::sidebar::{detail::DetailMessage, settings::{ScaleModeOption, UiSettings}}};
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum Pane { Library, Sidebar }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Sidebar { Detail, Settings }
-
-#[derive(Debug, Clone)]
-pub(crate) struct GifFrame { pub width: u32, pub height: u32, pub pixels: Vec<u8>, pub delay: Duration }
-
-#[derive(Debug, Clone)]
-pub(crate) struct AnimatedPreview { pub frames: Vec<GifFrame>, pub current: usize, pub elapsed: Duration }
+use crate::{domain::{settings::{ScaleModeOption, UiSettings}, ui_state::{AnimatedPreview, GifFrame, Pane, Sidebar}}, platform::tray, ui::sidebar::detail::DetailMessage};
 
 pub(crate) struct App {
     pub entries: Vec<WallpaperEntry>, pub selected_id: Option<String>, pub selected_schema: UserPropertySchema,
