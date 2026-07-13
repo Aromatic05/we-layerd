@@ -62,6 +62,7 @@ struct App {
     sidebar: Option<Sidebar>,
     detail_tab: wallpaper_detail::DetailTab,
     playback_paused: bool,
+    playback_running: bool,
     search_query: String,
     type_filter: Option<WallpaperType>,
     panes: pane_grid::State<Pane>,
@@ -149,6 +150,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
 
             if try_switch_runtime(&app.config_path) {
                 app.ui_settings.status_text = "switched running daemon".to_string();
+                app.playback_running = true;
+                app.playback_paused = false;
                 return Task::none();
             }
 
@@ -159,6 +162,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                 Ok(child) => {
                     app.runtime_child = Some(child);
                     app.ui_settings.status_text = "started daemon".to_string();
+                    app.playback_running = true;
+                    app.playback_paused = false;
                 }
                 Err(err) => {
                     app.ui_settings.status_text = format!("failed to start daemon: {err}");
@@ -177,6 +182,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             if !stopped {
                 eprintln!("failed to stop daemon via IPC or owned child process");
             }
+            app.playback_running = false;
+            app.playback_paused = false;
             Task::none()
         }
         Message::SettingsPressed => {
@@ -341,11 +348,16 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             tray::TrayAction::PlaySwitch => Task::done(Message::PlayPressed),
             tray::TrayAction::Stop => Task::done(Message::StopPressed),
             tray::TrayAction::Pause => {
-                let _ = send_layerd_ctl("pause");
+                if send_layerd_ctl("pause") {
+                    app.playback_paused = true;
+                }
                 Task::none()
             }
             tray::TrayAction::Resume => {
-                let _ = send_layerd_ctl("resume");
+                if send_layerd_ctl("resume") {
+                    app.playback_running = true;
+                    app.playback_paused = false;
+                }
                 Task::none()
             }
             tray::TrayAction::Quit => iced::exit(),
@@ -427,6 +439,7 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
                 &app.resolution_width,
                 &app.resolution_height,
                 app.detail_tab,
+                app.playback_running,
                 app.playback_paused,
             )
             .map(Message::Detail),
@@ -507,6 +520,7 @@ impl App {
                 sidebar: None,
                 detail_tab: wallpaper_detail::DetailTab::Actions,
                 playback_paused: false,
+                playback_running: false,
                 search_query: String::new(),
                 type_filter: None,
                 panes: pane_grid::State::with_configuration(pane_grid::Configuration::Split {
@@ -664,6 +678,9 @@ fn update_wallpaper_detail(
             return Task::none();
         }
         DetailMessage::TogglePlayback => {
+            if !app.playback_running {
+                return update(app, Message::PlayPressed);
+            }
             let action = if app.playback_paused { "resume" } else { "pause" };
             if send_layerd_ctl(action) {
                 app.playback_paused = !app.playback_paused;

@@ -72,6 +72,7 @@ pub fn view<'a>(
     resolution_width: &'a str,
     resolution_height: &'a str,
     active_tab: DetailTab,
+    is_running: bool,
     is_paused: bool,
 ) -> Element<'a, DetailMessage> {
     let tabs = row![
@@ -81,7 +82,7 @@ pub fn view<'a>(
     .spacing(8);
 
     let body = match active_tab {
-        DetailTab::Actions => actions_view(settings, resolution_width, resolution_height, is_paused),
+        DetailTab::Actions => actions_view(settings, resolution_width, resolution_height, is_running, is_paused),
         DetailTab::UserProperties => properties_view(schema, settings),
     };
 
@@ -109,13 +110,14 @@ fn actions_view<'a>(
     settings: &'a WallpaperSettings,
     resolution_width: &'a str,
     resolution_height: &'a str,
+    is_running: bool,
     is_paused: bool,
 ) -> Element<'a, DetailMessage> {
     let resolution_mode = match settings.render_resolution {
         RenderResolution::Automatic => ResolutionMode::Automatic,
         RenderResolution::Fixed { .. } => ResolutionMode::Fixed,
     };
-    let playback_label = if is_paused { "Play" } else { "Pause" };
+    let playback_label = if !is_running || is_paused { "Play" } else { "Pause" };
     let playback = section("Playback", column![
         row![
             button(text(playback_label)).on_press(DetailMessage::TogglePlayback).style(tonal_button_style),
