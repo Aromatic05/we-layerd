@@ -151,6 +151,7 @@ type WeSessionSetUserPropertiesJson = unsafe extern "C" fn(*mut we_session_t, *c
 type WeSessionApplyRuntimeSettings =
     unsafe extern "C" fn(*mut we_session_t, *const we_runtime_settings_v1) -> i32;
 type WeSessionPlayback = unsafe extern "C" fn(*mut we_session_t) -> i32;
+type WeSessionGetFrameReadyFd = unsafe extern "C" fn(*mut we_session_t) -> i32;
 type WeSessionAcquireFrame = unsafe extern "C" fn(*mut we_session_t, *mut we_frame_v1) -> i32;
 type WeFrameRelease = unsafe extern "C" fn(*mut we_frame_v1);
 type WeSessionSendInputEvent =
@@ -176,6 +177,7 @@ pub struct RendererLibrary {
     we_session_pause: WeSessionPlayback,
     we_session_stop: WeSessionPlayback,
     we_session_tick: WeSessionPlayback,
+    we_session_get_frame_ready_fd: WeSessionGetFrameReadyFd,
     we_session_acquire_frame: WeSessionAcquireFrame,
     we_frame_release: WeFrameRelease,
     we_session_send_input_event: WeSessionSendInputEvent,
@@ -212,6 +214,9 @@ impl RendererLibrary {
         let we_session_pause = unsafe { *library.get::<WeSessionPlayback>(b"we_session_pause\0")? };
         let we_session_stop = unsafe { *library.get::<WeSessionPlayback>(b"we_session_stop\0")? };
         let we_session_tick = unsafe { *library.get::<WeSessionPlayback>(b"we_session_tick\0")? };
+        let we_session_get_frame_ready_fd = unsafe {
+            *library.get::<WeSessionGetFrameReadyFd>(b"we_session_get_frame_ready_fd\0")?
+        };
         let we_session_acquire_frame =
             unsafe { *library.get::<WeSessionAcquireFrame>(b"we_session_acquire_frame\0")? };
         let we_frame_release = unsafe { *library.get::<WeFrameRelease>(b"we_frame_release\0")? };
@@ -232,6 +237,7 @@ impl RendererLibrary {
             we_session_pause,
             we_session_stop,
             we_session_tick,
+            we_session_get_frame_ready_fd,
             we_session_acquire_frame,
             we_frame_release,
             we_session_send_input_event,
@@ -317,6 +323,13 @@ impl RendererLibrary {
     /// # Safety
     pub unsafe fn session_tick(&self, session: *mut we_session_t) -> i32 {
         (self.we_session_tick)(session)
+    }
+
+    /// # Safety
+    ///
+    /// The returned descriptor is borrowed from the session and remains valid until it is destroyed.
+    pub unsafe fn session_get_frame_ready_fd(&self, session: *mut we_session_t) -> i32 {
+        (self.we_session_get_frame_ready_fd)(session)
     }
 
     /// # Safety

@@ -1,6 +1,6 @@
 use std::{
     ffi::CString,
-    os::fd::{FromRawFd, OwnedFd},
+    os::fd::{FromRawFd, OwnedFd, RawFd},
     path::Path,
     sync::Arc,
 };
@@ -205,6 +205,14 @@ impl Session {
         )?;
         self.source_state = Some(source_state);
         Ok(())
+    }
+
+    pub fn frame_ready_fd(&self) -> Result<RawFd, Error> {
+        let fd = unsafe { self.library.session_get_frame_ready_fd(self.raw) };
+        if fd < 0 {
+            return Err(Error::Status(fd, "we_session_get_frame_ready_fd"));
+        }
+        Ok(fd)
     }
 
     pub fn configure(&mut self, config: RenderConfig) -> Result<(), Error> {
