@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 pub mod properties;
+pub mod settings;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WallpaperType {
