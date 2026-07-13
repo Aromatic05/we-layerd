@@ -10,6 +10,7 @@ use thiserror::Error;
 
 pub const WE_SOURCE_V1_VERSION: u32 = 1;
 pub const WE_RENDER_CONFIG_V1_VERSION: u32 = 1;
+pub const WE_RUNTIME_SETTINGS_V1_VERSION: u32 = 1;
 pub const WE_FRAME_V1_VERSION: u32 = 1;
 pub const WE_INPUT_EVENT_V2_VERSION: u32 = 2;
 
@@ -24,6 +25,21 @@ pub enum we_frame_kind_v1 {
     WE_FRAME_KIND_DMABUF = 1,
     WE_FRAME_KIND_SHM = 2,
 }
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum we_fill_mode_v1 {
+    WE_FILL_MODE_ASPECT_CROP = 0,
+    WE_FILL_MODE_STRETCH = 1,
+    WE_FILL_MODE_ASPECT_FIT = 2,
+    WE_FILL_MODE_CENTER = 3,
+}
+
+pub const WE_RUNTIME_SETTINGS_FPS: u32 = 1 << 0;
+pub const WE_RUNTIME_SETTINGS_SPEED: u32 = 1 << 1;
+pub const WE_RUNTIME_SETTINGS_VOLUME: u32 = 1 << 2;
+pub const WE_RUNTIME_SETTINGS_MUTED: u32 = 1 << 3;
+pub const WE_RUNTIME_SETTINGS_FILL_MODE: u32 = 1 << 4;
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +122,22 @@ pub struct we_render_config_v1 {
     pub enable_valid_layer: bool,
     pub prefer_dmabuf: bool,
     pub allow_shm_fallback: bool,
+    pub msaa_samples: u32,
+    pub fill_mode: we_fill_mode_v1,
+    pub rotation_degrees: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct we_runtime_settings_v1 {
+    pub size: u32,
+    pub version: u32,
+    pub fields: u32,
+    pub fps: i32,
+    pub speed: f32,
+    pub volume: f32,
+    pub muted: bool,
+    pub fill_mode: we_fill_mode_v1,
 }
 
 type WeSessionCreate = unsafe extern "C" fn() -> *mut we_session_t;
@@ -114,6 +146,10 @@ type WeSessionDestroy = unsafe extern "C" fn(*mut we_session_t);
 type WeSessionSetSource = unsafe extern "C" fn(*mut we_session_t, *const we_source_v1) -> i32;
 type WeSessionSetRenderConfig =
     unsafe extern "C" fn(*mut we_session_t, *const we_render_config_v1) -> i32;
+type WeSessionResizeOutput = unsafe extern "C" fn(*mut we_session_t, u32, u32) -> i32;
+type WeSessionSetUserPropertiesJson = unsafe extern "C" fn(*mut we_session_t, *const c_char) -> i32;
+type WeSessionApplyRuntimeSettings =
+    unsafe extern "C" fn(*mut we_session_t, *const we_runtime_settings_v1) -> i32;
 type WeSessionPlayback = unsafe extern "C" fn(*mut we_session_t) -> i32;
 type WeSessionAcquireFrame = unsafe extern "C" fn(*mut we_session_t, *mut we_frame_v1) -> i32;
 type WeFrameRelease = unsafe extern "C" fn(*mut we_frame_v1);
@@ -133,6 +169,9 @@ pub struct RendererLibrary {
     we_session_destroy: WeSessionDestroy,
     we_session_set_source: WeSessionSetSource,
     we_session_set_render_config: WeSessionSetRenderConfig,
+    we_session_resize_output: WeSessionResizeOutput,
+    we_session_set_user_properties_json: WeSessionSetUserPropertiesJson,
+    we_session_apply_runtime_settings: WeSessionApplyRuntimeSettings,
     we_session_play: WeSessionPlayback,
     we_session_pause: WeSessionPlayback,
     we_session_stop: WeSessionPlayback,
@@ -161,6 +200,14 @@ impl RendererLibrary {
             unsafe { *library.get::<WeSessionSetSource>(b"we_session_set_source\0")? };
         let we_session_set_render_config =
             unsafe { *library.get::<WeSessionSetRenderConfig>(b"we_session_set_render_config\0")? };
+        let we_session_resize_output =
+            unsafe { *library.get::<WeSessionResizeOutput>(b"we_session_resize_output\0")? };
+        let we_session_set_user_properties_json = unsafe {
+            *library.get::<WeSessionSetUserPropertiesJson>(b"we_session_set_user_properties_json\0")?
+        };
+        let we_session_apply_runtime_settings = unsafe {
+            *library.get::<WeSessionApplyRuntimeSettings>(b"we_session_apply_runtime_settings\0")?
+        };
         let we_session_play = unsafe { *library.get::<WeSessionPlayback>(b"we_session_play\0")? };
         let we_session_pause = unsafe { *library.get::<WeSessionPlayback>(b"we_session_pause\0")? };
         let we_session_stop = unsafe { *library.get::<WeSessionPlayback>(b"we_session_stop\0")? };
@@ -178,6 +225,9 @@ impl RendererLibrary {
             we_session_destroy,
             we_session_set_source,
             we_session_set_render_config,
+            we_session_resize_output,
+            we_session_set_user_properties_json,
+            we_session_apply_runtime_settings,
             we_session_play,
             we_session_pause,
             we_session_stop,
@@ -227,6 +277,29 @@ impl RendererLibrary {
     }
 
     /// # Safety
+    pub unsafe fn session_resize_output(&self, session: *mut we_session_t, width: u32, height: u32) -> i32 {
+        (self.we_session_resize_output)(session, width, height)
+    }
+
+    /// # Safety
+    pub unsafe fn session_set_user_properties_json(
+        &self,
+        session: *mut we_session_t,
+        properties_json: *const c_char,
+    ) -> i32 {
+        (self.we_session_set_user_properties_json)(session, properties_json)
+    }
+
+    /// # Safety
+    pub unsafe fn session_apply_runtime_settings(
+        &self,
+        session: *mut we_session_t,
+        settings: *const we_runtime_settings_v1,
+    ) -> i32 {
+        (self.we_session_apply_runtime_settings)(session, settings)
+    }
+
+    /// # Safety
     pub unsafe fn session_play(&self, session: *mut we_session_t) -> i32 {
         (self.we_session_play)(session)
     }
@@ -273,7 +346,8 @@ impl RendererLibrary {
 #[cfg(test)]
 mod tests {
     use super::{
-        we_frame_v1, we_input_event_v2, we_render_config_v1, we_source_v1, RendererLibrary,
+        we_frame_v1, we_input_event_v2, we_render_config_v1, we_runtime_settings_v1, we_source_v1,
+        RendererLibrary,
     };
     use std::mem::{align_of, offset_of, size_of};
 
@@ -285,10 +359,16 @@ mod tests {
         assert_eq!(offset_of!(we_source_v1, assets_uri), 16);
         assert_eq!(offset_of!(we_source_v1, options_json), 40);
 
-        assert_eq!(size_of::<we_render_config_v1>(), 20);
+        assert_eq!(size_of::<we_render_config_v1>(), 32);
         assert_eq!(align_of::<we_render_config_v1>(), 4);
         assert_eq!(offset_of!(we_render_config_v1, width), 8);
         assert_eq!(offset_of!(we_render_config_v1, allow_shm_fallback), 18);
+        assert_eq!(offset_of!(we_render_config_v1, msaa_samples), 20);
+        assert_eq!(offset_of!(we_render_config_v1, rotation_degrees), 28);
+
+        assert_eq!(size_of::<we_runtime_settings_v1>(), 32);
+        assert_eq!(align_of::<we_runtime_settings_v1>(), 4);
+        assert_eq!(offset_of!(we_runtime_settings_v1, fill_mode), 28);
 
         assert_eq!(size_of::<we_frame_v1>(), 112);
         assert_eq!(align_of::<we_frame_v1>(), 8);

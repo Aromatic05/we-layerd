@@ -7,8 +7,9 @@ use std::{
 
 use thiserror::Error;
 use we_renderer_sys::{
-    self as sys, we_frame_kind_v1, we_input_event_type_v2, we_render_config_v1, we_session_t,
-    we_source_v1, RendererLibrary as SysRendererLibrary,
+    self as sys, we_fill_mode_v1, we_frame_kind_v1, we_input_event_type_v2,
+    we_render_config_v1, we_runtime_settings_v1, we_session_t, we_source_v1,
+    RendererLibrary as SysRendererLibrary,
 };
 
 #[derive(Debug, Clone)]
@@ -29,6 +30,26 @@ pub struct RenderConfig {
     pub enable_valid_layer: bool,
     pub prefer_dmabuf: bool,
     pub allow_shm_fallback: bool,
+    pub msaa_samples: u32,
+    pub fill_mode: FillMode,
+    pub rotation_degrees: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillMode {
+    Cover,
+    Stretch,
+    Fit,
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RuntimeSettings {
+    pub fps: Option<i32>,
+    pub speed: Option<f32>,
+    pub volume: Option<f32>,
+    pub muted: Option<bool>,
+    pub fill_mode: Option<FillMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -195,11 +216,58 @@ impl Session {
             enable_valid_layer: config.enable_valid_layer,
             prefer_dmabuf: config.prefer_dmabuf,
             allow_shm_fallback: config.allow_shm_fallback,
+            msaa_samples: config.msaa_samples,
+            fill_mode: fill_mode_to_sys(config.fill_mode),
+            rotation_degrees: config.rotation_degrees,
         };
 
         self.check_status(
             unsafe { self.library.session_set_render_config(self.raw, &raw) },
             "we_session_set_render_config",
+        )
+    }
+
+    pub fn resize_output(&mut self, width: u32, height: u32) -> Result<(), Error> {
+        self.check_status(
+            unsafe { self.library.session_resize_output(self.raw, width, height) },
+            "we_session_resize_output",
+        )
+    }
+
+    pub fn set_user_properties_json(&mut self, properties_json: &str) -> Result<(), Error> {
+        let properties_json = CString::new(properties_json)
+            .map_err(|_| Error::InvalidSourceString)?;
+        self.check_status(
+            unsafe {
+                self.library
+                    .session_set_user_properties_json(self.raw, properties_json.as_ptr())
+            },
+            "we_session_set_user_properties_json",
+        )
+    }
+
+    pub fn apply_runtime_settings(&mut self, settings: RuntimeSettings) -> Result<(), Error> {
+        let mut fields = 0;
+        if settings.fps.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_FPS; }
+        if settings.speed.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_SPEED; }
+        if settings.volume.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_VOLUME; }
+        if settings.muted.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_MUTED; }
+        if settings.fill_mode.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_FILL_MODE; }
+        if fields == 0 { return Ok(()); }
+
+        let raw = we_runtime_settings_v1 {
+            size: std::mem::size_of::<we_runtime_settings_v1>() as u32,
+            version: sys::WE_RUNTIME_SETTINGS_V1_VERSION,
+            fields,
+            fps: settings.fps.unwrap_or_default(),
+            speed: settings.speed.unwrap_or_default(),
+            volume: settings.volume.unwrap_or_default(),
+            muted: settings.muted.unwrap_or_default(),
+            fill_mode: fill_mode_to_sys(settings.fill_mode.unwrap_or(FillMode::Cover)),
+        };
+        self.check_status(
+            unsafe { self.library.session_apply_runtime_settings(self.raw, &raw) },
+            "we_session_apply_runtime_settings",
         )
     }
 
@@ -274,6 +342,15 @@ impl Session {
         } else {
             Err(Error::Status(status, op))
         }
+    }
+}
+
+fn fill_mode_to_sys(value: FillMode) -> we_fill_mode_v1 {
+    match value {
+        FillMode::Cover => we_fill_mode_v1::WE_FILL_MODE_ASPECT_CROP,
+        FillMode::Stretch => we_fill_mode_v1::WE_FILL_MODE_STRETCH,
+        FillMode::Fit => we_fill_mode_v1::WE_FILL_MODE_ASPECT_FIT,
+        FillMode::Center => we_fill_mode_v1::WE_FILL_MODE_CENTER,
     }
 }
 
