@@ -5523,6 +5523,7 @@ dependencies = [
  "dark-light",
  "gtk",
  "iced",
+ "image",
  "resvg 0.42.0",
  "rfd",
  "serde_json",
