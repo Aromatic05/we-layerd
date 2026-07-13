@@ -126,15 +126,15 @@ fn actions_view<'a>(
     ].spacing(10));
     let presentation = section("Display", column![
         field_label("Render resolution"),
-        pick_list(vec![ResolutionMode::Automatic, ResolutionMode::Fixed], Some(resolution_mode), DetailMessage::ResolutionModeChanged).padding([14, 10]).style(md_pick_list_style).menu_style(md_menu_style),
+        pick_list(vec![ResolutionMode::Automatic, ResolutionMode::Fixed], Some(resolution_mode), DetailMessage::ResolutionModeChanged).padding([14, 10]).width(Fill).style(md_pick_list_style).menu_style(md_menu_style),
         row![
-            text_input("Width", resolution_width).on_input(DetailMessage::ResolutionWidthChanged).width(Fill).style(md_text_input_style),
-            text_input("Height", resolution_height).on_input(DetailMessage::ResolutionHeightChanged).width(Fill).style(md_text_input_style),
+            text_input("Width", resolution_width).on_input(DetailMessage::ResolutionWidthChanged).padding([14, 10]).width(Fill).style(md_text_input_style),
+            text_input("Height", resolution_height).on_input(DetailMessage::ResolutionHeightChanged).padding([14, 10]).width(Fill).style(md_text_input_style),
         ].spacing(8),
         field_label("Scaling"),
-        pick_list(vec![WallpaperFillMode::Cover, WallpaperFillMode::Fit, WallpaperFillMode::Stretch, WallpaperFillMode::Center], Some(settings.fill_mode), DetailMessage::FillModeChanged).padding([14, 10]).style(md_pick_list_style).menu_style(md_menu_style),
+        pick_list(vec![WallpaperFillMode::Cover, WallpaperFillMode::Fit, WallpaperFillMode::Stretch, WallpaperFillMode::Center], Some(settings.fill_mode), DetailMessage::FillModeChanged).padding([14, 10]).width(Fill).style(md_pick_list_style).menu_style(md_menu_style),
         field_label("Rotation"),
-        pick_list(vec![Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270], Some(settings.rotation_degrees), DetailMessage::RotationChanged).padding([14, 10]).style(md_pick_list_style).menu_style(md_menu_style),
+        pick_list(vec![Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270], Some(settings.rotation_degrees), DetailMessage::RotationChanged).padding([14, 10]).width(Fill).style(md_pick_list_style).menu_style(md_menu_style),
     ].spacing(10));
 
     column![playback, presentation].spacing(16).into()
@@ -177,17 +177,17 @@ fn property_control<'a>(property: &'a UserProperty, settings: &'a WallpaperSetti
             pick_list(choices, selected, {
                 let key = property.key.clone();
                 move |choice| DetailMessage::PropertyChanged { key: key.clone(), value: choice.value }
-            }).padding(10).style(md_pick_list_style).menu_style(md_menu_style).into()
+            }).padding([14, 10]).width(Fill).style(md_pick_list_style).menu_style(md_menu_style).into()
         }
         UserPropertyKind::Color | UserPropertyKind::Text => text_input("Value", &value_text(current)).on_input({
             let key = property.key.clone();
             move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::String(value) }
-        }).padding(10).style(md_text_input_style).into(),
+        }).padding([14, 10]).width(Fill).style(md_text_input_style).into(),
         UserPropertyKind::File | UserPropertyKind::Directory => row![
             text_input("Path", &value_text(current)).on_input({
                 let key = property.key.clone();
                 move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::String(value) }
-            }).padding(10).width(Fill).style(md_text_input_style),
+            }).padding([14, 10]).width(Fill).style(md_text_input_style),
             button(text("…").size(20)).on_press(DetailMessage::PickPath { key: property.key.clone(), directory: matches!(property.kind, UserPropertyKind::Directory) }).style(outlined_button_style),
         ].spacing(8).into(),
         UserPropertyKind::Html => container(text(render_html(&value_text(current))).size(14)).width(Fill).padding(8).style(section_style).into(),
