@@ -8,6 +8,14 @@ on:
 permissions:
   contents: read
 
+# Release builds include a large Rust GUI dependency graph and a native CEF/Vulkan
+# renderer. Keep both Cargo and the nested CMake build within hosted-runner memory.
+env:
+  CARGO_BUILD_JOBS: "1"
+  CARGO_INCREMENTAL: "0"
+  CMAKE_BUILD_PARALLEL_LEVEL: "1"
+  MAKEFLAGS: "-j1"
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -45,7 +53,9 @@ jobs:
 
   ubuntu:
     name: Ubuntu 26.04 DEB
-    needs: validate
+    needs:
+      - validate
+      - fedora
     runs-on: ubuntu-24.04
     container: ubuntu:26.04
     steps:
@@ -96,6 +106,10 @@ jobs:
     name: Fedora 43 RPM
     needs: validate
     runs-on: ubuntu-24.04
+    env:
+      # GNU ld otherwise retains enough symbol data during the iced/wgpu GUI link
+      # to exhaust a standard hosted runner. This trades link speed for memory.
+      RUSTFLAGS: "-C link-arg=-Wl,--no-keep-memory"
     container: fedora:43
     steps:
       - name: Install build dependencies
@@ -141,7 +155,9 @@ jobs:
 
   appimage:
     name: Ubuntu 24.04 AppImage
-    needs: validate
+    needs:
+      - validate
+      - ubuntu
     runs-on: ubuntu-24.04
     container: ubuntu:24.04
     steps:
