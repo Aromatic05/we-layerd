@@ -11,7 +11,7 @@ use image_rs::AnimationDecoder;
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{button, column, container, image, pane_grid, row, scrollable, stack, text, text_input},
+    widget::{button, column, container, image, pane_grid, responsive, row, scrollable, stack, text, text_input},
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
 use settings_panel::{build_settings_overlay, ScaleModeOption, UiSettings};
@@ -447,7 +447,8 @@ fn library_view(app: &App) -> Element<'_, Message> {
         app.type_filter.is_none_or(|ty| entry.ty == ty)
             && entry.title.to_lowercase().contains(&app.search_query.to_lowercase())
     });
-    let grid = build_wallpaper_grid(matches, app.selected_id.as_ref(), app.viewport_width, &app.animated_previews);
+    let entries = matches.collect::<Vec<_>>();
+    let grid = responsive(move |size| build_wallpaper_grid(entries.iter().copied(), app.selected_id.as_ref(), size.width, &app.animated_previews));
     let filters = row![
         filter_chip("All", app.type_filter.is_none(), None),
         filter_chip("Web", app.type_filter == Some(WallpaperType::Web), Some(WallpaperType::Web)),
@@ -615,8 +616,9 @@ fn build_wallpaper_grid<'a>(
     animated_previews: &'a HashMap<PathBuf, AnimatedPreview>,
 ) -> Element<'a, Message> {
     let spacing = 12.0;
-    let card_width = 360.0;
-    let cols = ((width - spacing) / (card_width + spacing)).floor().max(1.0) as usize;
+    let target_card_width = 360.0;
+    let cols = ((width + spacing) / (target_card_width + spacing)).floor().max(1.0) as usize;
+    let card_width = ((width - spacing * (cols.saturating_sub(1) as f32)) / cols as f32).max(180.0);
 
     let mut root = column!().spacing(spacing).padding(spacing);
 

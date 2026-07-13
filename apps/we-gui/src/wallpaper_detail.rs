@@ -1,6 +1,6 @@
 use iced::{
     widget::{button, checkbox, column, container, pick_list, row, scrollable, slider, text, text_input},
-    Background, Border, Color, Element, Fill, Theme,
+    alignment::Horizontal, Background, Border, Color, Element, Fill, Theme,
 };
 use serde_json::Value;
 use we_core::{
@@ -86,12 +86,11 @@ pub fn view<'a>(
         DetailTab::UserProperties => properties_view(schema, settings),
     };
 
-    let actions = row![
-        icon_action("✓", DetailMessage::Apply, primary_button_style),
-        icon_action(if !is_running || is_paused { "▶" } else { "Ⅱ" }, DetailMessage::TogglePlayback, tonal_button_style),
-        icon_action("■", DetailMessage::Stop, outlined_button_style),
-    ]
-    .spacing(12);
+    let actions = container(row![
+        icon_action(include_bytes!("../assets/icons/check.svg"), DetailMessage::Apply, primary_button_style),
+        icon_action(if !is_running || is_paused { include_bytes!("../assets/icons/play_arrow.svg") } else { include_bytes!("../assets/icons/pause.svg") }, DetailMessage::TogglePlayback, tonal_button_style),
+        icon_action(include_bytes!("../assets/icons/stop.svg"), DetailMessage::Stop, outlined_button_style),
+    ].spacing(12)).width(Fill).align_x(Horizontal::Right);
 
     container(column![
         column![text(&entry.title).size(24), text(entry.id.as_str()).size(12)].spacing(4),
@@ -118,7 +117,7 @@ fn actions_view<'a>(
     };
     let playback = section("Playback", column![
         field_label("Frame rate"),
-        text_input("60", &settings.fps.to_string()).on_input(DetailMessage::FpsChanged).padding(10).style(md_text_input_style),
+        text_input("60", &settings.fps.to_string()).on_input(DetailMessage::FpsChanged).padding([14, 10]).style(md_text_input_style),
         text(format!("Speed  {:.2}×", settings.speed)).size(13).color(Color::from_rgb8(196, 199, 204)),
         slider(0.1..=3.0, settings.speed, DetailMessage::SpeedChanged).style(md_slider_style),
         text(format!("Volume  {:.0}%", settings.volume * 100.0)).size(13).color(Color::from_rgb8(196, 199, 204)),
@@ -127,15 +126,15 @@ fn actions_view<'a>(
     ].spacing(10));
     let presentation = section("Display", column![
         field_label("Render resolution"),
-        pick_list(vec![ResolutionMode::Automatic, ResolutionMode::Fixed], Some(resolution_mode), DetailMessage::ResolutionModeChanged).padding(10).style(md_pick_list_style).menu_style(md_menu_style),
+        pick_list(vec![ResolutionMode::Automatic, ResolutionMode::Fixed], Some(resolution_mode), DetailMessage::ResolutionModeChanged).padding([14, 10]).style(md_pick_list_style).menu_style(md_menu_style),
         row![
             text_input("Width", resolution_width).on_input(DetailMessage::ResolutionWidthChanged).width(Fill).style(md_text_input_style),
             text_input("Height", resolution_height).on_input(DetailMessage::ResolutionHeightChanged).width(Fill).style(md_text_input_style),
         ].spacing(8),
         field_label("Scaling"),
-        pick_list(vec![WallpaperFillMode::Cover, WallpaperFillMode::Fit, WallpaperFillMode::Stretch, WallpaperFillMode::Center], Some(settings.fill_mode), DetailMessage::FillModeChanged).padding(10).style(md_pick_list_style).menu_style(md_menu_style),
+        pick_list(vec![WallpaperFillMode::Cover, WallpaperFillMode::Fit, WallpaperFillMode::Stretch, WallpaperFillMode::Center], Some(settings.fill_mode), DetailMessage::FillModeChanged).padding([14, 10]).style(md_pick_list_style).menu_style(md_menu_style),
         field_label("Rotation"),
-        pick_list(vec![Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270], Some(settings.rotation_degrees), DetailMessage::RotationChanged).padding(10).style(md_pick_list_style).menu_style(md_menu_style),
+        pick_list(vec![Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270], Some(settings.rotation_degrees), DetailMessage::RotationChanged).padding([14, 10]).style(md_pick_list_style).menu_style(md_menu_style),
     ].spacing(10));
 
     column![playback, presentation].spacing(16).into()
@@ -191,6 +190,7 @@ fn property_control<'a>(property: &'a UserProperty, settings: &'a WallpaperSetti
             }).padding(10).width(Fill).style(md_text_input_style),
             button(text("…").size(20)).on_press(DetailMessage::PickPath { key: property.key.clone(), directory: matches!(property.kind, UserPropertyKind::Directory) }).style(outlined_button_style),
         ].spacing(8).into(),
+        UserPropertyKind::Html => container(text(render_html(&value_text(current))).size(14)).width(Fill).padding(8).style(section_style).into(),
         UserPropertyKind::Unsupported(_) => text("Unsupported by this renderer").size(13).into(),
     }
 }
@@ -211,8 +211,8 @@ fn tab_button<'a>(label: &'a str, tab: DetailTab, active: DetailTab) -> iced::wi
     })
 }
 
-fn icon_action<'a>(icon: &'a str, message: DetailMessage, style: fn(&Theme, button::Status) -> button::Style) -> iced::widget::Button<'a, DetailMessage> {
-    button(text(icon).size(19)).on_press(message).width(48).height(48).style(style)
+fn icon_action<'a>(icon: &'static [u8], message: DetailMessage, style: fn(&Theme, button::Status) -> button::Style) -> iced::widget::Button<'a, DetailMessage> {
+    button(iced::widget::svg(iced::widget::svg::Handle::from_memory(icon)).width(22).height(22)).on_press(message).width(48).height(48).style(style)
 }
 
 fn sidebar_style(_theme: &Theme) -> container::Style {
@@ -298,4 +298,8 @@ fn md_slider_style(_theme: &Theme, _status: iced::widget::slider::Status) -> ice
 
 fn value_text(value: &Value) -> String {
     match value { Value::String(value) => value.clone(), _ => value.to_string() }
+}
+
+fn render_html(value: &str) -> String {
+    html2text::from_read(value.as_bytes(), 56).unwrap_or_else(|_| value.to_string())
 }

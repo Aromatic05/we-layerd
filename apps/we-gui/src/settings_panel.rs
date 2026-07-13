@@ -76,7 +76,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
         row![
             text_input("/path/to/wallpaper_engine/assets", &ui_settings.assets_path)
                 .on_input(Message::AssetsPathChanged)
-                .padding(10).style(md_text_input_style)
+                .padding([14, 10]).style(md_text_input_style)
                 .on_submit(Message::AutoScan)
                 .width(Fill),
             button(text("…").size(20)).on_press(Message::PickAssetsPath).style(outlined_button_style),
@@ -87,7 +87,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
         row![
             text_input("/path/to/workshop/content/431960", &ui_settings.workshop_path)
                 .on_input(Message::WorkshopPathChanged)
-                .padding(10).style(md_text_input_style)
+                .padding([14, 10]).style(md_text_input_style)
                 .on_submit(Message::AutoScan)
                 .width(Fill),
             button(text("…").size(20)).on_press(Message::PickWorkshopPath).style(outlined_button_style),
@@ -98,23 +98,23 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
         text("Renderer Library").size(14),
         text_input("Leave blank for automatic search", &ui_settings.renderer_library_path)
             .on_input(Message::RendererLibraryPathChanged)
-            .padding(10).style(md_text_input_style),
+            .padding([14, 10]).style(md_text_input_style),
         text(library_path_display).size(12),
         text("Renderer Cache Path").size(14),
         text_input("~/.cache/we-layerd/renderer", &ui_settings.renderer_cache_path)
             .on_input(Message::RendererCachePathChanged)
-            .padding(10).style(md_text_input_style),
+            .padding([14, 10]).style(md_text_input_style),
         text(cache_path_display).size(12),
         section_title("Presentation"),
         text("Frame Rate Limit (FPS)").size(14),
-        text_input("60", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding(10).style(md_text_input_style),
+        text_input("60", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding([14, 10]).style(md_text_input_style),
         text("Scale Mode").size(14),
         pick_list(
             vec![ScaleModeOption::Fit, ScaleModeOption::Cover, ScaleModeOption::Stretch],
             Some(ui_settings.scale_mode),
             Message::ScaleModeSelected,
         )
-        .padding(10).style(md_pick_list_style).menu_style(md_menu_style),
+        .padding([14, 10]).style(md_pick_list_style).menu_style(md_menu_style),
         section_title("Behaviour"),
         checkbox(ui_settings.interactive)
             .label("Enable wallpaper input")
