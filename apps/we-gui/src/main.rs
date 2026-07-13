@@ -411,7 +411,7 @@ fn library_view(app: &App) -> Element<'_, Message> {
     .spacing(8);
     let toolbar = row![
         column![text("Wallpapers").size(28), text(format!("{} items", app.entries.len())).size(13)].spacing(2).width(Fill),
-        button(text("Settings")).on_press(Message::SettingsPressed).style(top_bar_button_style),
+        button(text("⚙").size(20)).on_press(Message::SettingsPressed).style(top_bar_button_style),
     ]
     .align_y(Vertical::Center);
     container(column![
