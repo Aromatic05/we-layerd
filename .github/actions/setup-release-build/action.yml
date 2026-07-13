@@ -1,0 +1,72 @@
+name: Setup release build
+description: Install the pinned Rust toolchain and restore Rust and C/C++ compiler caches.
+
+inputs:
+  ccache-namespace:
+    description: Distribution-specific namespace for the C/C++ cache.
+    required: true
+  source-cache-key:
+    description: Hash of Cargo and pinned external dependency inputs.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Rust toolchain and Cargo source cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.CARGO_HOME }}
+          ${{ env.RUSTUP_HOME }}
+        key: rust-inputs-v3-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN }}-${{ inputs.source-cache-key }}
+        restore-keys: |
+          rust-inputs-v3-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN }}-
+
+    - name: Restore pinned packaging downloads
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.WE_LAYERD_DOWNLOAD_CACHE }}
+        key: release-downloads-v3-${{ inputs.source-cache-key }}-${{ inputs.ccache-namespace }}
+        restore-keys: |
+          release-downloads-v3-${{ inputs.source-cache-key }}-
+          release-downloads-v3-
+
+    - name: Install pinned Rust toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+          https://sh.rustup.rs \
+          | sh -s -- -y --profile minimal \
+              --default-toolchain "${RUST_TOOLCHAIN}" --no-modify-path
+        printf '%s\n' "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
+        export PATH="${CARGO_HOME}/bin:${PATH}"
+        rustc -Vv
+        cargo -V
+
+        probe_dir="$(mktemp -d)"
+        trap 'rm -rf "${probe_dir}"' EXIT
+        printf 'fn main() {}\n' > "${probe_dir}/main.rs"
+        rustc "${probe_dir}/main.rs" -o "${probe_dir}/main"
+        readelf -p .comment "${probe_dir}/main" | grep -F 'Linker: LLD'
+
+    - name: Enable Rust compiler cache
+      uses: mozilla-actions/sccache-action@v0.0.10
+      with:
+        version: "v0.16.0"
+
+    - name: Restore C/C++ compiler cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-v3-${{ inputs.ccache-namespace }}-${{ runner.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+        restore-keys: |
+          ccache-v3-${{ inputs.ccache-namespace }}-${{ runner.arch }}-${{ github.sha }}-
+          ccache-v3-${{ inputs.ccache-namespace }}-${{ runner.arch }}-
+
+    - name: Prepare C/C++ compiler cache
+      shell: bash
+      run: |
+        set -euo pipefail
+        ccache --max-size "${CCACHE_MAXSIZE}"
+        ccache --zero-stats

@@ -11,10 +11,23 @@ permissions:
 # Release builds include a large Rust GUI dependency graph and a native CEF/Vulkan
 # renderer. Keep both Cargo and the nested CMake build within hosted-runner memory.
 env:
+  RUST_TOOLCHAIN: "1.96.1"
+  CARGO_HOME: ${{ github.workspace }}/../.we-layerd-cache/cargo
+  RUSTUP_HOME: ${{ github.workspace }}/../.we-layerd-cache/rustup
+  WE_LAYERD_DOWNLOAD_CACHE: ${{ github.workspace }}/../.we-layerd-cache/downloads
+  CCACHE_DIR: ${{ github.workspace }}/../.we-layerd-cache/ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_COMPILERCHECK: content
+  CCACHE_COMPRESS: "true"
+  CCACHE_MAXSIZE: 1G
   CARGO_BUILD_JOBS: "1"
   CARGO_INCREMENTAL: "0"
   CMAKE_BUILD_PARALLEL_LEVEL: "1"
+  CMAKE_C_COMPILER_LAUNCHER: ccache
+  CMAKE_CXX_COMPILER_LAUNCHER: ccache
   MAKEFLAGS: "-j1"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -67,7 +80,7 @@ jobs:
           set -euo pipefail
           apt-get update
           apt-get install -y --no-install-recommends \
-            binutils build-essential bzip2 ca-certificates cargo cmake curl \
+            binutils build-essential bzip2 ca-certificates cargo ccache cmake curl \
             debhelper devscripts dpkg-dev fakeroot file git libasound2-dev \
             libdrm-dev libfontconfig1-dev libfreetype-dev libgl-dev \
             libgstreamer-plugins-bad1.0-dev libgstreamer-plugins-base1.0-dev \
@@ -82,9 +95,20 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Set up release toolchain and caches
+        uses: ./.github/actions/setup-release-build
+        with:
+          ccache-namespace: ubuntu2604
+          source-cache-key: ${{ hashFiles('Cargo.lock', 'package/common/versions.env') }}
+
       - name: Build DEB package
         shell: bash
         run: package/ubuntu/build.sh
+
+      - name: Report C/C++ compiler cache
+        if: always()
+        shell: bash
+        run: ccache --show-stats
 
       - name: Collect DEB package
         shell: bash
@@ -106,10 +130,6 @@ jobs:
     name: Fedora 43 RPM
     needs: validate
     runs-on: ubuntu-24.04
-    env:
-      # GNU ld otherwise retains enough symbol data during the iced/wgpu GUI link
-      # to exhaust a standard hosted runner. This trades link speed for memory.
-      RUSTFLAGS: "-C link-arg=-Wl,--no-keep-memory"
     container: fedora:43
     steps:
       - name: Install build dependencies
@@ -117,7 +137,7 @@ jobs:
         run: |
           set -euo pipefail
           dnf -y install \
-            alsa-lib-devel binutils bzip2 ca-certificates cargo cef cef-devel \
+            alsa-lib-devel binutils bzip2 ca-certificates cargo ccache cef cef-devel \
             cmake curl desktop-file-utils findutils fontconfig-devel \
             freetype-devel gcc-c++ git gstreamer1-devel \
             gstreamer1-plugins-bad-free-devel gstreamer1-plugins-base-devel \
@@ -133,9 +153,20 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Set up release toolchain and caches
+        uses: ./.github/actions/setup-release-build
+        with:
+          ccache-namespace: fedora43
+          source-cache-key: ${{ hashFiles('Cargo.lock', 'package/common/versions.env') }}
+
       - name: Build RPM package
         shell: bash
         run: package/fedora/build.sh
+
+      - name: Report C/C++ compiler cache
+        if: always()
+        shell: bash
+        run: ccache --show-stats
 
       - name: Collect binary RPM package
         shell: bash
@@ -169,7 +200,7 @@ jobs:
           set -euo pipefail
           apt-get update
           apt-get install -y --no-install-recommends \
-            binutils build-essential bzip2 ca-certificates cmake curl file git \
+            binutils build-essential bzip2 ca-certificates ccache cmake curl file git \
             gstreamer1.0-libav gstreamer1.0-plugins-bad \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-tools libasound2-dev libdrm-dev libfontconfig1-dev \
@@ -179,24 +210,26 @@ jobs:
             libwayland-dev libxdo-dev libxkbcommon-dev patchelf pkg-config \
             tar wayland-protocols xdotool xz-utils
 
-      - name: Install current Rust toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-            https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain stable
-          printf '%s\n' "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
-
       - name: Check out source and submodules
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Set up release toolchain and caches
+        uses: ./.github/actions/setup-release-build
+        with:
+          ccache-namespace: ubuntu2404
+          source-cache-key: ${{ hashFiles('Cargo.lock', 'package/common/versions.env') }}
+
       - name: Build AppImage
         shell: bash
         run: package/appimage/build.sh
+
+      - name: Report C/C++ compiler cache
+        if: always()
+        shell: bash
+        run: ccache --show-stats
 
       - name: Collect AppImage
         shell: bash
