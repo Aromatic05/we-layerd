@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use we_renderer::{Frame, RenderConfig, RendererLibrary, Session, Source};
+use we_renderer::{Frame, RenderConfig, RendererLibrary, RuntimeSettings, Session, Source};
 
 pub(crate) struct RendererSession {
     pub(crate) session: Session,
@@ -28,6 +28,12 @@ impl RendererSession {
 
     pub(crate) fn resize_output(&mut self, width: u32, height: u32) -> Result<()> {
         self.session.resize_output(width, height).context("failed to resize renderer output")
+    }
+
+    pub(crate) fn apply_runtime_settings(&mut self, settings: RuntimeSettings) -> Result<()> {
+        self.session
+            .apply_runtime_settings(settings)
+            .context("failed to apply renderer runtime settings")
     }
 
     pub(crate) fn play(&mut self) -> Result<()> {
