@@ -7,7 +7,7 @@ use std::{
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{button, column, container, image, row, scrollable, stack, svg, text},
+    widget::{button, column, container, image, pane_grid, row, scrollable, stack, text, text_input},
     window, Background, Border, Color, ContentFit, Element, Fill, Size, Subscription, Task, Theme,
 };
 use settings_panel::{build_settings_overlay, ScaleModeOption, UiSettings};
@@ -25,6 +25,18 @@ use we_core::{
 mod settings_panel;
 mod tray;
 mod wallpaper_detail;
+
+#[derive(Debug, Clone, Copy)]
+enum Pane {
+    Library,
+    Sidebar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sidebar {
+    Detail,
+    Settings,
+}
 
 fn main() -> iced::Result {
     iced::daemon(App::init, update, view)
@@ -47,6 +59,12 @@ struct App {
     launch_settings: LaunchSettings,
     ui_settings: UiSettings,
     show_settings: bool,
+    sidebar: Option<Sidebar>,
+    detail_tab: wallpaper_detail::DetailTab,
+    playback_paused: bool,
+    search_query: String,
+    type_filter: Option<WallpaperType>,
+    panes: pane_grid::State<Pane>,
     tray: Option<tray::TrayController>,
     main_window_id: Option<window::Id>,
     theme: Theme,
@@ -60,6 +78,9 @@ enum Message {
     PlayPressed,
     StopPressed,
     SettingsPressed,
+    SearchChanged(String),
+    TypeFilterSelected(Option<WallpaperType>),
+    PaneResized(pane_grid::ResizeEvent),
     AssetsPathChanged(String),
     WorkshopPathChanged(String),
     RendererLibraryPathChanged(String),
@@ -111,6 +132,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             set_resolution_inputs(app, &profile);
             let cfg = build_config_for_wallpaper(&app.launch_settings, &entry.id, &entry.project_json);
             let _ = save_config(&app.config_path, &cfg);
+            app.sidebar = Some(Sidebar::Detail);
+            app.detail_tab = wallpaper_detail::DetailTab::Actions;
             Task::none()
         }
         Message::Detail(message) => update_wallpaper_detail(app, message),
@@ -157,11 +180,26 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SettingsPressed => {
-            app.show_settings = !app.show_settings;
+            app.sidebar = match app.sidebar {
+                Some(Sidebar::Settings) => None,
+                _ => Some(Sidebar::Settings),
+            };
+            app.show_settings = app.sidebar == Some(Sidebar::Settings);
             if app.show_settings {
                 return Task::perform(fetch_runtime_status(), Message::StatusLoaded);
             }
-            persist_current_config(app);
+            Task::none()
+        }
+        Message::SearchChanged(value) => {
+            app.search_query = value;
+            Task::none()
+        }
+        Message::TypeFilterSelected(value) => {
+            app.type_filter = value;
+            Task::none()
+        }
+        Message::PaneResized(event) => {
+            app.panes.resize(event.split, event.ratio.clamp(0.45, 0.82));
             Task::none()
         }
         Message::AssetsPathChanged(value) => {
@@ -316,90 +354,84 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
 }
 
 fn view(app: &App, _window: window::Id) -> Element<'_, Message> {
-    let grid = build_wallpaper_grid(&app.entries, app.selected_id.as_ref(), app.viewport_width);
-    let grid = container(scrollable(grid).width(Fill).height(Fill)).width(Fill).height(Fill);
-    let content: Element<'_, Message> = match app.selected_id.as_deref() {
-        Some(selected_id) => match app.entries.iter().find(|entry| entry.id == selected_id) {
-            Some(entry) => row![
-                grid,
-                wallpaper_detail::view(
-                    entry,
-                    app.launch_settings
-                        .wallpapers
-                        .get(selected_id)
-                        .expect("selected wallpaper must have a profile"),
-                    &app.selected_schema,
-                    &app.resolution_width,
-                    &app.resolution_height,
-                )
-                .map(Message::Detail),
-            ]
-            .into(),
-            None => grid.into(),
-        },
-        None => grid.into(),
+    let library = library_view(app);
+    let content = if let Some(sidebar) = app.sidebar {
+        pane_grid(&app.panes, |_pane, pane, _| {
+            let content: Element<'_, Message> = match pane {
+                Pane::Library => library_view(app),
+                Pane::Sidebar => sidebar_view(app, sidebar),
+            };
+            pane_grid::Content::new(content)
+        })
+        .on_resize(8, Message::PaneResized)
+        .spacing(1)
+        .into()
+    } else {
+        library
     };
 
-    let floating = container(
-        column![
-            button(
-                svg(svg::Handle::from_memory(include_bytes!("../assets/icons/stop.svg")))
-                    .width(24)
-                    .height(24),
-            )
-            .width(52)
-            .height(52)
-            .style(secondary_fab_style)
-            .on_press(Message::StopPressed),
-            button(
-                svg(svg::Handle::from_memory(include_bytes!("../assets/icons/settings.svg")))
-                    .width(24)
-                    .height(24),
-            )
-            .width(52)
-            .height(52)
-            .style(secondary_fab_style)
-            .on_press(Message::SettingsPressed),
-            button(
-                svg(svg::Handle::from_memory(include_bytes!("../assets/icons/play_arrow.svg")))
-                    .width(28)
-                    .height(28),
-            )
-            .width(60)
-            .height(60)
-            .style(primary_fab_style)
-            .on_press(Message::PlayPressed),
+    if app.layerd_available {
+        content
+    } else {
+        stack![
+            content,
+            container(text("we-layerd not found in PATH").size(18).color(Color::from_rgb8(255, 180, 171)))
+                .width(Fill)
+                .align_x(Horizontal::Center)
+                .padding(16),
         ]
-        .spacing(12),
-    )
+        .into()
+    }
+}
+
+fn library_view(app: &App) -> Element<'_, Message> {
+    let matches = app.entries.iter().enumerate().filter(|(_, entry)| {
+        app.type_filter.is_none_or(|ty| entry.ty == ty)
+            && entry.title.to_lowercase().contains(&app.search_query.to_lowercase())
+    });
+    let grid = build_wallpaper_grid(matches, app.selected_id.as_ref(), app.viewport_width);
+    let filters = row![
+        filter_chip("All", app.type_filter.is_none(), None),
+        filter_chip("Web", app.type_filter == Some(WallpaperType::Web), Some(WallpaperType::Web)),
+        filter_chip("Scene", app.type_filter == Some(WallpaperType::Scene), Some(WallpaperType::Scene)),
+        filter_chip("Video", app.type_filter == Some(WallpaperType::Video), Some(WallpaperType::Video)),
+    ]
+    .spacing(8);
+    let toolbar = row![
+        column![text("Wallpapers").size(28), text(format!("{} items", app.entries.len())).size(13)].spacing(2).width(Fill),
+        button(text("Settings")).on_press(Message::SettingsPressed).style(top_bar_button_style),
+    ]
+    .align_y(Vertical::Center);
+    container(column![
+        toolbar,
+        text_input("Search wallpapers", &app.search_query).on_input(Message::SearchChanged).padding(12).style(search_style),
+        filters,
+        scrollable(grid).width(Fill).height(Fill),
+    ]
+    .spacing(16))
+    .padding(24)
     .width(Fill)
     .height(Fill)
-    .align_x(Horizontal::Right)
-    .align_y(Vertical::Bottom)
-    .padding(20);
+    .style(library_style)
+    .into()
+}
 
-    let runtime_warning: Option<Element<'_, Message>> = if !app.layerd_available {
-        let warning = container(
-            text("we-layerd not found in PATH").size(28).color(Color::from_rgb8(150, 205, 255)),
-        )
-        .width(Fill)
-        .height(Fill)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Top)
-        .padding(24);
-        Some(warning.into())
-    } else {
-        None
-    };
-
-    let settings_overlay: Option<Element<'_, Message>> =
-        if app.show_settings { Some(build_settings_overlay(&app.ui_settings)) } else { None };
-
-    match (runtime_warning, settings_overlay) {
-        (Some(w), Some(s)) => stack![content, w, s, floating].into(),
-        (Some(w), None) => stack![content, w, floating].into(),
-        (None, Some(s)) => stack![content, s, floating].into(),
-        (None, None) => stack![content, floating].into(),
+fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
+    match sidebar {
+        Sidebar::Settings => build_settings_overlay(&app.ui_settings),
+        Sidebar::Detail => match app.selected_id.as_deref().and_then(|id| app.entries.iter().find(|entry| entry.id == id)) {
+            Some(entry) => wallpaper_detail::view(
+                entry,
+                app.launch_settings.wallpapers.get(&entry.id).expect("selected wallpaper must have a profile"),
+                &app.selected_schema,
+                &app.resolution_width,
+                &app.resolution_height,
+                app.detail_tab,
+                app.playback_paused,
+            )
+            .map(Message::Detail),
+            None => container(text("Select a wallpaper to view its details.")).padding(24).into(),
+        },
     }
 }
 
@@ -472,6 +504,17 @@ impl App {
                 launch_settings,
                 ui_settings,
                 show_settings: false,
+                sidebar: None,
+                detail_tab: wallpaper_detail::DetailTab::Actions,
+                playback_paused: false,
+                search_query: String::new(),
+                type_filter: None,
+                panes: pane_grid::State::with_configuration(pane_grid::Configuration::Split {
+                    axis: pane_grid::Axis::Vertical,
+                    ratio: 0.68,
+                    a: Box::new(pane_grid::Configuration::Pane(Pane::Library)),
+                    b: Box::new(pane_grid::Configuration::Pane(Pane::Sidebar)),
+                }),
                 tray: tray::TrayController::new().ok(),
                 main_window_id: None,
                 theme: detect_system_theme(),
@@ -489,7 +532,7 @@ impl Drop for App {
 }
 
 fn build_wallpaper_grid<'a>(
-    entries: &'a [WallpaperEntry],
+    entries: impl Iterator<Item = (usize, &'a WallpaperEntry)>,
     selected_id: Option<&String>,
     width: f32,
 ) -> Element<'a, Message> {
@@ -499,12 +542,12 @@ fn build_wallpaper_grid<'a>(
 
     let mut root = column!().spacing(spacing).padding(spacing);
 
-    for (row_index, chunk) in entries.chunks(cols).enumerate() {
+    let entries = entries.collect::<Vec<_>>();
+    for chunk in entries.chunks(cols) {
         let mut r = row!().spacing(spacing);
-        for (inner, entry) in chunk.iter().enumerate() {
-            let index = row_index * cols + inner;
+        for (index, entry) in chunk.iter() {
             let is_selected = selected_id.map(|id| id == &entry.id).unwrap_or(false);
-            r = r.push(make_wallpaper_card(entry, index, card_width, is_selected));
+            r = r.push(make_wallpaper_card(entry, *index, card_width, is_selected));
         }
         root = root.push(r);
     }
@@ -615,6 +658,21 @@ fn update_wallpaper_detail(
         persist_current_config(app);
         return update(app, Message::PlayPressed);
     }
+    match message {
+        DetailMessage::SelectTab(tab) => {
+            app.detail_tab = tab;
+            return Task::none();
+        }
+        DetailMessage::TogglePlayback => {
+            let action = if app.playback_paused { "resume" } else { "pause" };
+            if send_layerd_ctl(action) {
+                app.playback_paused = !app.playback_paused;
+            }
+            return Task::none();
+        }
+        DetailMessage::Stop => return update(app, Message::StopPressed),
+        _ => {}
+    }
     if let DetailMessage::PickPath { key, directory } = message {
         return Task::perform(
             async move {
@@ -631,7 +689,7 @@ fn update_wallpaper_detail(
     };
     let profile = app.launch_settings.wallpapers.entry(selected_id).or_default();
     match message {
-        DetailMessage::Apply => unreachable!("apply handled before profile mutation"),
+        DetailMessage::Apply | DetailMessage::TogglePlayback | DetailMessage::Stop | DetailMessage::SelectTab(_) => unreachable!("detail action handled before profile mutation"),
         DetailMessage::FpsChanged(value) => {
             if let Ok(fps) = value.parse::<u32>() {
                 profile.fps = fps.clamp(1, 360);
@@ -733,6 +791,52 @@ fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::S
         shadow: iced::Shadow::default(),
         ..Default::default()
     }
+}
+
+fn library_style(_theme: &Theme) -> container::Style {
+    container::Style { background: Some(Background::Color(Color::from_rgb8(24, 25, 28))), ..Default::default() }
+}
+
+fn search_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let border = if matches!(status, text_input::Status::Focused { .. }) {
+        Color::from_rgb8(174, 198, 255)
+    } else {
+        Color::from_rgb8(140, 144, 153)
+    };
+    text_input::Style {
+        background: Background::Color(Color::from_rgb8(43, 44, 48)),
+        border: Border { radius: 28.0.into(), width: 1.0, color: border },
+        icon: Color::from_rgb8(196, 199, 204),
+        placeholder: Color::from_rgb8(196, 199, 204),
+        value: Color::from_rgb8(230, 225, 229),
+        selection: Color::from_rgb8(78, 99, 139),
+    }
+}
+
+fn filter_chip<'a>(label: &'a str, selected: bool, value: Option<WallpaperType>) -> iced::widget::Button<'a, Message> {
+    button(text(if selected { format!("✓ {label}") } else { label.to_string() }).size(14))
+        .on_press(Message::TypeFilterSelected(value))
+        .padding([8, 14])
+        .style(move |_theme, status| {
+            let background = if selected {
+                Color::from_rgb8(70, 91, 129)
+            } else if matches!(status, button::Status::Hovered) {
+                Color::from_rgb8(54, 56, 62)
+            } else {
+                Color::TRANSPARENT
+            };
+            button::Style {
+                background: Some(Background::Color(background)),
+                text_color: if selected { Color::from_rgb8(222, 231, 255) } else { Color::from_rgb8(201, 203, 209) },
+                border: Border { radius: 20.0.into(), width: if selected { 0.0 } else { 1.0 }, color: Color::from_rgb8(143, 147, 156) },
+                ..Default::default()
+            }
+        })
+}
+
+fn top_bar_button_style(_theme: &Theme, status: button::Status) -> button::Style {
+    let background = if matches!(status, button::Status::Hovered) { Color::from_rgb8(56, 58, 63) } else { Color::TRANSPARENT };
+    button::Style { background: Some(Background::Color(background)), text_color: Color::from_rgb8(220, 225, 235), border: Border { radius: 20.0.into(), ..Default::default() }, ..Default::default() }
 }
 
 fn primary_fab_style(_theme: &Theme, status: button::Status) -> button::Style {
