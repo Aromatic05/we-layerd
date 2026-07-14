@@ -102,17 +102,17 @@ impl DmabufFeedbackState {
         self.surface_formats.clone()
     }
 
-    pub(crate) fn formats_for_renderer(&self, protocol_version: u32) -> Vec<DmabufFormatModifier> {
+    pub(crate) fn formats_for_renderer(
+        &self,
+        protocol_version: u32,
+    ) -> Option<Vec<DmabufFormatModifier>> {
         if protocol_version >= 4 {
-            if self.surface_feedback_known {
-                return self.surface_formats.clone();
-            }
-            return Vec::new();
+            return self.surface_feedback_known.then(|| self.surface_formats.clone());
         }
         if protocol_version >= 3 {
-            return self.legacy_formats.clone();
+            return Some(self.legacy_formats.clone());
         }
-        Vec::new()
+        Some(Vec::new())
     }
 
     pub(crate) fn advertised_format_count(&self, protocol_version: u32) -> usize {
@@ -123,10 +123,6 @@ impl DmabufFeedbackState {
             return self.legacy_formats.len();
         }
         0
-    }
-
-    pub(crate) fn surface_feedback_known(&self) -> bool {
-        self.surface_feedback_known
     }
 }
 
@@ -187,13 +183,21 @@ mod tests {
     }
 
     #[test]
+    fn version_four_formats_remain_unknown_until_done() {
+        let mut state = DmabufFeedbackState::default();
+        assert_eq!(state.formats_for_renderer(4), None);
+        assert_eq!(state.finish_surface_feedback(), Vec::new());
+        assert_eq!(state.formats_for_renderer(4), Some(Vec::new()));
+    }
+
+    #[test]
     fn legacy_modifiers_are_deduplicated() {
         let mut state = DmabufFeedbackState::default();
         state.add_legacy_modifier(1, 2);
         state.add_legacy_modifier(1, 2);
         assert_eq!(
             state.formats_for_renderer(3),
-            vec![DmabufFormatModifier { fourcc: 1, modifier: 2 }]
+            Some(vec![DmabufFormatModifier { fourcc: 1, modifier: 2 }])
         );
     }
 }

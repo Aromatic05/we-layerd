@@ -305,6 +305,17 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     state.update_render_extent();
     state.update_viewport_destination();
 
+    // linux-dmabuf v4 distinguishes unknown feedback from an explicitly empty format set.
+    // Complete the initial surface-feedback exchange before binding the renderer so Scene does
+    // not first bind SHM and immediately rebind to DMA-BUF while its asynchronous loader is active.
+    if state.objects.dmabuf_feedback.is_some()
+        && state.dmabuf_feedback.formats_for_renderer(state.dmabuf_version).is_none()
+    {
+        event_queue
+            .roundtrip(&mut state)
+            .context("failed waiting for initial DMA-BUF surface feedback")?;
+    }
+
     // Set source
     let source = Source {
         uri: source_path.display().to_string(),
@@ -318,13 +329,17 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     session.set_source(source)?;
 
     let advertised_formats = state.dmabuf_feedback.formats_for_renderer(state.dmabuf_version);
-    let renderer_formats: Vec<(u32, u64)> =
-        advertised_formats.iter().map(|format| (format.fourcc, format.modifier)).collect();
-    session.set_dmabuf_formats(&renderer_formats)?;
-    state.diagnostics.dmabuf_formats_known = state.objects.dmabuf.is_none()
-        || state.dmabuf_version < 4
-        || state.dmabuf_feedback.surface_feedback_known();
-    state.diagnostics.dmabuf_format_count = renderer_formats.len();
+    if let Some(advertised_formats) = advertised_formats {
+        let renderer_formats: Vec<(u32, u64)> =
+            advertised_formats.iter().map(|format| (format.fourcc, format.modifier)).collect();
+        session.set_dmabuf_formats(&renderer_formats)?;
+        state.diagnostics.dmabuf_formats_known = true;
+        state.diagnostics.dmabuf_format_count = renderer_formats.len();
+    } else {
+        tracing::warn!("initial DMA-BUF surface feedback did not complete; keeping renderer capability state unknown");
+        state.diagnostics.dmabuf_formats_known = false;
+        state.diagnostics.dmabuf_format_count = 0;
+    }
 
     // Determine dmabuf preference
     let prefer_dmabuf = if env_var_enabled("__NV_PRIME_RENDER_OFFLOAD")
