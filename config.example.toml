@@ -3,6 +3,7 @@ interactive = true
 show_fps = false
 fps_report_interval_secs = 1
 scale_mode = "cover"
+force_scene_audio_loop = false
 
 [renderer]
 library_path = ""

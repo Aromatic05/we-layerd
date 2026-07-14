@@ -48,7 +48,7 @@ pub(crate) enum Message {
     AutoScan, Scanned(Result<Vec<WallpaperEntry>, String>), GifLoaded(PathBuf, Result<Vec<GifFrame>, String>), GifTick,
     SelectWallpaper(usize), PlayPressed, StopPressed, SettingsPressed, SearchChanged(String), TypeFilterSelected(Option<WallpaperType>), PaneResized(pane_grid::ResizeEvent),
     AssetsPathChanged(String), WorkshopPathChanged(String), RendererLibraryPathChanged(String), RendererCachePathChanged(String), PickAssetsPath, PickWorkshopPath,
-    AssetsPathPicked(Option<PathBuf>), WorkshopPathPicked(Option<PathBuf>), FpsLimitChanged(String), InteractiveToggled(bool), ShowFpsToggled(bool),
+    AssetsPathPicked(Option<PathBuf>), WorkshopPathPicked(Option<PathBuf>), FpsLimitChanged(String), InteractiveToggled(bool), ForceSceneAudioLoopToggled(bool), ShowFpsToggled(bool),
     ScaleModeSelected(ScaleModeOption), PreferDmabufToggled(bool), AllowShmFallbackToggled(bool), Detail(DetailMessage), StatusLoaded(Result<String, String>), StatusTick,
     WindowResized(Size), WindowCloseRequested(window::Id), WindowOpened(window::Id), WindowClosed(window::Id), TrayTick, ThemeTick, TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>), ToggleOutput(String),

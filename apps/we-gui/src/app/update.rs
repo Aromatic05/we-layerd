@@ -41,7 +41,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 .unwrap_or(UserPropertySchema { entries: Vec::new() });
             let profile = app.launch_settings.wallpapers.entry(entry.id.clone()).or_default().clone();
             set_resolution_inputs(app, &profile);
-            config::persist_selected(&app.config_path, &app.launch_settings, &entry);
+            if let Err(error) =
+                config::persist_selected(&app.config_path, &app.launch_settings, &entry)
+            {
+                app.ui_settings.status_text = format!("failed to save config: {error}");
+                eprintln!("failed to save config: {error}");
+            }
             app.sidebar = Some(Sidebar::Detail);
             app.detail_tab = wallpaper_detail::DetailTab::Actions;
             Task::perform(runtime::fetch_status(), Message::StatusLoaded)
@@ -72,7 +77,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            persist_current_config(app);
+            if let Err(error) = persist_current_config(app) {
+                app.ui_settings.status_text = format!("failed to save config: {error}");
+                eprintln!("failed to save config: {error}");
+                return Task::none();
+            }
 
             if let Err(error) = runtime::reap(&mut app.runtime_child) {
                 eprintln!("failed to query daemon child status: {error}");
@@ -206,6 +215,18 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::InteractiveToggled(value) => {
             app.ui_settings.interactive = value;
             super::settings::sync(app);
+            Task::none()
+        }
+        Message::ForceSceneAudioLoopToggled(value) => {
+            if let Err(error) =
+                config::persist_force_scene_audio_loop(&app.config_path, value)
+            {
+                app.ui_settings.status_text = format!("failed to save config: {error}");
+                eprintln!("failed to save config: {error}");
+            } else {
+                app.ui_settings.force_scene_audio_loop = value;
+                super::settings::sync(app);
+            }
             Task::none()
         }
         Message::ShowFpsToggled(value) => {

@@ -63,6 +63,14 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
         checkbox(ui_settings.interactive)
             .label("Enable wallpaper input")
             .on_toggle(Message::InteractiveToggled).style(md_checkbox_style),
+        container(
+            checkbox(ui_settings.force_scene_audio_loop)
+                .label("Force loop scene audio")
+                .on_toggle(Message::ForceSceneAudioLoopToggled)
+                .style(md_checkbox_style),
+        )
+        .id(iced::widget::Id::new("settings.audio.force-loop")),
+        text("Overrides visible, automatically started scene sounds authored as single; start-silent sounds are unchanged.").size(12),
         checkbox(ui_settings.show_fps)
             .label("Show realtime FPS")
             .on_toggle(Message::ShowFpsToggled).style(md_checkbox_style),

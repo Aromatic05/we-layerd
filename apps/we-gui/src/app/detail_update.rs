@@ -12,7 +12,11 @@ pub(crate) fn update(
     use wallpaper_detail::{DetailMessage, ResolutionMode};
 
     if matches!(message, DetailMessage::Apply) {
-        persist_current_config(app);
+        if let Err(error) = persist_current_config(app) {
+            app.ui_settings.status_text = format!("failed to save config: {error}");
+            eprintln!("failed to save config: {error}");
+            return Task::none();
+        }
         return super::update::update(app, Message::PlayPressed);
     }
     match message {
@@ -91,7 +95,10 @@ pub(crate) fn update(
         DetailMessage::PickPath { .. } => unreachable!("path picker handled before profile mutation"),
         DetailMessage::ResetProperties => profile.user_properties.clear(),
     }
-    persist_current_config(app);
+    if let Err(error) = persist_current_config(app) {
+        app.ui_settings.status_text = format!("failed to save config: {error}");
+        eprintln!("failed to save config: {error}");
+    }
     Task::none()
 }
 
@@ -115,13 +122,13 @@ pub(crate) fn set_resolution_inputs(app: &mut App, profile: &WallpaperSettings) 
     }
 }
 
-pub(crate) fn persist_current_config(app: &App) {
+pub(crate) fn persist_current_config(app: &App) -> Result<(), String> {
     let Some(selected_id) = app.selected_id.as_deref() else {
-        return;
+        return Ok(());
     };
     let Some(entry) = app.entries.iter().find(|entry| entry.id == selected_id) else {
-        return;
+        return Ok(());
     };
 
-    config::persist_selected(&app.config_path, &app.launch_settings, entry);
+    config::persist_selected(&app.config_path, &app.launch_settings, entry)
 }

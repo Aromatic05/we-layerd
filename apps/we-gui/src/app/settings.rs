@@ -12,6 +12,7 @@ pub(crate) fn sync_from_ui(ui_settings: &UiSettings, launch_settings: &mut Launc
     launch_settings.prefer_dmabuf = ui_settings.prefer_dmabuf;
     launch_settings.allow_shm_fallback = ui_settings.allow_shm_fallback;
     launch_settings.interactive = ui_settings.interactive;
+    launch_settings.force_scene_audio_loop = ui_settings.force_scene_audio_loop;
     launch_settings.show_fps = ui_settings.show_fps;
     launch_settings.scale_mode = ScaleMode::from(ui_settings.scale_mode);
 
@@ -23,4 +24,3 @@ pub(crate) fn sync_from_ui(ui_settings: &UiSettings, launch_settings: &mut Launc
 pub(crate) fn sync(app: &mut App) {
     sync_from_ui(&app.ui_settings, &mut app.launch_settings);
 }
-

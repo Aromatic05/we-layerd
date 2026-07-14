@@ -8,6 +8,7 @@
 - Presents renderer output through Wayland layer-shell
 - Supports DMA-BUF and SHM frame presentation
 - Forwards pointer input to interactive wallpapers
+- Provides an opt-in loop override for visible, automatically started scene audio
 - Exposes `ctl status` and `doctor` diagnostics for the native runtime
 - Ships a GUI companion, `we-gui`, for workshop browsing and config generation
 
