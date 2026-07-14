@@ -18,6 +18,13 @@ pub(crate) struct App {
 }
 
 impl App {
+    pub(crate) fn selected_wallpaper_is_running(&self) -> bool {
+        let Some(selected_id) = self.selected_id.as_deref() else { return false };
+        let Some(entry) = self.entries.iter().find(|entry| entry.id == selected_id) else { return false };
+        let source = entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy();
+        self.playback_running && !self.playback_paused && self.running_source.as_deref() == Some(source.as_ref())
+    }
+
     pub(crate) fn shutdown_runtime(&mut self) -> bool {
         if self.runtime_shutdown {
             return true;

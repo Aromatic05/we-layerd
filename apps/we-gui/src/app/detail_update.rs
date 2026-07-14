@@ -21,12 +21,11 @@ pub(crate) fn update(
             return Task::none();
         }
         DetailMessage::TogglePlayback => {
-            if !app.playback_running {
+            if !app.selected_wallpaper_is_running() {
                 return super::update::update(app, Message::PlayPressed);
             }
-            let action = if app.playback_paused { "resume" } else { "pause" };
-            if runtime::send_control(action) {
-                app.playback_paused = !app.playback_paused;
+            if runtime::send_control("pause") {
+                app.playback_paused = true;
             }
             return Task::none();
         }

@@ -54,7 +54,7 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
                 &app.resolution_width,
                 &app.resolution_height,
                 app.detail_tab,
-                app.playback_running && app.running_source.as_deref() == Some(entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy().as_ref()),
+                app.selected_wallpaper_is_running(),
                 app.playback_paused,
                 &app.outputs,
                 &app.selected_outputs,
