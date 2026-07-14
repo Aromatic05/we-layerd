@@ -138,6 +138,16 @@ jobs:
           } >> "${GITHUB_ENV}"
           printf '%s/bin\n' "${vendor_root}/dxc" >> "${GITHUB_PATH}"
 
+      - name: Fetch locked Rust dependencies
+        shell: bash
+        env:
+          CARGO_NET_RETRY: "10"
+          CARGO_HTTP_TIMEOUT: "60"
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 8m \
+            cargo fetch --locked
+
       - name: Build reusable Rust dependency graph
         shell: bash
         run: |
@@ -332,6 +342,16 @@ jobs:
             printf 'CMAKE_PREFIX_PATH=%s\n' "${vendor_root}/dxc"
           } >> "${GITHUB_ENV}"
           printf '%s/bin\n' "${vendor_root}/dxc" >> "${GITHUB_PATH}"
+
+      - name: Fetch locked Rust dependencies
+        shell: bash
+        env:
+          CARGO_NET_RETRY: "10"
+          CARGO_HTTP_TIMEOUT: "60"
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 8m \
+            cargo fetch --locked
 
       - name: Build reusable Rust dependency graph
         shell: bash
