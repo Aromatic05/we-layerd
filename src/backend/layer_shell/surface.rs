@@ -41,6 +41,22 @@ use crate::backend::{
 };
 
 // ---------------------------------------------------------------------------
+// DRM format helper
+// ---------------------------------------------------------------------------
+
+fn to_opaque_drm_fourcc(fourcc: u32) -> u32 {
+    const DRM_FORMAT_ABGR8888: u32 = u32::from_le_bytes(*b"AB24");
+    const DRM_FORMAT_XBGR8888: u32 = u32::from_le_bytes(*b"XB24");
+    const DRM_FORMAT_ARGB8888: u32 = u32::from_le_bytes(*b"AR24");
+    const DRM_FORMAT_XRGB8888: u32 = u32::from_le_bytes(*b"XR24");
+    match fourcc {
+        DRM_FORMAT_ABGR8888 => DRM_FORMAT_XBGR8888,
+        DRM_FORMAT_ARGB8888 => DRM_FORMAT_XRGB8888,
+        _ => fourcc,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch impls
 // ---------------------------------------------------------------------------
 
@@ -397,7 +413,7 @@ pub(super) fn create_buffer_for_frame(
             let buffer = params.create_immed(
                 dmabuf.width as i32,
                 dmabuf.height as i32,
-                dmabuf.drm_fourcc,
+                to_opaque_drm_fourcc(dmabuf.drm_fourcc),
                 DmabufFlags::empty(),
                 qh,
                 std::sync::Arc::clone(&released),
@@ -578,5 +594,26 @@ pub(super) fn update_input_region(state: &LayerShellState, qh: &QueueHandle<Laye
         }
         surface.set_input_region(Some(&region));
         region.destroy();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_opaque_drm_fourcc;
+
+    #[test]
+    fn exported_rgba_formats_are_presented_as_opaque() {
+        assert_eq!(
+            to_opaque_drm_fourcc(u32::from_le_bytes(*b"AB24")),
+            u32::from_le_bytes(*b"XB24")
+        );
+        assert_eq!(
+            to_opaque_drm_fourcc(u32::from_le_bytes(*b"AR24")),
+            u32::from_le_bytes(*b"XR24")
+        );
+        assert_eq!(
+            to_opaque_drm_fourcc(u32::from_le_bytes(*b"NV12")),
+            u32::from_le_bytes(*b"NV12")
+        );
     }
 }
