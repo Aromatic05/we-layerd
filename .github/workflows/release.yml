@@ -2,42 +2,48 @@ name: Release binaries
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
       - "dev-*"
+    paths:
+      - ".github/actions/setup-release-build/**"
+      - ".github/workflows/release.yml"
+      - "apps/**"
+      - "crates/**"
+      - "package/**"
+      - "src/**"
+      - "third_party/wallpaper-engine-renderer"
+      - "build.rs"
+      - "Cargo.lock"
+      - "Cargo.toml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Release builds include a large Rust GUI dependency graph and a native CEF/Vulkan
-# renderer. Keep both Cargo and the nested CMake build within hosted-runner memory.
 env:
   RUST_TOOLCHAIN: "1.96.1"
-  CARGO_HOME: ${{ github.workspace }}/../.we-layerd-cache/cargo
-  RUSTUP_HOME: ${{ github.workspace }}/../.we-layerd-cache/rustup
-  WE_LAYERD_DOWNLOAD_CACHE: ${{ github.workspace }}/../.we-layerd-cache/downloads
-  CCACHE_DIR: ${{ github.workspace }}/../.we-layerd-cache/ccache
-  CCACHE_BASEDIR: ${{ github.workspace }}
-  CCACHE_COMPILERCHECK: content
-  CCACHE_COMPRESS: "true"
-  CCACHE_MAXSIZE: 1G
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "3"
   CARGO_BUILD_JOBS: "1"
   CARGO_INCREMENTAL: "0"
   CMAKE_BUILD_PARALLEL_LEVEL: "1"
-  CMAKE_C_COMPILER_LAUNCHER: ccache
-  CMAKE_CXX_COMPILER_LAUNCHER: ccache
+  CMAKE_C_COMPILER_LAUNCHER: sccache
+  CMAKE_CXX_COMPILER_LAUNCHER: sccache
   MAKEFLAGS: "-j1"
   RUSTC_WRAPPER: sccache
   SCCACHE_GHA_ENABLED: "true"
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
 
 jobs:
   validate:
     name: Validate build ref
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -73,11 +79,12 @@ jobs:
 
           printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
 
-  ubuntu:
-    name: Ubuntu 26.04 DEB
+  build-ubuntu:
+    name: Compile for Ubuntu 26.04
     needs: validate
     runs-on: ubuntu-24.04
     container: ubuntu:26.04
+    timeout-minutes: 35
     steps:
       - name: Install build dependencies
         shell: bash
@@ -85,16 +92,15 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            binutils build-essential bzip2 ca-certificates cargo ccache cmake curl \
-            debhelper devscripts dpkg-dev fakeroot file git libasound2-dev \
-            libdrm-dev libfontconfig1-dev libfreetype-dev libgl-dev \
-            libgstreamer-plugins-bad1.0-dev libgstreamer-plugins-base1.0-dev \
-            libgstreamer1.0-dev libgtk-3-dev liblz4-dev libpango1.0-dev \
-            libva-dev libvulkan-dev libwayland-dev libxdo-dev \
-            libxkbcommon-dev patchelf pkg-config rustc tar wayland-protocols \
-            xdotool xz-utils
+          apt-get -o Acquire::Retries=5 update
+          apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+            binutils build-essential bzip2 ca-certificates cmake curl file git \
+            libasound2-dev libdrm-dev libfontconfig1-dev libfreetype-dev \
+            libgl-dev libgstreamer-plugins-bad1.0-dev \
+            libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
+            libgtk-3-dev liblz4-dev libpango1.0-dev libva-dev libvulkan-dev \
+            libwayland-dev libxdo-dev libxkbcommon-dev pkg-config tar \
+            wayland-protocols xz-utils zstd
 
       - name: Check out source and submodules
         uses: actions/checkout@v4
@@ -102,20 +108,155 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Set up release toolchain and caches
+      - name: Set up stable build caches
+        id: setup
         uses: ./.github/actions/setup-release-build
         with:
-          ccache-namespace: ubuntu2604
-          source-cache-key: ${{ hashFiles('Cargo.lock', 'package/common/versions.env') }}
+          cache-namespace: ubuntu2604
+          source-cache-key: ${{ hashFiles('Cargo.lock') }}
+          download-cache-key: ${{ hashFiles('package/common/versions.env') }}
 
-      - name: Build DEB package
+      - name: Prepare pinned native dependencies
         shell: bash
-        run: package/ubuntu/build.sh
+        run: |
+          set -euo pipefail
+          source package/common/versions.env
+          package/common/fetch-dependencies.sh all
 
-      - name: Report C/C++ compiler cache
+          vendor_root="${GITHUB_WORKSPACE}/../.we-layerd-cache/ubuntu2604/vendor"
+          rm -rf "${vendor_root}"
+          mkdir -p "${vendor_root}/cef" "${vendor_root}/dxc"
+          tar -xjf "${WE_LAYERD_DOWNLOAD_CACHE}/${CEF_ARCHIVE}" \
+            -C "${vendor_root}/cef" --strip-components=1
+          tar -xzf "${WE_LAYERD_DOWNLOAD_CACHE}/${DXC_ARCHIVE}" \
+            -C "${vendor_root}/dxc"
+
+          {
+            printf 'CEF_ROOT=%s\n' "${vendor_root}/cef"
+            printf 'DXC_ROOT=%s\n' "${vendor_root}/dxc"
+            printf 'CMAKE_PREFIX_PATH=%s\n' "${vendor_root}/dxc"
+          } >> "${GITHUB_ENV}"
+          printf '%s/bin\n' "${vendor_root}/dxc" >> "${GITHUB_PATH}"
+
+      - name: Build reusable Rust dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 15m \
+            cargo build --frozen --offline --release \
+              -p we-core -p we-renderer-sys -p we-renderer -p we-gui -p xtask
+
+      - name: Save Rust build checkpoint
+        if: steps.setup.outputs.rust-cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.setup.outputs.cargo-target-dir }}
+          key: ${{ steps.setup.outputs.rust-cache-key }}
+
+      - name: Build native renderer checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 22m \
+            package/common/build-native.sh
+
+      - name: Save completed native renderer
+        if: steps.setup.outputs.native-cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.setup.outputs.native-install-root }}
+          key: ${{ steps.setup.outputs.native-cache-key }}
+
+      - name: Build final daemon binary
+        shell: bash
+        env:
+          WE_LAYERD_INSTALL_PREFIX: /usr
+          WE_LAYERD_PREBUILT_RENDERER_ROOT: ${{ steps.setup.outputs.native-install-root }}
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 8m \
+            cargo build --frozen --offline --release -p we-layerd
+
+      - name: Stage reusable release bundle
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf prebuilt
+          mkdir -p prebuilt/bin prebuilt/lib
+          install -m0755 "${CARGO_TARGET_DIR}/release/we-layerd" prebuilt/bin/we-layerd
+          install -m0755 "${CARGO_TARGET_DIR}/release/we-gui" prebuilt/bin/we-gui
+          install -m0755 \
+            "${WE_LAYERD_NATIVE_INSTALL_ROOT}/lib/libwallpaper-engine-renderer.so" \
+            prebuilt/lib/libwallpaper-engine-renderer.so
+          install -m0755 \
+            "${WE_LAYERD_NATIVE_INSTALL_ROOT}/lib/we-cef-helper" \
+            prebuilt/lib/we-cef-helper
+
+      - name: Upload Ubuntu prebuilt checkpoint
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: we-layerd-${{ needs.validate.outputs.version }}-ubuntu2604-prebuilt
+          path: prebuilt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report shared compiler cache
         if: always()
         shell: bash
-        run: ccache --show-stats
+        run: sccache --show-stats || true
+
+  ubuntu:
+    name: Package Ubuntu 26.04 DEB
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - validate
+      - build-ubuntu
+    runs-on: ubuntu-24.04
+    container: ubuntu:26.04
+    timeout-minutes: 20
+    steps:
+      - name: Install packaging dependencies
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          apt-get -o Acquire::Retries=5 update
+          apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+            binutils build-essential bzip2 ca-certificates curl debhelper \
+            devscripts dpkg-dev fakeroot file git libasound2-dev libdrm-dev \
+            libfontconfig1-dev libfreetype-dev libgl-dev \
+            libgstreamer-plugins-bad1.0-dev libgstreamer-plugins-base1.0-dev \
+            libgstreamer1.0-dev libgtk-3-dev liblz4-dev libpango1.0-dev \
+            libva-dev libvulkan-dev libwayland-dev libxdo-dev \
+            libxkbcommon-dev patchelf pkg-config tar wayland-protocols \
+            xdotool xz-utils zstd
+
+      - name: Check out source and submodules
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up packaging inputs
+        uses: ./.github/actions/setup-release-build
+        with:
+          cache-namespace: ubuntu2604-package
+          source-cache-key: ${{ hashFiles('Cargo.lock') }}
+          download-cache-key: ${{ hashFiles('package/common/versions.env') }}
+          restore-build-caches: "false"
+
+      - name: Download Ubuntu prebuilt checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: we-layerd-${{ needs.validate.outputs.version }}-ubuntu2604-prebuilt
+          path: prebuilt
+
+      - name: Build DEB package without recompiling
+        shell: bash
+        run: WE_LAYERD_PREBUILT_ROOT="${GITHUB_WORKSPACE}/prebuilt" package/ubuntu/build.sh
 
       - name: Collect DEB package
         shell: bash
@@ -133,11 +274,12 @@ jobs:
           path: release-assets/*.deb
           if-no-files-found: error
 
-  appimage:
-    name: Ubuntu 24.04 AppImage
+  build-appimage:
+    name: Compile for Ubuntu 24.04
     needs: validate
     runs-on: ubuntu-24.04
     container: ubuntu:24.04
+    timeout-minutes: 35
     steps:
       - name: Install build dependencies
         shell: bash
@@ -145,17 +287,15 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            binutils build-essential bzip2 ca-certificates ccache cmake curl file git \
-            gstreamer1.0-libav gstreamer1.0-plugins-bad \
-            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-            gstreamer1.0-tools libasound2-dev libdrm-dev libfontconfig1-dev \
-            libfreetype-dev libgl-dev libgstreamer-plugins-bad1.0-dev \
+          apt-get -o Acquire::Retries=5 update
+          apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+            binutils build-essential bzip2 ca-certificates cmake curl file git \
+            libasound2-dev libdrm-dev libfontconfig1-dev libfreetype-dev \
+            libgl-dev libgstreamer-plugins-bad1.0-dev \
             libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
             libgtk-3-dev liblz4-dev libpango1.0-dev libva-dev libvulkan-dev \
-            libwayland-dev libxdo-dev libxkbcommon-dev patchelf pkg-config \
-            tar wayland-protocols xdotool xz-utils
+            libwayland-dev libxdo-dev libxkbcommon-dev pkg-config tar \
+            wayland-protocols xz-utils zstd
 
       - name: Check out source and submodules
         uses: actions/checkout@v4
@@ -163,20 +303,156 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Set up release toolchain and caches
+      - name: Set up stable build caches
+        id: setup
         uses: ./.github/actions/setup-release-build
         with:
-          ccache-namespace: ubuntu2404
-          source-cache-key: ${{ hashFiles('Cargo.lock', 'package/common/versions.env') }}
+          cache-namespace: ubuntu2404
+          source-cache-key: ${{ hashFiles('Cargo.lock') }}
+          download-cache-key: ${{ hashFiles('package/common/versions.env') }}
 
-      - name: Build AppImage
+      - name: Prepare pinned native dependencies
         shell: bash
-        run: package/appimage/build.sh
+        run: |
+          set -euo pipefail
+          source package/common/versions.env
+          package/common/fetch-dependencies.sh appimage
 
-      - name: Report C/C++ compiler cache
+          vendor_root="${GITHUB_WORKSPACE}/../.we-layerd-cache/ubuntu2404/vendor"
+          rm -rf "${vendor_root}"
+          mkdir -p "${vendor_root}/cef" "${vendor_root}/dxc"
+          tar -xjf "${WE_LAYERD_DOWNLOAD_CACHE}/${CEF_ARCHIVE}" \
+            -C "${vendor_root}/cef" --strip-components=1
+          tar -xzf "${WE_LAYERD_DOWNLOAD_CACHE}/${DXC_ARCHIVE}" \
+            -C "${vendor_root}/dxc"
+
+          {
+            printf 'CEF_ROOT=%s\n' "${vendor_root}/cef"
+            printf 'DXC_ROOT=%s\n' "${vendor_root}/dxc"
+            printf 'CMAKE_PREFIX_PATH=%s\n' "${vendor_root}/dxc"
+          } >> "${GITHUB_ENV}"
+          printf '%s/bin\n' "${vendor_root}/dxc" >> "${GITHUB_PATH}"
+
+      - name: Build reusable Rust dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 15m \
+            cargo build --frozen --offline --release \
+              -p we-core -p we-renderer-sys -p we-renderer -p we-gui -p xtask
+
+      - name: Save Rust build checkpoint
+        if: steps.setup.outputs.rust-cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.setup.outputs.cargo-target-dir }}
+          key: ${{ steps.setup.outputs.rust-cache-key }}
+
+      - name: Build native renderer checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 22m \
+            package/common/build-native.sh
+
+      - name: Save completed native renderer
+        if: steps.setup.outputs.native-cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.setup.outputs.native-install-root }}
+          key: ${{ steps.setup.outputs.native-cache-key }}
+
+      - name: Build final daemon binary
+        shell: bash
+        env:
+          WE_LAYERD_INSTALL_PREFIX: /usr
+          WE_LAYERD_PREBUILT_RENDERER_ROOT: ${{ steps.setup.outputs.native-install-root }}
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 8m \
+            cargo build --frozen --offline --release -p we-layerd
+
+      - name: Stage reusable release bundle
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf prebuilt
+          mkdir -p prebuilt/bin prebuilt/lib
+          install -m0755 "${CARGO_TARGET_DIR}/release/we-layerd" prebuilt/bin/we-layerd
+          install -m0755 "${CARGO_TARGET_DIR}/release/we-gui" prebuilt/bin/we-gui
+          install -m0755 \
+            "${WE_LAYERD_NATIVE_INSTALL_ROOT}/lib/libwallpaper-engine-renderer.so" \
+            prebuilt/lib/libwallpaper-engine-renderer.so
+          install -m0755 \
+            "${WE_LAYERD_NATIVE_INSTALL_ROOT}/lib/we-cef-helper" \
+            prebuilt/lib/we-cef-helper
+
+      - name: Upload AppImage prebuilt checkpoint
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: we-layerd-${{ needs.validate.outputs.version }}-ubuntu2404-prebuilt
+          path: prebuilt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report shared compiler cache
         if: always()
         shell: bash
-        run: ccache --show-stats
+        run: sccache --show-stats || true
+
+  appimage:
+    name: Package Ubuntu 24.04 AppImage
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - validate
+      - build-appimage
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install packaging dependencies
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          apt-get -o Acquire::Retries=5 update
+          apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+            binutils build-essential bzip2 ca-certificates curl file git \
+            gstreamer1.0-libav gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-tools libasound2-dev libdrm-dev libfontconfig1-dev \
+            libfreetype-dev libgl-dev libgstreamer-plugins-bad1.0-dev \
+            libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
+            libgtk-3-dev liblz4-dev libpango1.0-dev libva-dev libvulkan-dev \
+            libwayland-dev libxdo-dev libxkbcommon-dev patchelf pkg-config \
+            tar wayland-protocols xdotool xz-utils zstd
+
+      - name: Check out source and submodules
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up packaging inputs
+        uses: ./.github/actions/setup-release-build
+        with:
+          cache-namespace: ubuntu2404-package
+          source-cache-key: ${{ hashFiles('Cargo.lock') }}
+          download-cache-key: ${{ hashFiles('package/common/versions.env') }}
+          restore-build-caches: "false"
+
+      - name: Download AppImage prebuilt checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: we-layerd-${{ needs.validate.outputs.version }}-ubuntu2404-prebuilt
+          path: prebuilt
+
+      - name: Build AppImage without recompiling
+        shell: bash
+        run: WE_LAYERD_PREBUILT_ROOT="${GITHUB_WORKSPACE}/prebuilt" package/appimage/build.sh
 
       - name: Collect AppImage
         shell: bash
@@ -202,13 +478,21 @@ jobs:
       - ubuntu
       - appimage
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - name: Download built artifacts
+      - name: Download Ubuntu package
         uses: actions/download-artifact@v4
         with:
-          path: downloaded-artifacts
+          name: we-layerd-${{ needs.validate.outputs.version }}-ubuntu-amd64
+          path: downloaded-artifacts/ubuntu
+
+      - name: Download AppImage package
+        uses: actions/download-artifact@v4
+        with:
+          name: we-layerd-${{ needs.validate.outputs.version }}-appimage-x86_64
+          path: downloaded-artifacts/appimage
 
       - name: Collect release assets
         shell: bash

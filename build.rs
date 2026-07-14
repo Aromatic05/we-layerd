@@ -9,6 +9,7 @@ fn main() {
     println!("cargo:rerun-if-changed=.gitmodules");
     println!("cargo:rerun-if-env-changed=CEF_ROOT");
     println!("cargo:rerun-if-env-changed=WE_LAYERD_INSTALL_PREFIX");
+    println!("cargo:rerun-if-env-changed=WE_LAYERD_PREBUILT_RENDERER_ROOT");
 
     let workspace_root =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
@@ -18,9 +19,20 @@ fn main() {
     }
     emit_upstream_rerun_hints(&upstream_root);
 
+    let install_prefix = configured_install_prefix();
+    if let Some(install_root) = env::var_os("WE_LAYERD_PREBUILT_RENDERER_ROOT").map(PathBuf::from) {
+        validate_renderer_install(&install_root);
+        if env::var("PROFILE").as_deref() == Ok("debug") {
+            println!("cargo:rustc-env=WE_LAYERD_RENDERER_INSTALL_ROOT={}", install_root.display());
+        }
+        println!("cargo:rustc-env=WE_LAYERD_INSTALL_PREFIX={}", install_prefix.display());
+        persist_install_prefix(&workspace_root, &install_prefix)
+            .expect("failed to persist configured install prefix");
+        return;
+    }
+
     let build_root = workspace_root.join("target/we-renderer-upstream/build");
     let install_root = workspace_root.join("target/we-renderer-upstream/install");
-    let install_prefix = configured_install_prefix();
     ensure_recursive_submodules(&upstream_root);
     reset_cmake_cache_if_source_changed(&build_root, &upstream_root)
         .expect("failed to reset stale cmake cache");
@@ -84,6 +96,15 @@ fn main() {
     println!("cargo:rustc-env=WE_LAYERD_INSTALL_PREFIX={}", install_prefix.display());
     persist_install_prefix(&workspace_root, &install_prefix)
         .expect("failed to persist configured install prefix");
+}
+
+fn validate_renderer_install(install_root: &Path) {
+    for relative in ["lib/libwallpaper-engine-renderer.so", "lib/we-cef-helper"] {
+        let artifact = install_root.join(relative);
+        if !artifact.is_file() {
+            panic!("missing prebuilt renderer artifact at {}", artifact.display());
+        }
+    }
 }
 
 fn emit_upstream_rerun_hints(upstream_root: &Path) {

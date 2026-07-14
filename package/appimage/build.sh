@@ -11,6 +11,7 @@ vendor_dir="${out_dir}/vendor"
 tools_dir="${out_dir}/tools"
 version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "${repo_root}/Cargo.toml" | head -n1)"
 architecture="$(uname -m)"
+prebuilt_root="${WE_LAYERD_PREBUILT_ROOT:-}"
 
 if [[ "${architecture}" != "x86_64" ]]; then
   printf 'AppImage packaging currently supports x86_64 only; got %s\n' "${architecture}" >&2
@@ -55,19 +56,36 @@ export PATH="${DXC_ROOT}/bin:${PATH}"
 export WE_LAYERD_INSTALL_PREFIX=/usr
 export CARGO_NET_OFFLINE=true
 
-(
-  cd "${source_dir}"
-  cargo build --frozen --offline --release -p we-layerd -p we-gui
-)
+if [[ -n "${prebuilt_root}" ]]; then
+  for artifact in \
+    "${prebuilt_root}/bin/we-layerd" \
+    "${prebuilt_root}/bin/we-gui" \
+    "${prebuilt_root}/lib/libwallpaper-engine-renderer.so" \
+    "${prebuilt_root}/lib/we-cef-helper"; do
+    if [[ ! -f "${artifact}" ]]; then
+      printf 'Missing prebuilt release artifact: %s\n' "${artifact}" >&2
+      exit 1
+    fi
+  done
+  binary_root="${prebuilt_root}/bin"
+  native_root="${prebuilt_root}/lib"
+else
+  (
+    cd "${source_dir}"
+    cargo build --frozen --offline --release -p we-layerd -p we-gui
+  )
+  binary_root="${source_dir}/target/release"
+  native_root="${source_dir}/target/we-renderer-upstream/install/lib"
+fi
 
-install -Dm0755 "${source_dir}/target/release/we-layerd" "${appdir}/usr/bin/we-layerd"
-install -Dm0755 "${source_dir}/target/release/we-gui" "${appdir}/usr/bin/we-gui"
+install -Dm0755 "${binary_root}/we-layerd" "${appdir}/usr/bin/we-layerd"
+install -Dm0755 "${binary_root}/we-gui" "${appdir}/usr/bin/we-gui"
 install -Dm0755 "$(command -v xdotool)" "${appdir}/usr/bin/xdotool"
 install -Dm0755 \
-  "${source_dir}/target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so" \
+  "${native_root}/libwallpaper-engine-renderer.so" \
   "${appdir}/usr/lib/libwallpaper-engine-renderer.so"
 install -Dm0755 \
-  "${source_dir}/target/we-renderer-upstream/install/lib/we-cef-helper" \
+  "${native_root}/we-cef-helper" \
   "${appdir}/usr/lib/we-cef-helper"
 
 install -d "${appdir}/usr/lib/we-layerd/dxc"

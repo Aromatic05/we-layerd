@@ -9,6 +9,14 @@ PACKAGE_ROOT := $(CURDIR)/debian/we-layerd
 PACKAGE_USR := $(PACKAGE_ROOT)/usr
 PRIVATE_LIB := $(PACKAGE_USR)/lib
 
+ifeq ($(strip $(WE_LAYERD_PREBUILT_ROOT)),)
+BUILD_BIN := $(CURDIR)/target/release
+BUILD_LIB := $(CURDIR)/target/we-renderer-upstream/install/lib
+else
+BUILD_BIN := $(WE_LAYERD_PREBUILT_ROOT)/bin
+BUILD_LIB := $(WE_LAYERD_PREBUILT_ROOT)/lib
+endif
+
 %:
 	dh $@
 
@@ -19,23 +27,30 @@ override_dh_auto_build:
 	test -f "$(CEF_ROOT)/Release/libcef.so"
 	test -n "$(DXC_ROOT)"
 	test -f "$(DXC_ROOT)/lib/libdxcompiler.so"
-	CEF_ROOT="$(CEF_ROOT)" \
-	CMAKE_PREFIX_PATH="$(DXC_ROOT)" \
-	PATH="$(DXC_ROOT)/bin:$$PATH" \
-	cargo build --frozen --offline --release -p we-layerd -p we-gui
+	if [ -n "$(WE_LAYERD_PREBUILT_ROOT)" ]; then \
+		test -x "$(BUILD_BIN)/we-layerd"; \
+		test -x "$(BUILD_BIN)/we-gui"; \
+		test -f "$(BUILD_LIB)/libwallpaper-engine-renderer.so"; \
+		test -x "$(BUILD_LIB)/we-cef-helper"; \
+	else \
+		CEF_ROOT="$(CEF_ROOT)" \
+		CMAKE_PREFIX_PATH="$(DXC_ROOT)" \
+		PATH="$(DXC_ROOT)/bin:$$PATH" \
+		cargo build --frozen --offline --release -p we-layerd -p we-gui; \
+	fi
 
 override_dh_auto_test:
-	LD_LIBRARY_PATH="$(CURDIR)/target/we-renderer-upstream/install/lib" \
-		target/release/we-layerd --help >/dev/null
+	LD_LIBRARY_PATH="$(BUILD_LIB)" \
+		"$(BUILD_BIN)/we-layerd" --help >/dev/null
 
 override_dh_auto_install:
-	install -Dm0755 target/release/we-layerd \
+	install -Dm0755 "$(BUILD_BIN)/we-layerd" \
 		$(PACKAGE_USR)/bin/we-layerd
-	install -Dm0755 target/release/we-gui \
+	install -Dm0755 "$(BUILD_BIN)/we-gui" \
 		$(PACKAGE_USR)/bin/we-gui
-	install -Dm0755 target/we-renderer-upstream/install/lib/libwallpaper-engine-renderer.so \
+	install -Dm0755 "$(BUILD_LIB)/libwallpaper-engine-renderer.so" \
 		$(PRIVATE_LIB)/libwallpaper-engine-renderer.so
-	install -Dm0755 target/we-renderer-upstream/install/lib/we-cef-helper \
+	install -Dm0755 "$(BUILD_LIB)/we-cef-helper" \
 		$(PRIVATE_LIB)/we-cef-helper
 
 	install -d $(PACKAGE_ROOT)/usr/share/gnome-shell/extensions/we-layerd@aromatic

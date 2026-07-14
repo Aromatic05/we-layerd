@@ -1,46 +1,155 @@
 name: Setup release build
-description: Install the pinned Rust toolchain and restore Rust and C/C++ compiler caches.
+description: Restore stable release caches and install the pinned Rust toolchain.
 
 inputs:
-  ccache-namespace:
-    description: Distribution-specific namespace for the C/C++ cache.
+  cache-namespace:
+    description: Distribution-specific namespace for build outputs.
     required: true
   source-cache-key:
-    description: Hash of Cargo and pinned external dependency inputs.
+    description: Hash of Cargo.lock.
     required: true
+  download-cache-key:
+    description: Hash of pinned external dependency versions.
+    required: true
+  restore-build-caches:
+    description: Restore Rust target and native install caches.
+    required: false
+    default: "true"
+
+outputs:
+  cargo-target-dir:
+    value: ${{ steps.paths.outputs.cargo-target-dir }}
+  native-build-root:
+    value: ${{ steps.paths.outputs.native-build-root }}
+  native-install-root:
+    value: ${{ steps.paths.outputs.native-install-root }}
+  rust-cache-key:
+    value: ${{ steps.paths.outputs.rust-cache-key }}
+  rust-cache-hit:
+    value: ${{ steps.rust-build-cache.outputs.cache-hit }}
+  native-cache-key:
+    value: ${{ steps.paths.outputs.native-cache-key }}
+  native-cache-hit:
+    value: ${{ steps.native-install-cache.outputs.cache-hit }}
 
 runs:
   using: composite
   steps:
+    - name: Resolve container-visible cache paths
+      id: paths
+      shell: bash
+      env:
+        CACHE_NAMESPACE: ${{ inputs.cache-namespace }}
+        SOURCE_CACHE_KEY: ${{ inputs.source-cache-key }}
+        DOWNLOAD_CACHE_KEY: ${{ inputs.download-cache-key }}
+      run: |
+        set -euo pipefail
+
+        # GITHUB_WORKSPACE is container-aware. Do not use the host-expanded
+        # `${{ github.workspace }}` value here: container jobs mount the same
+        # directory at /__w, and a host path would make the compiler and cache
+        # action read different trees.
+        cache_root="${GITHUB_WORKSPACE}/../.we-layerd-cache"
+        cargo_home="${cache_root}/common/cargo"
+        rustup_home="${cache_root}/common/rustup"
+        download_cache="${cache_root}/common/downloads"
+        cargo_target="${cache_root}/${CACHE_NAMESPACE}/cargo-target"
+        native_build="${cache_root}/${CACHE_NAMESPACE}/native-build"
+        native_install="${cache_root}/${CACHE_NAMESPACE}/native-install"
+
+        renderer_sha="$(git rev-parse HEAD:third_party/wallpaper-engine-renderer)"
+        native_config_hash="$(
+          sha256sum build.rs package/common/build-native.sh \
+            | sha256sum \
+            | cut -d' ' -f1
+        )"
+
+        rust_prefix="rust-target-v5-${CACHE_NAMESPACE}-${RUNNER_ARCH}-${RUST_TOOLCHAIN}-${SOURCE_CACHE_KEY}"
+        native_key="native-install-v5-${CACHE_NAMESPACE}-${RUNNER_ARCH}-${renderer_sha}-${DOWNLOAD_CACHE_KEY}-${native_config_hash}"
+
+        {
+          printf 'CARGO_HOME=%s\n' "${cargo_home}"
+          printf 'RUSTUP_HOME=%s\n' "${rustup_home}"
+          printf 'WE_LAYERD_DOWNLOAD_CACHE=%s\n' "${download_cache}"
+          printf 'CARGO_TARGET_DIR=%s\n' "${cargo_target}"
+          printf 'WE_LAYERD_NATIVE_BUILD_ROOT=%s\n' "${native_build}"
+          printf 'WE_LAYERD_NATIVE_INSTALL_ROOT=%s\n' "${native_install}"
+        } >> "${GITHUB_ENV}"
+
+        {
+          printf 'cargo-home=%s\n' "${cargo_home}"
+          printf 'rustup-home=%s\n' "${rustup_home}"
+          printf 'download-cache=%s\n' "${download_cache}"
+          printf 'cargo-target-dir=%s\n' "${cargo_target}"
+          printf 'native-build-root=%s\n' "${native_build}"
+          printf 'native-install-root=%s\n' "${native_install}"
+          printf 'rust-cache-key=%s-%s\n' "${rust_prefix}" "${GITHUB_RUN_ID}"
+          printf 'rust-restore-prefix-lock=%s-\n' "${rust_prefix}"
+          printf 'rust-restore-prefix=rust-target-v5-%s-%s-%s-\n' \
+            "${CACHE_NAMESPACE}" "${RUNNER_ARCH}" "${RUST_TOOLCHAIN}"
+          printf 'native-cache-key=%s\n' "${native_key}"
+          printf 'toolchain-cache-key=release-rust-v5-%s-%s-%s\n' \
+            "${RUNNER_ARCH}" "${RUST_TOOLCHAIN}" "${SOURCE_CACHE_KEY}"
+          printf 'download-cache-key=release-downloads-v5-%s\n' "${DOWNLOAD_CACHE_KEY}"
+        } >> "${GITHUB_OUTPUT}"
+
     - name: Restore Rust toolchain and Cargo source cache
       uses: actions/cache@v4
       with:
         path: |
-          ${{ env.CARGO_HOME }}
-          ${{ env.RUSTUP_HOME }}
-        key: rust-inputs-v3-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN }}-${{ inputs.source-cache-key }}
+          ${{ steps.paths.outputs.cargo-home }}
+          ${{ steps.paths.outputs.rustup-home }}
+        key: ${{ steps.paths.outputs.toolchain-cache-key }}
         restore-keys: |
-          rust-inputs-v3-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN }}-
+          release-rust-v5-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN }}-
 
     - name: Restore pinned packaging downloads
       uses: actions/cache@v4
       with:
-        path: ${{ env.WE_LAYERD_DOWNLOAD_CACHE }}
-        key: release-downloads-v3-${{ inputs.source-cache-key }}-${{ inputs.ccache-namespace }}
+        path: ${{ steps.paths.outputs.download-cache }}
+        key: ${{ steps.paths.outputs.download-cache-key }}
         restore-keys: |
-          release-downloads-v3-${{ inputs.source-cache-key }}-
-          release-downloads-v3-
+          release-downloads-v5-
+
+    - name: Restore reusable Rust build outputs
+      id: rust-build-cache
+      if: inputs.restore-build-caches == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.paths.outputs.cargo-target-dir }}
+        key: ${{ steps.paths.outputs.rust-cache-key }}
+        restore-keys: |
+          ${{ steps.paths.outputs.rust-restore-prefix-lock }}
+          ${{ steps.paths.outputs.rust-restore-prefix }}
+
+    - name: Restore completed native renderer install
+      id: native-install-cache
+      if: inputs.restore-build-caches == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.paths.outputs.native-install-root }}
+        key: ${{ steps.paths.outputs.native-cache-key }}
 
     - name: Install pinned Rust toolchain
       shell: bash
       run: |
         set -euo pipefail
-        curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-          https://sh.rustup.rs \
-          | sh -s -- -y --profile minimal \
-              --default-toolchain "${RUST_TOOLCHAIN}" --no-modify-path
+        mkdir -p "${CARGO_HOME}" "${RUSTUP_HOME}"
         printf '%s\n' "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
         export PATH="${CARGO_HOME}/bin:${PATH}"
+
+        if [[ ! -x "${CARGO_HOME}/bin/rustup" ]]; then
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal \
+                --default-toolchain "${RUST_TOOLCHAIN}" --no-modify-path
+        elif rustup toolchain list | grep -Eq "^${RUST_TOOLCHAIN}(-| )"; then
+          rustup default "${RUST_TOOLCHAIN}"
+        else
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal
+          rustup default "${RUST_TOOLCHAIN}"
+        fi
+
         rustc -Vv
         cargo -V
 
@@ -50,23 +159,20 @@ runs:
         rustc "${probe_dir}/main.rs" -o "${probe_dir}/main"
         readelf -p .comment "${probe_dir}/main" | grep -F 'Linker: LLD'
 
-    - name: Enable Rust compiler cache
+    - name: Enable shared Rust and C/C++ compiler cache
+      if: inputs.restore-build-caches == 'true'
       uses: mozilla-actions/sccache-action@v0.0.10
       with:
         version: "v0.16.0"
 
-    - name: Restore C/C++ compiler cache
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.CCACHE_DIR }}
-        key: ccache-v3-${{ inputs.ccache-namespace }}-${{ runner.arch }}-${{ github.sha }}-${{ github.run_attempt }}
-        restore-keys: |
-          ccache-v3-${{ inputs.ccache-namespace }}-${{ runner.arch }}-${{ github.sha }}-
-          ccache-v3-${{ inputs.ccache-namespace }}-${{ runner.arch }}-
-
-    - name: Prepare C/C++ compiler cache
+    - name: Mark restored native install reusable
+      if: inputs.restore-build-caches == 'true'
       shell: bash
+      env:
+        NATIVE_CACHE_HIT: ${{ steps.native-install-cache.outputs.cache-hit }}
       run: |
-        set -euo pipefail
-        ccache --max-size "${CCACHE_MAXSIZE}"
-        ccache --zero-stats
+        if [[ "${NATIVE_CACHE_HIT}" == true ]]; then
+          printf 'WE_LAYERD_REUSE_NATIVE_INSTALL=1\n' >> "${GITHUB_ENV}"
+        else
+          printf 'WE_LAYERD_REUSE_NATIVE_INSTALL=0\n' >> "${GITHUB_ENV}"
+        fi
