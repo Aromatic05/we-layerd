@@ -55,8 +55,9 @@ third_party/wallpaper-engine-renderer
 - Leave `renderer.prefer_dmabuf = true`
 - Keep `renderer.allow_shm_fallback = true` unless you explicitly want DMA-BUF only
 - Some compositor/GPU combinations will fall back to SHM even when DMA-BUF is preferred
-- `we-layerd` currently does not implement linux-dmabuf feedback negotiation
-- On hybrid or PRIME-offload setups, prefer `renderer.prefer_dmabuf = false` or keep SHM fallback enabled
+- Check `dmabuf_formats_known` and `dmabuf_format_count` in `we-layerd ctl status`
+- linux-dmabuf v4 uses per-surface feedback; v3 uses the global modifier list
+- On hybrid or PRIME-offload setups, keep SHM fallback enabled; PRIME offload is forced to SHM
 
 ## `ctl` cannot connect
 

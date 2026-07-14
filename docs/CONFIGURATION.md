@@ -65,8 +65,11 @@ options_json = '''
 
 Current DMA-BUF scope:
 
-- `we-layerd` does not implement linux-dmabuf feedback negotiation
-- `prefer_dmabuf` and `allow_shm_fallback` are policy flags for the existing presenter path, not a full feedback-driven negotiation stack
+- the layer-shell backend reads linux-dmabuf v4 surface feedback and falls back to v3 global modifier events
+- all advertised `(fourcc, modifier)` pairs are forwarded to `wallpaper-engine-renderer`
+- scene, video, and web outputs negotiate against the same compositor capability set
+- v4 feedback changes are forwarded while the renderer is running, allowing output rebinding or SHM fallback
+- `prefer_dmabuf` selects policy; `allow_shm_fallback` controls behavior when no compatible pair exists
 
 ## Library search order
 

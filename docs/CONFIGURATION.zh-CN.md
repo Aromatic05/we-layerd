@@ -53,6 +53,14 @@ muted = false
 - `fps`：传给 renderer 的目标更新频率
 - `speed`、`volume`、`muted`：直接传给 renderer ABI 的 source 参数
 
+当前 DMA-BUF 协商范围：
+
+- layer-shell 后端读取 linux-dmabuf v4 的 surface feedback，v3 compositor 使用全局 modifier 列表
+- compositor 公布的全部 `(fourcc, modifier)` 组合会传给 `wallpaper-engine-renderer`
+- scene、video、web 使用同一套消费者能力集合进行协商
+- v4 feedback 运行中变化时会重新传入 renderer，并重新绑定输出或退回 SHM
+- `prefer_dmabuf` 决定是否优先 DMA-BUF，`allow_shm_fallback` 决定无兼容组合时是否允许退回 SHM
+
 ## 动态库查找顺序
 
 如果 `renderer.library_path` 为空，或者指向的文件不存在，`we-layerd` 会按以下顺序继续查找：

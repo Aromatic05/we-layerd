@@ -63,13 +63,14 @@ Current behavior:
 - acquire throttled by an in-flight buffer cap
 - pointer input forwarding when `general.interactive = true`
 - live runtime status exported through `we-layerd ctl status`
+- linux-dmabuf v4 surface feedback, with v3 global modifier fallback
+- exact `(fourcc, modifier)` capability forwarding to the renderer before output binding
+- dynamic renderer output renegotiation when v4 surface feedback changes
 
 Current non-goals:
 
-- no linux-dmabuf feedback handling
-- no format/modifier intersection negotiation
-- no cross-GPU import matching
-- no scanout/import device probing
+- no independent GPU-device selection in `we-layerd`; the renderer performs export capability intersection
+- no scanout-device preference policy beyond the compositor-provided tranche ordering
 
 ## Renderer source of truth
 

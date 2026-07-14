@@ -51,6 +51,9 @@ third_party/wallpaper-engine-renderer
 - 保持 `renderer.prefer_dmabuf = true`
 - 建议同时保留 `renderer.allow_shm_fallback = true`
 - 某些 compositor / GPU 组合会自动退回 SHM，这不一定是错误
+- 用 `we-layerd ctl status` 检查 `dmabuf_formats_known` 和 `dmabuf_format_count`
+- linux-dmabuf v4 使用每个 surface 的 feedback，v3 使用全局 modifier 列表
+- PRIME render offload 场景会强制使用 SHM
 
 ## `ctl` 无法连接
 
