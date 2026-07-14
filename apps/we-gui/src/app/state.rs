@@ -12,7 +12,26 @@ pub(crate) struct App {
     pub show_settings: bool, pub sidebar: Option<Sidebar>, pub detail_tab: crate::ui::sidebar::detail::DetailTab,
     pub playback_paused: bool, pub playback_running: bool, pub search_query: String, pub type_filter: Option<WallpaperType>,
     pub panes: pane_grid::State<Pane>, pub animated_previews: HashMap<PathBuf, AnimatedPreview>, pub tray: Option<tray::TrayController>,
-    pub main_window_id: Option<window::Id>, pub theme: Theme,
+    pub main_window_id: Option<window::Id>, pub theme: Theme, pub runtime_shutdown: bool,
+}
+
+impl App {
+    pub(crate) fn shutdown_runtime(&mut self) -> bool {
+        if self.runtime_shutdown {
+            return true;
+        }
+        self.runtime_shutdown = true;
+        let stopped = crate::services::runtime::stop(&mut self.runtime_child);
+        self.playback_running = false;
+        self.playback_paused = false;
+        stopped
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        let _ = self.shutdown_runtime();
+    }
 }
 
 #[derive(Debug, Clone)]

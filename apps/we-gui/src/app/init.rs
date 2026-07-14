@@ -59,6 +59,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             tray: tray::TrayController::new().ok(),
             main_window_id: None,
             theme: detect_system_theme(),
+            runtime_shutdown: false,
         },
         Task::batch(vec![
             Task::done(Message::AutoScan),

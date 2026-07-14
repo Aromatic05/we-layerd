@@ -66,6 +66,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::Detail(message) => super::detail_update::update(app, message),
         Message::PlayPressed => {
+            app.runtime_shutdown = false;
             if !app.layerd_available {
                 app.ui_settings.status_text = "we-layerd not found in PATH".to_string();
                 return Task::none();
@@ -101,7 +102,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::StopPressed => {
-            let stopped = runtime::stop(&mut app.runtime_child);
+            let stopped = app.shutdown_runtime();
             app.ui_settings.status_text = if stopped {
                 "stopped daemon".to_string()
             } else {
@@ -110,8 +111,6 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             if !stopped {
                 eprintln!("failed to stop daemon via IPC or owned child process");
             }
-            app.playback_running = false;
-            app.playback_paused = false;
             Task::none()
         }
         Message::SettingsPressed => {
@@ -288,7 +287,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 }
                 Task::none()
             }
-            tray::TrayAction::Quit => iced::exit(),
+            tray::TrayAction::Quit => {
+                if !app.shutdown_runtime() {
+                    eprintln!("failed to stop daemon while exiting we-gui");
+                }
+                iced::exit()
+            }
         },
     }
 }
