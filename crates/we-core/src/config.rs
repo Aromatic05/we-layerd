@@ -196,7 +196,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
     cfg.renderer.options_json = settings.options_json.clone();
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
-    cfg.renderer.assets_path = settings.assets_path.clone();
+    cfg.renderer.assets_path = Path::new(&settings.assets_path).join("assets").display().to_string();
     cfg
 }
 
@@ -251,7 +251,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
 
     Ok(LaunchSettings {
-        assets_path: cfg.renderer.assets_path.clone(),
+        assets_path: Path::new(&cfg.renderer.assets_path).parent().unwrap_or_else(|| Path::new("")).display().to_string(),
         workshop_path: derive_workshop_root(&cfg.renderer.source),
         renderer_library_path: cfg.renderer.library_path,
         renderer_cache_path: cfg.renderer.cache_path,
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn build_config_writes_renderer_native_source_and_assets() {
         let settings = LaunchSettings {
-            assets_path: "/steam/steamapps/common/wallpaper_engine/assets".to_string(),
+            assets_path: "/steam/steamapps/common/wallpaper_engine".to_string(),
             fps_limit: 144,
             interactive: false,
             scale_mode: ScaleMode::Fit,
@@ -390,7 +390,7 @@ options_json = "{\"keep\":true}"
         assert!(settings.allow_shm_fallback);
         assert_eq!(settings.options_json.as_deref(), Some("{\"keep\":true}"));
         assert_eq!(settings.workshop_path, "/tmp/workshop/content/431960");
-        assert_eq!(settings.assets_path, "/opt/wallpaper_engine/assets");
+        assert_eq!(settings.assets_path, "/opt/wallpaper_engine");
 
         let _ = fs::remove_file(path);
     }

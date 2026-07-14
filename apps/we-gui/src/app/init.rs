@@ -15,6 +15,11 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             .map(|path| path.display().to_string())
             .unwrap_or_default();
     }
+    if launch_settings.assets_path.trim().is_empty() {
+        launch_settings.assets_path = steam::discover_wallpaper_engine_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+    }
     let ui_settings = UiSettings {
         assets_path: launch_settings.assets_path.clone(),
         workshop_path: launch_settings.workshop_path.clone(),

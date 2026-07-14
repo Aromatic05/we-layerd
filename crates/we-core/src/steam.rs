@@ -14,10 +14,10 @@ const STEAM_WORKSHOP_PATHS: &[&str] = &[
 
 pub const WALLPAPER_ENGINE_APP_ID: u32 = 431960;
 
-pub fn discover_wallpaper_engine_assets() -> Option<PathBuf> {
+pub fn discover_wallpaper_engine_path() -> Option<PathBuf> {
     for root in steam_common_roots() {
-        let candidate = root.join("wallpaper_engine/assets");
-        if candidate.is_dir() {
+        let candidate = root.join("wallpaper_engine");
+        if candidate.join("assets").is_dir() {
             return Some(candidate);
         }
     }

@@ -18,7 +18,7 @@ pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Me
         section_title("Wallpaper Engine"),
         text("Wallpaper Engine Assets Path").size(14),
         row![
-            text_input("/path/to/wallpaper_engine/assets", &ui_settings.assets_path)
+            text_input("/path/to/wallpaper_engine", &ui_settings.assets_path)
                 .on_input(Message::AssetsPathChanged)
                 .padding([14, 10]).style(md_text_input_style)
                 .on_submit(Message::AutoScan)

@@ -268,8 +268,8 @@ fn run_runtime_loop(
 
     let mut cfg = cfg.clone();
     if cfg.renderer.assets_path.trim().is_empty() {
-        cfg.renderer.assets_path = we_core::steam::discover_wallpaper_engine_assets()
-            .map(|p| p.display().to_string())
+        cfg.renderer.assets_path = we_core::steam::discover_wallpaper_engine_path()
+            .map(|p| p.join("assets").display().to_string())
             .ok_or_else(|| {
                 anyhow!(
                     "renderer.assets_path is empty and Wallpaper Engine assets directory was not found; set assets_path in config"
@@ -394,10 +394,10 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     }
 
     if cfg.renderer.assets_path.trim().is_empty() {
-        if let Some(discovered) = we_core::steam::discover_wallpaper_engine_assets() {
+        if let Some(discovered) = we_core::steam::discover_wallpaper_engine_path() {
             lines.push(format!(
                 "WARN renderer.assets_path = auto-discovered {}",
-                discovered.display()
+                discovered.join("assets").display()
             ));
         } else {
             lines.push("ERR renderer.assets_path = empty and auto-discovery failed".to_string());
@@ -423,7 +423,7 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
         Some(path) => lines.push(format!("OK workshop_auto_discovery = {}", path.display())),
         None => lines.push("WARN workshop_auto_discovery = not found".to_string()),
     }
-    match we_core::steam::discover_wallpaper_engine_assets() {
+    match we_core::steam::discover_wallpaper_engine_path() {
         Some(path) => lines.push(format!("OK assets_auto_discovery = {}", path.display())),
         None => lines.push("WARN assets_auto_discovery = not found".to_string()),
     }

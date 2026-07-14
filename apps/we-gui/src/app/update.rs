@@ -165,7 +165,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::PickAssetsPath => Task::perform(
             async {
                 rfd::FileDialog::new()
-                    .set_title("Select Wallpaper Engine assets directory")
+                    .set_title("Select Wallpaper Engine installation directory")
                     .pick_folder()
             },
             Message::AssetsPathPicked,
@@ -178,8 +178,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         ),
         Message::AssetsPathPicked(path) => {
             if let Some(path) = path {
-                app.ui_settings.assets_path = path.display().to_string();
-                super::settings::sync(app);
+                if path.join("assets").is_dir() {
+                    app.ui_settings.assets_path = path.display().to_string();
+                    super::settings::sync(app);
+                } else {
+                    app.ui_settings.status_text = "selected directory is not a Wallpaper Engine installation".to_string();
+                }
             }
             Task::none()
         }
