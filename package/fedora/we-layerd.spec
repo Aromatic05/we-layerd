@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           we-layerd
-Version:        0.2.1
+Version:        0.2.2
 Release:        1%{?dist}
 Summary:        Native Wallpaper Engine wallpaper daemon for Wayland
 
@@ -131,6 +131,9 @@ readelf -d %{buildroot}%{_prefix}/lib/libwallpaper-engine-renderer.so \
 %license %{_licensedir}/%{name}/DXC-LICENSE-LLVM.txt
 
 %changelog
+* Tue Jul 14 2026 Aromatic05 <noreply@example.invalid> - 0.2.2-1
+- Release 0.2.2
+
 * Mon Jul 13 2026 Aromatic05 <noreply@example.invalid> - 0.2.1-1
 - Release 0.2.1
 
