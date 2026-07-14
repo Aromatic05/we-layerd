@@ -44,7 +44,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             config::persist_selected(&app.config_path, &app.launch_settings, &entry);
             app.sidebar = Some(Sidebar::Detail);
             app.detail_tab = wallpaper_detail::DetailTab::Actions;
-            Task::none()
+            Task::perform(runtime::fetch_status(), Message::StatusLoaded)
         }
         Message::GifLoaded(path, result) => {
             if let Ok(frames) = result {
@@ -226,16 +226,18 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::StatusLoaded(result) => {
             app.ui_settings.status_text = match result {
-                Ok(text) => text,
+                Ok(text) => {
+                    app.playback_running = status_value(&text, "phase") == Some("running");
+                    app.playback_paused = status_value(&text, "phase") == Some("paused");
+                    app.running_source = status_value(&text, "source").map(str::to_string);
+                    text
+                }
                 Err(err) => format!("status unavailable: {err}"),
             };
             Task::none()
         }
         Message::StatusTick => {
-            if app.show_settings {
-                return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
-            }
-            Task::none()
+            Task::perform(runtime::fetch_status(), Message::StatusLoaded)
         }
         Message::OutputsLoaded(result) => {
             if let Ok(outputs) = result {
@@ -308,4 +310,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
         },
     }
+}
+
+fn status_value<'a>(status: &'a str, key: &str) -> Option<&'a str> {
+    status.lines().find_map(|line| line.strip_prefix(&format!("{key} = ")))
+        .map(|value| value.trim_matches('"'))
 }

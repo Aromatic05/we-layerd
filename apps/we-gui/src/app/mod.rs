@@ -7,6 +7,10 @@ mod update;
 mod view;
 pub(crate) use state::{App, Message};
 pub fn run() -> iced::Result {
+    ctrlc::set_handler(|| {
+        let _ = crate::services::runtime::send_control("stop");
+        std::process::exit(130);
+    }).expect("install GUI shutdown signal handler");
     iced::daemon(init::initialize, update::update, view::daemon_view)
         .title("we-gui")
         .theme(|app: &App, _window| app.theme.clone())
@@ -102,6 +106,7 @@ mod tests {
             panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(Pane::Library)),
             animated_previews: HashMap::new(), tray: None,
             main_window_id: None, theme: Theme::Dark, runtime_shutdown: false,
+            outputs: Vec::new(), selected_outputs: Default::default(), running_source: None,
         };
         drop(app);
 

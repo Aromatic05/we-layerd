@@ -61,6 +61,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             theme: detect_system_theme(),
             runtime_shutdown: false,
             outputs: Vec::new(), selected_outputs: Default::default(),
+            running_source: None,
         },
         Task::batch(vec![
             Task::done(Message::AutoScan),

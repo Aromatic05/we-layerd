@@ -14,6 +14,7 @@ pub(crate) struct App {
     pub panes: pane_grid::State<Pane>, pub animated_previews: HashMap<PathBuf, AnimatedPreview>, pub tray: Option<tray::TrayController>,
     pub main_window_id: Option<window::Id>, pub theme: Theme, pub runtime_shutdown: bool,
     pub outputs: Vec<String>, pub selected_outputs: BTreeSet<String>,
+    pub running_source: Option<String>,
 }
 
 impl App {

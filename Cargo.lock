@@ -5668,6 +5668,7 @@ dependencies = [
 name = "we-gui"
 version = "0.2.2"
 dependencies = [
+ "ctrlc",
  "dark-light",
  "gtk",
  "html2text",

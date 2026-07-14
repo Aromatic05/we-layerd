@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 dark-light = "1.1"
+ctrlc = "3.4"
 iced = { version = "0.14", features = ["tokio", "image", "svg"] }
 image_rs = { package = "image", version = "0.25", default-features = false, features = ["gif"] }
 html2text = "0.14"
