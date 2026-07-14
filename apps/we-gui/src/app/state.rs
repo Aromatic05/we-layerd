@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, process::Child};
+use std::{collections::{BTreeSet, HashMap}, path::PathBuf, process::Child};
 
 use iced::{widget::pane_grid, window, Size, Theme};
 use we_core::{config::LaunchSettings, wallpaper::{properties::UserPropertySchema, WallpaperEntry, WallpaperType}};
@@ -13,6 +13,7 @@ pub(crate) struct App {
     pub playback_paused: bool, pub playback_running: bool, pub search_query: String, pub type_filter: Option<WallpaperType>,
     pub panes: pane_grid::State<Pane>, pub animated_previews: HashMap<PathBuf, AnimatedPreview>, pub tray: Option<tray::TrayController>,
     pub main_window_id: Option<window::Id>, pub theme: Theme, pub runtime_shutdown: bool,
+    pub outputs: Vec<String>, pub selected_outputs: BTreeSet<String>,
 }
 
 impl App {
@@ -42,4 +43,5 @@ pub(crate) enum Message {
     AssetsPathPicked(Option<PathBuf>), WorkshopPathPicked(Option<PathBuf>), FpsLimitChanged(String), InteractiveToggled(bool), ShowFpsToggled(bool),
     ScaleModeSelected(ScaleModeOption), PreferDmabufToggled(bool), AllowShmFallbackToggled(bool), Detail(DetailMessage), StatusLoaded(Result<String, String>), StatusTick,
     WindowResized(Size), WindowCloseRequested(window::Id), WindowOpened(window::Id), WindowClosed(window::Id), TrayTick, ThemeTick, TrayAction(tray::TrayAction),
+    OutputsLoaded(Result<Vec<String>, String>), ToggleOutput(String),
 }

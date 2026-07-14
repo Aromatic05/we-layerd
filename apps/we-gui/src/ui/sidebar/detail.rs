@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use iced::{
     widget::{button, checkbox, column, container, pick_list, row, scrollable, slider, text, text_input},
     alignment::Horizontal, Background, Border, Color, Element, Fill, Theme,
@@ -17,6 +19,7 @@ pub enum DetailMessage {
     Apply,
     TogglePlayback,
     Stop,
+    ToggleOutput(String),
     SelectTab(DetailTab),
     FpsChanged(String),
     SpeedChanged(f32),
@@ -63,6 +66,8 @@ pub fn view<'a>(
     active_tab: DetailTab,
     is_running: bool,
     is_paused: bool,
+    outputs: &'a [String],
+    selected_outputs: &'a BTreeSet<String>,
 ) -> Element<'a, DetailMessage> {
     let tabs = row![
         tab_button("Actions", DetailTab::Actions, active_tab),
@@ -71,7 +76,7 @@ pub fn view<'a>(
     .spacing(8);
 
     let body = match active_tab {
-        DetailTab::Actions => actions_view(settings, resolution_width, resolution_height),
+        DetailTab::Actions => actions_view(settings, resolution_width, resolution_height, outputs, selected_outputs),
         DetailTab::UserProperties => properties::view(schema, settings),
     };
 
@@ -102,6 +107,8 @@ fn actions_view<'a>(
     settings: &'a WallpaperSettings,
     resolution_width: &'a str,
     resolution_height: &'a str,
+    outputs: &'a [String],
+    selected_outputs: &'a BTreeSet<String>,
 ) -> Element<'a, DetailMessage> {
     let resolution_mode = match settings.render_resolution {
         RenderResolution::Automatic => ResolutionMode::Automatic,
@@ -117,6 +124,8 @@ fn actions_view<'a>(
         checkbox(settings.muted).label("Mute wallpaper audio").on_toggle(DetailMessage::MutedChanged).style(md_checkbox_style),
     ].spacing(10));
     let presentation = section("Display", column![
+        field_label("Apply to displays"),
+        output_chips(outputs, selected_outputs),
         field_label("Render resolution"),
         pick_list(vec![ResolutionMode::Automatic, ResolutionMode::Fixed], Some(resolution_mode), DetailMessage::ResolutionModeChanged).padding([14, 10]).width(Fill).style(md_pick_list_style).menu_style(md_menu_style),
         row![
@@ -130,6 +139,20 @@ fn actions_view<'a>(
     ].spacing(10));
 
     column![playback, presentation].spacing(16).into()
+}
+
+fn output_chips<'a>(outputs: &'a [String], selected: &'a BTreeSet<String>) -> Element<'a, DetailMessage> {
+    if outputs.is_empty() {
+        return text("No Wayland displays detected.").size(13).into();
+    }
+    outputs.iter().fold(row![].spacing(8), |row, output| {
+        let output_name = output.clone();
+        let active = selected.contains(output);
+        row.push(button(text(output).size(13)).on_press(DetailMessage::ToggleOutput(output_name)).padding([8, 12]).style(move |_theme, status| {
+            let background = if active { Color::from_rgb8(70, 92, 130) } else if matches!(status, button::Status::Hovered) { Color::from_rgb8(48, 50, 55) } else { Color::from_rgb8(43, 44, 48) };
+            button::Style { background: Some(Background::Color(background)), text_color: Color::from_rgb8(224, 232, 255), border: Border { radius: 18.0.into(), width: 1.0, color: Color::from_rgb8(110, 116, 128) }, ..Default::default() }
+        }))
+    }).into()
 }
 
 fn field_label<'a>(value: &'a str) -> iced::widget::Text<'a> {

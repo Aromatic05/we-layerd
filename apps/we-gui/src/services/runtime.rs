@@ -39,6 +39,14 @@ pub async fn fetch_status() -> Result<String, String> {
     }
 }
 
+pub async fn fetch_outputs() -> Result<Vec<String>, String> {
+    let output = Command::new("we-layerd").arg("outputs").output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+}
+
 pub fn reap(child: &mut Option<Child>) -> Result<(), String> {
     let Some(process) = child.as_mut() else {
         return Ok(());

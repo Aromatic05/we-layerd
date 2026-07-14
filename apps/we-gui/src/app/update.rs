@@ -237,6 +237,19 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::OutputsLoaded(result) => {
+            if let Ok(outputs) = result {
+                app.selected_outputs = outputs.iter().cloned().collect();
+                app.outputs = outputs;
+            }
+            Task::none()
+        }
+        Message::ToggleOutput(output) => {
+            if !app.selected_outputs.remove(&output) {
+                app.selected_outputs.insert(output);
+            }
+            Task::none()
+        }
         Message::WindowResized(size) => {
             app.viewport_width = size.width;
             Task::none()

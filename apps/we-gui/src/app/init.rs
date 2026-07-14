@@ -60,9 +60,11 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             main_window_id: None,
             theme: detect_system_theme(),
             runtime_shutdown: false,
+            outputs: Vec::new(), selected_outputs: Default::default(),
         },
         Task::batch(vec![
             Task::done(Message::AutoScan),
+            Task::perform(crate::services::runtime::fetch_outputs(), Message::OutputsLoaded),
             window::open(window::Settings::default()).1.map(Message::WindowOpened),
         ]),
     )

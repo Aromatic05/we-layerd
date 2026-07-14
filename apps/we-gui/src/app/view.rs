@@ -56,6 +56,8 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
                 app.detail_tab,
                 app.playback_running,
                 app.playback_paused,
+                &app.outputs,
+                &app.selected_outputs,
             )
             .map(Message::Detail),
             None => container(text("Select a wallpaper to view its details.")).padding(24).into(),

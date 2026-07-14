@@ -31,6 +31,7 @@ pub(crate) fn update(
             return Task::none();
         }
         DetailMessage::Stop => return super::update::update(app, Message::StopPressed),
+        DetailMessage::ToggleOutput(output) => return super::update::update(app, Message::ToggleOutput(output)),
         _ => {}
     }
     if let DetailMessage::PickPath { key, directory } = message {
@@ -49,7 +50,7 @@ pub(crate) fn update(
     };
     let profile = app.launch_settings.wallpapers.entry(selected_id).or_default();
     match message {
-        DetailMessage::Apply | DetailMessage::TogglePlayback | DetailMessage::Stop | DetailMessage::SelectTab(_) => unreachable!("detail action handled before profile mutation"),
+        DetailMessage::Apply | DetailMessage::TogglePlayback | DetailMessage::Stop | DetailMessage::ToggleOutput(_) | DetailMessage::SelectTab(_) => unreachable!("detail action handled before profile mutation"),
         DetailMessage::FpsChanged(value) => {
             if let Ok(fps) = value.parse::<u32>() {
                 profile.fps = fps.clamp(1, 360);
