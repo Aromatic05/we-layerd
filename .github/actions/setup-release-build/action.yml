@@ -49,6 +49,11 @@ runs:
         # `${{ github.workspace }}` value here: container jobs mount the same
         # directory at /__w, and a host path would make the compiler and cache
         # action read different trees.
+        # actions/checkout configures safe.directory on the runner host, but
+        # shell steps of a container job run as root inside the job container.
+        # Register the container-visible mount before reading the gitlink SHA.
+        git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
         cache_root="${GITHUB_WORKSPACE}/../.we-layerd-cache"
         cargo_home="${cache_root}/common/cargo"
         rustup_home="${cache_root}/common/rustup"
