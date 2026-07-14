@@ -2,22 +2,9 @@ name: Release binaries
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
       - "dev-*"
-    paths:
-      - ".github/actions/setup-release-build/**"
-      - ".github/workflows/release.yml"
-      - "apps/**"
-      - "crates/**"
-      - "package/**"
-      - "src/**"
-      - "third_party/wallpaper-engine-renderer"
-      - "build.rs"
-      - "Cargo.lock"
-      - "Cargo.toml"
   workflow_dispatch:
 
 permissions:
@@ -37,7 +24,7 @@ env:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+  cancel-in-progress: false
 
 jobs:
   validate:
