@@ -35,6 +35,8 @@ pub enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Print compositor output names as JSON
+    Outputs,
     /// Send control command to a running daemon
     Ctl {
         #[arg(value_enum)]

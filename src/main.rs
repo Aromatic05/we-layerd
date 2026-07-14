@@ -24,6 +24,10 @@ fn main() -> Result<()> {
             println!("{}", cfg.to_toml_pretty()?);
             Ok(())
         }
+        Command::Outputs => {
+            println!("{}", serde_json::to_string(&backend::wayland_common::outputs::list_output_names()?)?);
+            Ok(())
+        }
         Command::Ctl { action } => match action {
             ControlAction::Stop => ipc::send_command(ControlCommand::Stop),
             ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
