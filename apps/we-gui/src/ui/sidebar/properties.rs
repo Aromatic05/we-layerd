@@ -8,6 +8,8 @@ use we_core::wallpaper::{
     settings::WallpaperSettings,
 };
 
+use crate::domain::i18n::{Language, Text};
+
 use super::detail::{self, DetailMessage};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,32 +24,41 @@ impl std::fmt::Display for PropertyOption {
     }
 }
 
-pub(crate) fn view<'a>(schema: &'a UserPropertySchema, settings: &'a WallpaperSettings) -> Element<'a, DetailMessage> {
+pub(crate) fn view<'a>(
+    schema: &'a UserPropertySchema,
+    settings: &'a WallpaperSettings,
+    language: Language,
+) -> Element<'a, DetailMessage> {
     let mut properties = column![
         row![
-            text("User properties").size(20),
-            button(text("↺").size(18))
-                .on_press(DetailMessage::ResetProperties)
-                .style(detail::outlined_button_style),
+            text(language.text(Text::UserProperties)).size(20),
+            container(
+                button(text(format!("↺  {}", language.text(Text::ResetProperties))).size(13))
+                    .on_press(DetailMessage::ResetProperties)
+                    .style(detail::outlined_button_style),
+            )
+            .id("detail.properties.reset"),
         ]
         .spacing(12),
-        text("Wallpaper-specific controls are saved when applied.").size(13),
+        text(language.text(Text::PropertiesSavedAutomatically)).size(13),
     ]
     .spacing(12);
     for property in &schema.entries {
         properties = properties.push(
             container(
-                row![text(&property.label).size(14).width(Fill), control(property, settings)]
+                row![text(&property.label).size(14).width(Fill), control(property, settings, language)]
                     .align_y(Alignment::Center)
                     .spacing(12),
             )
+            .id(format!("detail.property.{}", property.key))
             .padding(12)
             .style(detail::section_style),
         );
     }
     if schema.entries.is_empty() {
         properties = properties.push(
-            container(text("This wallpaper does not declare user properties.").size(14))
+            container(text(language.text(Text::NoUserProperties)).size(14))
+                .id("detail.properties.empty")
                 .padding(16)
                 .style(detail::section_style),
         );
@@ -55,42 +66,56 @@ pub(crate) fn view<'a>(schema: &'a UserPropertySchema, settings: &'a WallpaperSe
     properties.into()
 }
 
-fn control<'a>(property: &'a UserProperty, settings: &'a WallpaperSettings) -> Element<'a, DetailMessage> {
+fn control<'a>(
+    property: &'a UserProperty,
+    settings: &'a WallpaperSettings,
+    language: Language,
+) -> Element<'a, DetailMessage> {
     let current = settings.user_properties.get(&property.key).unwrap_or(&property.default);
     match property.kind {
-        UserPropertyKind::Boolean => checkbox(current.as_bool().unwrap_or(false))
-            .label("Enabled")
-            .on_toggle({
-                let key = property.key.clone();
-                move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::Bool(value) }
-            })
-            .style(detail::md_checkbox_style)
-            .into(),
+        UserPropertyKind::Boolean => container(
+            checkbox(current.as_bool().unwrap_or(false))
+                .label(language.text(Text::Enabled))
+                .on_toggle({
+                    let key = property.key.clone();
+                    move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::Bool(value) }
+                })
+                .style(detail::md_checkbox_style),
+        )
+        .id(format!("detail.property.{}.enabled", property.key))
+        .into(),
         UserPropertyKind::Slider => {
             let minimum = property.minimum.unwrap_or(0.0) as f32;
             let maximum = property.maximum.unwrap_or(1.0) as f32;
             let value = current.as_f64().unwrap_or(minimum as f64) as f32;
-            slider(minimum..=maximum.max(minimum), value.clamp(minimum, maximum.max(minimum)), {
-                let key = property.key.clone();
-                move |value| DetailMessage::PropertyChanged { key: key.clone(), value: serde_json::json!(value) }
-            })
-            .style(detail::md_slider_style)
+            container(
+                slider(minimum..=maximum.max(minimum), value.clamp(minimum, maximum.max(minimum)), {
+                    let key = property.key.clone();
+                    move |value| DetailMessage::PropertyChanged { key: key.clone(), value: serde_json::json!(value) }
+                })
+                .style(detail::md_slider_style),
+            )
+            .id(format!("detail.property.{}.slider", property.key))
             .into()
         }
         UserPropertyKind::Combo => {
             let choices = property.options.iter().map(|option| PropertyOption { label: option.label.clone(), value: option.value.clone() }).collect::<Vec<_>>();
             let selected = choices.iter().find(|choice| choice.value == *current).cloned();
-            pick_list(choices, selected, {
-                let key = property.key.clone();
-                move |choice| DetailMessage::PropertyChanged { key: key.clone(), value: choice.value }
-            })
-            .padding([14, 10])
-            .width(Fill)
-            .style(detail::md_pick_list_style)
-            .menu_style(detail::md_menu_style)
+            container(
+                pick_list(choices, selected, {
+                    let key = property.key.clone();
+                    move |choice| DetailMessage::PropertyChanged { key: key.clone(), value: choice.value }
+                })
+                .padding([14, 10])
+                .width(Fill)
+                .style(detail::md_pick_list_style)
+                .menu_style(detail::md_menu_style),
+            )
+            .id(format!("detail.property.{}.choice", property.key))
             .into()
         }
-        UserPropertyKind::Color | UserPropertyKind::Text => text_input("Value", &value_text(current))
+        UserPropertyKind::Color | UserPropertyKind::Text => text_input(language.text(Text::Value), &value_text(current))
+            .id(format!("detail.property.{}.value", property.key))
             .on_input({
                 let key = property.key.clone();
                 move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::String(value) }
@@ -100,7 +125,8 @@ fn control<'a>(property: &'a UserProperty, settings: &'a WallpaperSettings) -> E
             .style(detail::md_text_input_style)
             .into(),
         UserPropertyKind::File | UserPropertyKind::Directory => row![
-            text_input("Path", &value_text(current))
+            text_input(language.text(Text::Path), &value_text(current))
+                .id(format!("detail.property.{}.path", property.key))
                 .on_input({
                     let key = property.key.clone();
                     move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::String(value) }
@@ -108,9 +134,12 @@ fn control<'a>(property: &'a UserProperty, settings: &'a WallpaperSettings) -> E
                 .padding([14, 10])
                 .width(Fill)
                 .style(detail::md_text_input_style),
-            button(text("…").size(20))
-                .on_press(DetailMessage::PickPath { key: property.key.clone(), directory: matches!(property.kind, UserPropertyKind::Directory) })
-                .style(detail::outlined_button_style),
+            container(
+                button(text(language.text(Text::Browse)).size(13))
+                    .on_press(DetailMessage::PickPath { key: property.key.clone(), directory: matches!(property.kind, UserPropertyKind::Directory) })
+                    .style(detail::outlined_button_style),
+            )
+            .id(format!("detail.property.{}.browse", property.key)),
         ]
         .spacing(8)
         .into(),
@@ -119,7 +148,7 @@ fn control<'a>(property: &'a UserProperty, settings: &'a WallpaperSettings) -> E
             .padding(8)
             .style(detail::section_style)
             .into(),
-        UserPropertyKind::Unsupported(_) => text("Unsupported by this renderer").size(13).into(),
+        UserPropertyKind::Unsupported(_) => text(language.text(Text::UnsupportedProperty)).size(13).into(),
     }
 }
 

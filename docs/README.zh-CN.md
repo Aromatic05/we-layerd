@@ -10,6 +10,7 @@
 - 将指针输入转发给交互壁纸
 - 每个 output 一个 renderer session
 - 提供 `we-gui` 图形界面与托盘控制
+- `we-gui` 支持英语与简体中文即时切换
 - 支持 `stop`、`pause`、`resume`、`reload`、`status`
 
 ## 构建

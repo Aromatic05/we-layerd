@@ -5677,6 +5677,7 @@ dependencies = [
  "resvg 0.42.0",
  "rfd",
  "serde_json",
+ "toml 0.8.2",
  "tray-icon",
  "we-core",
 ]

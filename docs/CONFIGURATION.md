@@ -87,3 +87,25 @@ If `renderer.library_path` is empty or does not resolve to an existing file, `we
 - it derives `renderer.assets_path` from the Wallpaper Engine install path
 - it preserves `renderer.options_json` when re-saving an existing config
 - it no longer generates Wine, Proton, X11 capture, video-native, or `openWallpaper` arguments
+
+## GUI language
+
+`we-gui` starts in English. Choose **Settings → Language → 简体中文** to switch the
+window and Linux tray menu immediately. The selection is stored separately from the
+renderer configuration at `$XDG_CONFIG_HOME/we-layerd/gui.toml` (or
+`~/.config/we-layerd/gui.toml` when `XDG_CONFIG_HOME` is unset):
+
+```toml
+language = "zh-Hans"
+```
+
+Supported BCP 47 language tags are `en` and `zh-Hans`. A missing, malformed, or
+unsupported value falls back to English. The GUI writes this file atomically with a
+same-directory temporary file and rename; it does not modify renderer settings when
+the language changes.
+
+Run the localization, preference persistence, and headless state tests with:
+
+```bash
+cargo test -p we-gui
+```
