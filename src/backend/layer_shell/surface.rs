@@ -24,7 +24,8 @@ use wayland_protocols::wp::{
     },
     linux_dmabuf::zv1::client::{
         zwp_linux_buffer_params_v1::{Flags as DmabufFlags, ZwpLinuxBufferParamsV1},
-        zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+        zwp_linux_dmabuf_feedback_v1::{Event as DmabufFeedbackEvent, ZwpLinuxDmabufFeedbackV1},
+        zwp_linux_dmabuf_v1::{Event as DmabufEvent, ZwpLinuxDmabufV1},
     },
     viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter},
 };
@@ -40,24 +41,72 @@ use crate::backend::{
 };
 
 // ---------------------------------------------------------------------------
-// DRM format helper
+// Dispatch impls
 // ---------------------------------------------------------------------------
 
-fn to_opaque_drm_fourcc(fourcc: u32) -> u32 {
-    const DRM_FORMAT_ABGR8888: u32 = u32::from_le_bytes(*b"AB24");
-    const DRM_FORMAT_XBGR8888: u32 = u32::from_le_bytes(*b"XB24");
-    const DRM_FORMAT_ARGB8888: u32 = u32::from_le_bytes(*b"AR24");
-    const DRM_FORMAT_XRGB8888: u32 = u32::from_le_bytes(*b"XR24");
-    match fourcc {
-        DRM_FORMAT_ABGR8888 => DRM_FORMAT_XBGR8888,
-        DRM_FORMAT_ARGB8888 => DRM_FORMAT_XRGB8888,
-        _ => fourcc,
+impl Dispatch<ZwpLinuxDmabufV1, ()> for LayerShellState {
+    fn event(
+        state: &mut Self,
+        proxy: &ZwpLinuxDmabufV1,
+        event: DmabufEvent,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            DmabufEvent::Format { .. } => {}
+            DmabufEvent::Modifier { format, modifier_hi, modifier_lo } if proxy.version() < 4 => {
+                let modifier = (u64::from(modifier_hi) << 32) | u64::from(modifier_lo);
+                state.dmabuf_feedback.add_legacy_modifier(format, modifier);
+                state.diagnostics.dmabuf_formats_known = true;
+                state.diagnostics.dmabuf_format_count =
+                    state.dmabuf_feedback.advertised_format_count(proxy.version());
+            }
+            _ => {}
+        }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Dispatch impls
-// ---------------------------------------------------------------------------
+impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for LayerShellState {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwpLinuxDmabufFeedbackV1,
+        event: DmabufFeedbackEvent,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            DmabufFeedbackEvent::FormatTable { fd, size } => {
+                if let Err(error) = state.dmabuf_feedback.read_format_table(fd, size) {
+                    tracing::warn!(%error, "failed to read DMA-BUF feedback format table");
+                    state.frame_stats.last_error = Some(error.to_string());
+                }
+            }
+            DmabufFeedbackEvent::TrancheFormats { indices } => {
+                if let Err(error) = state.dmabuf_feedback.add_tranche_indices(&indices) {
+                    tracing::warn!(%error, "failed to read DMA-BUF feedback tranche formats");
+                    state.frame_stats.last_error = Some(error.to_string());
+                }
+            }
+            DmabufFeedbackEvent::Done => {
+                let formats = state.dmabuf_feedback.finish_surface_feedback();
+                state.diagnostics.dmabuf_formats_known = true;
+                state.diagnostics.dmabuf_format_count = formats.len();
+                if let Some(session) = &mut state.session {
+                    let pairs: Vec<(u32, u64)> =
+                        formats.iter().map(|format| (format.fourcc, format.modifier)).collect();
+                    if let Err(error) = session.set_dmabuf_formats(&pairs) {
+                        tracing::error!(%error, "failed to apply updated DMA-BUF feedback");
+                        state.frame_stats.last_error = Some(error.to_string());
+                        state.running = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerShellState {
     fn event(
@@ -291,7 +340,6 @@ delegate_noop!(LayerShellState: ignore WlRegion);
 delegate_noop!(LayerShellState: ignore ZwlrLayerShellV1);
 delegate_noop!(LayerShellState: ignore WlShm);
 delegate_noop!(LayerShellState: ignore WlShmPool);
-delegate_noop!(LayerShellState: ignore ZwpLinuxDmabufV1);
 delegate_noop!(LayerShellState: ignore ZwpLinuxBufferParamsV1);
 delegate_noop!(LayerShellState: ignore WpViewporter);
 delegate_noop!(LayerShellState: ignore WpViewport);
@@ -349,7 +397,7 @@ pub(super) fn create_buffer_for_frame(
             let buffer = params.create_immed(
                 dmabuf.width as i32,
                 dmabuf.height as i32,
-                to_opaque_drm_fourcc(dmabuf.drm_fourcc),
+                dmabuf.drm_fourcc,
                 DmabufFlags::empty(),
                 qh,
                 std::sync::Arc::clone(&released),
@@ -370,8 +418,12 @@ pub(super) fn present_frame(
     qh: &QueueHandle<LayerShellState>,
     frame: Frame,
 ) -> Result<()> {
+    let (frame_width, frame_height) = match &frame {
+        Frame::Dmabuf(frame) => (frame.width, frame.height),
+        Frame::Shm(frame) => (frame.width, frame.height),
+    };
     let entry = create_buffer_for_frame(state, qh, frame)?;
-    state.update_viewport_destination();
+    state.update_viewport_destination_for_frame(frame_width, frame_height);
     let surface = state.objects.surface.as_ref().ok_or_else(|| anyhow!("no surface"))?;
     surface.attach(Some(&entry.buffer), 0, 0);
     if state.compositor_version >= 4 {
@@ -461,6 +513,10 @@ pub(super) fn init_wayland(
     state.objects.surface = Some(compositor.create_surface(qh, ()));
     let surface = state.objects.surface.as_ref().unwrap();
     surface.set_buffer_scale(1);
+
+    if let Some(dmabuf) = state.objects.dmabuf.as_ref().filter(|dmabuf| dmabuf.version() >= 4) {
+        state.objects.dmabuf_feedback = Some(dmabuf.get_surface_feedback(surface, qh, ()));
+    }
 
     if let Some(ref vp) = viewporter {
         state.objects.viewport = Some(vp.get_viewport(surface, qh, ()));

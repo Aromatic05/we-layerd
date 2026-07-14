@@ -146,6 +146,8 @@ type WeSessionDestroy = unsafe extern "C" fn(*mut we_session_t);
 type WeSessionSetSource = unsafe extern "C" fn(*mut we_session_t, *const we_source_v1) -> i32;
 type WeSessionSetRenderConfig =
     unsafe extern "C" fn(*mut we_session_t, *const we_render_config_v1) -> i32;
+type WeSessionSetDmabufFormats =
+    unsafe extern "C" fn(*mut we_session_t, *const u32, *const u64, u32) -> i32;
 type WeSessionResizeOutput = unsafe extern "C" fn(*mut we_session_t, u32, u32) -> i32;
 type WeSessionSetUserPropertiesJson = unsafe extern "C" fn(*mut we_session_t, *const c_char) -> i32;
 type WeSessionApplyRuntimeSettings =
@@ -170,6 +172,7 @@ pub struct RendererLibrary {
     we_session_destroy: WeSessionDestroy,
     we_session_set_source: WeSessionSetSource,
     we_session_set_render_config: WeSessionSetRenderConfig,
+    we_session_set_dmabuf_formats: WeSessionSetDmabufFormats,
     we_session_resize_output: WeSessionResizeOutput,
     we_session_set_user_properties_json: WeSessionSetUserPropertiesJson,
     we_session_apply_runtime_settings: WeSessionApplyRuntimeSettings,
@@ -202,6 +205,9 @@ impl RendererLibrary {
             unsafe { *library.get::<WeSessionSetSource>(b"we_session_set_source\0")? };
         let we_session_set_render_config =
             unsafe { *library.get::<WeSessionSetRenderConfig>(b"we_session_set_render_config\0")? };
+        let we_session_set_dmabuf_formats = unsafe {
+            *library.get::<WeSessionSetDmabufFormats>(b"we_session_set_dmabuf_formats\0")?
+        };
         let we_session_resize_output =
             unsafe { *library.get::<WeSessionResizeOutput>(b"we_session_resize_output\0")? };
         let we_session_set_user_properties_json = unsafe {
@@ -230,6 +236,7 @@ impl RendererLibrary {
             we_session_destroy,
             we_session_set_source,
             we_session_set_render_config,
+            we_session_set_dmabuf_formats,
             we_session_resize_output,
             we_session_set_user_properties_json,
             we_session_apply_runtime_settings,
@@ -280,6 +287,17 @@ impl RendererLibrary {
         config: *const we_render_config_v1,
     ) -> i32 {
         (self.we_session_set_render_config)(session, config)
+    }
+
+    /// # Safety
+    pub unsafe fn session_set_dmabuf_formats(
+        &self,
+        session: *mut we_session_t,
+        fourccs: *const u32,
+        modifiers: *const u64,
+        count: u32,
+    ) -> i32 {
+        (self.we_session_set_dmabuf_formats)(session, fourccs, modifiers, count)
     }
 
     /// # Safety

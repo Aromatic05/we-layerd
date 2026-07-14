@@ -237,6 +237,24 @@ impl OutputState {
         });
     }
 
+    pub(crate) fn geometry_for_frame(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+    ) -> PresentationGeometry {
+        let viewport_width =
+            if self.logical_width > 0 { self.logical_width } else { self.fallback_width }.max(1);
+        let viewport_height =
+            if self.logical_height > 0 { self.logical_height } else { self.fallback_height }.max(1);
+        geometry_with_render_extent(
+            self.scale_mode,
+            frame_width.max(1),
+            frame_height.max(1),
+            viewport_width,
+            viewport_height,
+        )
+    }
+
     pub(crate) fn normalized_pointer(&self) -> Option<(f32, f32)> {
         if self.logical_width == 0 || self.logical_height == 0 {
             return None;
@@ -337,6 +355,25 @@ mod tests {
         assert_eq!(output.geometry.viewport_height, 1200);
         assert!(source.x > 0.0);
         assert_eq!(source.y, 0.0);
+    }
+
+    #[test]
+    fn frame_geometry_uses_actual_buffer_extent_for_cover() {
+        let mut output = OutputState::new(ScaleMode::Cover);
+        output.logical_width = 1707;
+        output.logical_height = 1067;
+        output.output_mode_width = 2560;
+        output.output_mode_height = 1600;
+        output.recompute_geometry();
+
+        let geometry = output.geometry_for_frame(1920, 1080);
+        let source = geometry.viewport_source.expect("cover should crop the actual frame");
+        assert_eq!(geometry.render_width, 1920);
+        assert_eq!(geometry.render_height, 1080);
+        assert!(source.x >= 0.0);
+        assert!(source.y >= 0.0);
+        assert!(source.x + source.width <= 1920.0);
+        assert!(source.y + source.height <= 1080.0);
     }
 
     #[test]

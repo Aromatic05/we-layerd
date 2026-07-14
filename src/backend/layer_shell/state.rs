@@ -12,13 +12,16 @@ use wayland_client::protocol::{
 };
 use wayland_protocols::wp::{
     fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
-    linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+    linux_dmabuf::zv1::client::{
+        zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
+        zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+    },
     viewporter::client::wp_viewport::WpViewport,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
 
 use crate::{
-    backend::wayland_common::output::OutputState,
+    backend::wayland_common::{dmabuf::DmabufFeedbackState, output::OutputState},
     runtime::status::{FrameStats, RuntimeDiagnostics, RuntimeStatusSnapshot},
     runtime::{input::PendingInput, renderer_session::RendererSession},
 };
@@ -52,6 +55,7 @@ pub(super) struct WaylandObjects {
     pub(super) viewport: Option<WpViewport>,
     pub(super) layer_surface: Option<ZwlrLayerSurfaceV1>,
     pub(super) dmabuf: Option<ZwpLinuxDmabufV1>,
+    pub(super) dmabuf_feedback: Option<ZwpLinuxDmabufFeedbackV1>,
     pub(super) shm: Option<WlShm>,
     pub(super) fractional_scale: Option<WpFractionalScaleV1>,
     pub(super) frame_callback: Option<WlCallback>,
@@ -82,6 +86,7 @@ pub(crate) struct LayerShellState {
     pub(super) frame_callback: FrameCallbackState,
     pub(super) frame_stats: FrameStats,
     pub(super) diagnostics: RuntimeDiagnostics,
+    pub(super) dmabuf_feedback: DmabufFeedbackState,
     pub(super) dmabuf_version: u32,
     pub(super) compositor_version: u32,
     pub(super) output_count: u32,
@@ -110,20 +115,35 @@ impl LayerShellState {
     }
 
     pub(super) fn update_viewport_destination(&self) {
+        self.apply_viewport_geometry(self.output.geometry);
+    }
+
+    pub(super) fn update_viewport_destination_for_frame(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+    ) {
+        self.apply_viewport_geometry(self.output.geometry_for_frame(frame_width, frame_height));
+    }
+
+    fn apply_viewport_geometry(
+        &self,
+        geometry: crate::backend::wayland_common::output::PresentationGeometry,
+    ) {
         if let Some(viewport) = &self.objects.viewport {
-            if self.output.geometry.viewport_width > 0 && self.output.geometry.viewport_height > 0 {
+            if geometry.viewport_width > 0 && geometry.viewport_height > 0 {
                 viewport.set_destination(
-                    self.output.geometry.viewport_width as i32,
-                    self.output.geometry.viewport_height as i32,
+                    geometry.viewport_width as i32,
+                    geometry.viewport_height as i32,
                 );
-                if let Some(source) = self.output.geometry.viewport_source {
+                if let Some(source) = geometry.viewport_source {
                     viewport.set_source(source.x, source.y, source.width, source.height);
                 } else {
                     viewport.set_source(
                         0.0,
                         0.0,
-                        self.output.geometry.render_width as f64,
-                        self.output.geometry.render_height as f64,
+                        geometry.render_width as f64,
+                        geometry.render_height as f64,
                     );
                 }
             }
@@ -192,6 +212,7 @@ impl LayerShellState {
             frame_callback: FrameCallbackState::default(),
             frame_stats: FrameStats::default(),
             diagnostics: RuntimeDiagnostics::default(),
+            dmabuf_feedback: DmabufFeedbackState::default(),
             dmabuf_version: 0,
             compositor_version: 0,
             output_count: 0,

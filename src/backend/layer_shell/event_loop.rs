@@ -232,6 +232,7 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
             },
             ..Default::default()
         },
+        dmabuf_feedback: Default::default(),
         dmabuf_version: 0,
         compositor_version: 0,
         output_count: 0,
@@ -315,6 +316,15 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         options_json: cfg.renderer.options_json.clone(),
     };
     session.set_source(source)?;
+
+    let advertised_formats = state.dmabuf_feedback.formats_for_renderer(state.dmabuf_version);
+    let renderer_formats: Vec<(u32, u64)> =
+        advertised_formats.iter().map(|format| (format.fourcc, format.modifier)).collect();
+    session.set_dmabuf_formats(&renderer_formats)?;
+    state.diagnostics.dmabuf_formats_known = state.objects.dmabuf.is_none()
+        || state.dmabuf_version < 4
+        || state.dmabuf_feedback.surface_feedback_known();
+    state.diagnostics.dmabuf_format_count = renderer_formats.len();
 
     // Determine dmabuf preference
     let prefer_dmabuf = if env_var_enabled("__NV_PRIME_RENDER_OFFLOAD")

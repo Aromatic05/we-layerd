@@ -133,6 +133,8 @@ pub enum Error {
     UnsupportedFrameKind(u32),
     #[error("renderer reported {0} planes, which exceeds the ABI limit")]
     InvalidPlaneCount(u32),
+    #[error("DMA-BUF format list contains too many entries: {0}")]
+    TooManyDmabufFormats(usize),
     #[error("failed to duplicate frame fd")]
     DuplicateFd(#[source] std::io::Error),
 }
@@ -232,6 +234,27 @@ impl Session {
         self.check_status(
             unsafe { self.library.session_set_render_config(self.raw, &raw) },
             "we_session_set_render_config",
+        )
+    }
+
+    pub fn set_dmabuf_formats(&mut self, formats: &[(u32, u64)]) -> Result<(), Error> {
+        let count = u32::try_from(formats.len())
+            .map_err(|_| Error::TooManyDmabufFormats(formats.len()))?;
+        let fourccs: Vec<u32> = formats.iter().map(|(fourcc, _)| *fourcc).collect();
+        let modifiers: Vec<u64> = formats.iter().map(|(_, modifier)| *modifier).collect();
+        let fourccs_ptr = if fourccs.is_empty() { std::ptr::null() } else { fourccs.as_ptr() };
+        let modifiers_ptr =
+            if modifiers.is_empty() { std::ptr::null() } else { modifiers.as_ptr() };
+        self.check_status(
+            unsafe {
+                self.library.session_set_dmabuf_formats(
+                    self.raw,
+                    fourccs_ptr,
+                    modifiers_ptr,
+                    count,
+                )
+            },
+            "we_session_set_dmabuf_formats",
         )
     }
 
