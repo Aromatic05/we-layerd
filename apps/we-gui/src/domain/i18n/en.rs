@@ -33,6 +33,10 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ScaleStretch => "Stretch",
         Text::Behaviour => "Behaviour",
         Text::EnableWallpaperInput => "Enable wallpaper input",
+        Text::ForceSceneAudioLoop => "Force loop scene audio",
+        Text::ForceSceneAudioLoopDescription => {
+            "Loops visible, automatically started scene sounds authored as single; start-silent sounds are unchanged."
+        }
         Text::ShowRealtimeFps => "Show realtime FPS",
         Text::PreferDmabuf => "Prefer DMA-BUF presentation",
         Text::AllowShmFallback => "Allow SHM fallback",

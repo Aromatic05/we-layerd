@@ -27,11 +27,13 @@ interactive = true
 show_fps = false
 fps_report_interval_secs = 1
 scale_mode = "cover"
+force_scene_audio_loop = false
 ```
 
 - backend selection is automatic: GNOME sessions use the GNOME actor-clone path; other desktops use layer-shell
 - `interactive`: when `false`, `we-layerd` sets an empty input region so the wallpaper does not consume pointer input
 - `show_fps`: keeps the renderer FPS counters enabled in config/status
+- `force_scene_audio_loop`: opt-in override that loops visible, automatically started scene sounds authored as `single`; start-silent sounds and `random` playback are unchanged. The daemon merges this value into `scene.audio.forceLoop` without replacing other version-1 source options.
 - `scale_mode`: `fit`, `cover`, or `stretch`
   - `stretch`: fill the logical surface and allow non-uniform scaling
   - `cover`: fill the logical surface and crop the source region when buffer and viewport aspects differ
@@ -86,6 +88,8 @@ If `renderer.library_path` is empty or does not resolve to an existing file, `we
 - it writes `renderer.source` as the selected workshop item directory
 - it derives `renderer.assets_path` from the Wallpaper Engine install path
 - it preserves `renderer.options_json` when re-saving an existing config
+- it merges scene user properties and the optional audio-loop override without discarding other `renderer.options_json` fields
+- it refuses invalid JSON, non-object scene/audio containers, and unsupported options versions instead of overwriting them
 - it no longer generates Wine, Proton, X11 capture, video-native, or `openWallpaper` arguments
 
 ## GUI language

@@ -176,6 +176,8 @@ pub(crate) enum Text {
     ScaleStretch,
     Behaviour,
     EnableWallpaperInput,
+    ForceSceneAudioLoop,
+    ForceSceneAudioLoopDescription,
     ShowRealtimeFps,
     PreferDmabuf,
     AllowShmFallback,

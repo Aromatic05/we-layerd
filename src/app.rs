@@ -264,9 +264,13 @@ fn run_runtime_loop(
     if cfg.renderer.source.trim().is_empty() {
         return Err(anyhow!("renderer.source is required"));
     }
-    cfg.renderer.validate_options_json()?;
-
     let mut cfg = cfg.clone();
+    cfg.renderer.options_json = Some(we_core::config::merge_scene_source_options(
+        cfg.renderer.options_json.as_deref(),
+        None,
+        cfg.general.force_scene_audio_loop,
+    )?);
+    cfg.renderer.validate_options_json()?;
     if cfg.renderer.assets_path.trim().is_empty() {
         cfg.renderer.assets_path = we_core::steam::discover_wallpaper_engine_path()
             .map(|p| p.join("assets").display().to_string())

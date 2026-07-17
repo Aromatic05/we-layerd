@@ -33,6 +33,10 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ScaleStretch => "拉伸",
         Text::Behaviour => "行为",
         Text::EnableWallpaperInput => "启用壁纸输入",
+        Text::ForceSceneAudioLoop => "强制循环场景音频",
+        Text::ForceSceneAudioLoopDescription => {
+            "将可见且自动开始播放的 single 场景音频改为循环；start-silent 音频保持不变。"
+        }
         Text::ShowRealtimeFps => "显示实时 FPS",
         Text::PreferDmabuf => "优先使用 DMA-BUF 呈现",
         Text::AllowShmFallback => "允许回退到 SHM",

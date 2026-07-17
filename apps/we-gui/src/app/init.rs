@@ -43,6 +43,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         prefer_dmabuf: launch_settings.prefer_dmabuf,
         allow_shm_fallback: launch_settings.allow_shm_fallback,
         interactive: launch_settings.interactive,
+        force_scene_audio_loop: launch_settings.force_scene_audio_loop,
         fps_limit: launch_settings.fps_limit.to_string(),
         show_fps: launch_settings.show_fps,
         scale_mode: ScaleModeOption::from(launch_settings.scale_mode),

@@ -134,6 +134,14 @@ pub fn build_settings_overlay<'a>(
         )
         .id("settings.wallpaper-input"),
         container(
+            checkbox(ui_settings.force_scene_audio_loop)
+                .label(language.text(Text::ForceSceneAudioLoop))
+                .on_toggle(Message::ForceSceneAudioLoopToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.audio.force-loop"),
+        text(language.text(Text::ForceSceneAudioLoopDescription)).size(12),
+        container(
             checkbox(ui_settings.show_fps)
                 .label(language.text(Text::ShowRealtimeFps))
                 .on_toggle(Message::ShowFpsToggled)

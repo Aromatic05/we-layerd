@@ -226,6 +226,18 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             super::settings::sync(app);
             Task::none()
         }
+        Message::ForceSceneAudioLoopToggled(value) => {
+            if let Err(error) =
+                config::persist_force_scene_audio_loop(&app.config_path, value)
+            {
+                app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+                eprintln!("failed to save config: {error}");
+            } else {
+                app.ui_settings.force_scene_audio_loop = value;
+                super::settings::sync(app);
+            }
+            Task::none()
+        }
         Message::ShowFpsToggled(value) => {
             app.ui_settings.show_fps = value;
             super::settings::sync(app);
