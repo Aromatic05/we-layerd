@@ -4,9 +4,12 @@ use iced::{window, Task};
 use we_core::wallpaper::properties::UserPropertySchema;
 
 use crate::{
-    domain::ui_state::{AnimatedPreview, Sidebar},
+    domain::{
+        runtime_status::RuntimeStatus,
+        ui_state::{AnimatedPreview, Sidebar},
+    },
     platform::tray,
-    services::{config, runtime, wallpaper as wallpaper_service},
+    services::{config, preferences, runtime, wallpaper as wallpaper_service},
     ui::sidebar::detail as wallpaper_detail,
 };
 
@@ -44,7 +47,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             if let Err(error) =
                 config::persist_selected(&app.config_path, &app.launch_settings, &entry)
             {
-                app.ui_settings.status_text = format!("failed to save config: {error}");
+                app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
                 eprintln!("failed to save config: {error}");
             }
             app.sidebar = Some(Sidebar::Detail);
@@ -73,12 +76,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::PlayPressed => {
             app.runtime_shutdown = false;
             if !app.layerd_available {
-                app.ui_settings.status_text = "we-layerd not found in PATH".to_string();
+                app.runtime_status = RuntimeStatus::DaemonNotFound;
                 return Task::none();
             }
 
             if let Err(error) = persist_current_config(app) {
-                app.ui_settings.status_text = format!("failed to save config: {error}");
+                app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
                 eprintln!("failed to save config: {error}");
                 return Task::none();
             }
@@ -88,7 +91,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
 
             if runtime::try_switch(&app.config_path) {
-                app.ui_settings.status_text = "switched running daemon".to_string();
+                app.runtime_status = RuntimeStatus::SwitchedDaemon;
                 app.playback_running = true;
                 app.playback_paused = false;
                 return Task::none();
@@ -99,12 +102,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             match spawn {
                 Ok(child) => {
                     app.runtime_child = Some(child);
-                    app.ui_settings.status_text = "started daemon".to_string();
+                    app.runtime_status = RuntimeStatus::StartedDaemon;
                     app.playback_running = true;
                     app.playback_paused = false;
                 }
                 Err(err) => {
-                    app.ui_settings.status_text = format!("failed to start daemon: {err}");
+                    app.runtime_status = RuntimeStatus::StartFailed(err.to_string());
                     eprintln!("failed to start daemon: {err}");
                 }
             }
@@ -112,10 +115,10 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::StopPressed => {
             let stopped = app.shutdown_runtime();
-            app.ui_settings.status_text = if stopped {
-                "stopped daemon".to_string()
+            app.runtime_status = if stopped {
+                RuntimeStatus::StoppedDaemon
             } else {
-                "daemon stop request failed".to_string()
+                RuntimeStatus::StopFailed
             };
             if !stopped {
                 eprintln!("failed to stop daemon via IPC or owned child process");
@@ -171,27 +174,33 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             super::settings::sync(app);
             Task::none()
         }
-        Message::PickAssetsPath => Task::perform(
-            async {
-                rfd::FileDialog::new()
-                    .set_title("Select Wallpaper Engine installation directory")
-                    .pick_folder()
-            },
-            Message::AssetsPathPicked,
-        ),
-        Message::PickWorkshopPath => Task::perform(
-            async {
-                rfd::FileDialog::new().set_title("Select workshop 431960 folder").pick_folder()
-            },
-            Message::WorkshopPathPicked,
-        ),
+        Message::PickAssetsPath => {
+            let title = app.language.text(crate::domain::i18n::Text::SelectAssetsDirectory);
+            Task::perform(
+                async move {
+                    rfd::FileDialog::new()
+                        .set_title(title)
+                        .pick_folder()
+                },
+                Message::AssetsPathPicked,
+            )
+        }
+        Message::PickWorkshopPath => {
+            let title = app.language.text(crate::domain::i18n::Text::SelectWorkshopDirectory);
+            Task::perform(
+                async move {
+                    rfd::FileDialog::new().set_title(title).pick_folder()
+                },
+                Message::WorkshopPathPicked,
+            )
+        }
         Message::AssetsPathPicked(path) => {
             if let Some(path) = path {
                 if path.join("assets").is_dir() {
                     app.ui_settings.assets_path = path.display().to_string();
                     super::settings::sync(app);
                 } else {
-                    app.ui_settings.status_text = "selected directory is not a Wallpaper Engine installation".to_string();
+                    app.runtime_status = RuntimeStatus::InvalidWallpaperEngineDirectory;
                 }
             }
             Task::none()
@@ -221,7 +230,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             if let Err(error) =
                 config::persist_force_scene_audio_loop(&app.config_path, value)
             {
-                app.ui_settings.status_text = format!("failed to save config: {error}");
+                app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
                 eprintln!("failed to save config: {error}");
             } else {
                 app.ui_settings.force_scene_audio_loop = value;
@@ -249,15 +258,46 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             super::settings::sync(app);
             Task::none()
         }
+        Message::LanguageSelected(language) => {
+            app.language = language;
+            app.preferences_generation = app.preferences_generation.wrapping_add(1);
+            if let Some(tray) = app.tray.as_mut() {
+                tray.set_language(language);
+            }
+            if app.preferences_path.is_some() {
+                persist_language_preferences(app)
+            } else {
+                let error = "XDG_CONFIG_HOME and HOME are unavailable".to_string();
+                eprintln!("failed to save GUI preferences: {error}");
+                app.runtime_status = RuntimeStatus::PreferencesSaveFailed(error);
+                Task::none()
+            }
+        }
+        Message::PreferencesSaved { generation, result } => {
+            if generation != app.preferences_generation {
+                return persist_language_preferences(app);
+            }
+            if let Err(error) = result {
+                eprintln!("failed to save GUI preferences: {error}");
+                app.runtime_status = RuntimeStatus::PreferencesSaveFailed(error);
+            }
+            Task::none()
+        }
         Message::StatusLoaded(result) => {
-            app.ui_settings.status_text = match result {
-                Ok(text) => {
+            app.runtime_status = match result {
+                Ok(Some(text)) => {
                     app.playback_running = status_value(&text, "phase") == Some("running");
                     app.playback_paused = status_value(&text, "phase") == Some("paused");
                     app.running_source = status_value(&text, "source").map(str::to_string);
-                    text
+                    RuntimeStatus::Raw(text)
                 }
-                Err(err) => format!("status unavailable: {err}"),
+                Ok(None) => {
+                    app.playback_running = false;
+                    app.playback_paused = false;
+                    app.running_source = None;
+                    RuntimeStatus::EmptyResponse
+                }
+                Err(err) => RuntimeStatus::Unavailable(err),
             };
             Task::none()
         }
@@ -340,4 +380,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
 fn status_value<'a>(status: &'a str, key: &str) -> Option<&'a str> {
     status.lines().find_map(|line| line.strip_prefix(&format!("{key} = ")))
         .map(|value| value.trim_matches('"'))
+}
+
+fn persist_language_preferences(app: &App) -> Task<Message> {
+    let Some(path) = app.preferences_path.clone() else {
+        return Task::none();
+    };
+    let language = app.language;
+    let generation = app.preferences_generation;
+    Task::perform(
+        async move { preferences::save(&path, preferences::GuiPreferences { language }) },
+        move |result| Message::PreferencesSaved { generation, result },
+    )
 }

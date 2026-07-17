@@ -1,7 +1,11 @@
 use iced::Task;
 use we_core::wallpaper::settings::{RenderResolution, WallpaperSettings};
 
-use crate::{services::{config, runtime}, ui::sidebar::detail as wallpaper_detail};
+use crate::{
+    domain::runtime_status::RuntimeStatus,
+    services::{config, runtime},
+    ui::sidebar::detail as wallpaper_detail,
+};
 
 use super::{App, Message};
 
@@ -13,7 +17,7 @@ pub(crate) fn update(
 
     if matches!(message, DetailMessage::Apply) {
         if let Err(error) = persist_current_config(app) {
-            app.ui_settings.status_text = format!("failed to save config: {error}");
+            app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
             eprintln!("failed to save config: {error}");
             return Task::none();
         }
@@ -38,9 +42,10 @@ pub(crate) fn update(
         _ => {}
     }
     if let DetailMessage::PickPath { key, directory } = message {
+        let title = app.language.text(crate::domain::i18n::Text::SelectPropertyPath);
         return Task::perform(
             async move {
-                let dialog = rfd::FileDialog::new().set_title("Select wallpaper property path");
+                let dialog = rfd::FileDialog::new().set_title(title);
                 let path = if directory { dialog.pick_folder() } else { dialog.pick_file() };
                 DetailMessage::PathPicked { key, path: path.map(|path| path.display().to_string()) }
             },
@@ -96,7 +101,7 @@ pub(crate) fn update(
         DetailMessage::ResetProperties => profile.user_properties.clear(),
     }
     if let Err(error) = persist_current_config(app) {
-        app.ui_settings.status_text = format!("failed to save config: {error}");
+        app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
         eprintln!("failed to save config: {error}");
     }
     Task::none()

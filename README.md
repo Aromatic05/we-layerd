@@ -11,6 +11,7 @@
 - Provides an opt-in loop override for visible, automatically started scene audio
 - Exposes `ctl status` and `doctor` diagnostics for the native runtime
 - Ships a GUI companion, `we-gui`, for workshop browsing and config generation
+- Switches `we-gui` immediately between English and Simplified Chinese
 
 ## Build
 

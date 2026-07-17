@@ -80,3 +80,24 @@ muted = false
 - 合并 scene 用户属性和可选的音频循环覆盖，同时保留其它 `renderer.options_json` 字段
 - 遇到无效 JSON、非对象的 scene/audio 容器或不支持的 options 版本时会拒绝保存，不会覆盖原配置
 - 不再生成 Wine、Proton、X11 capture、video-native 或 `openWallpaper` 参数
+
+## GUI 语言
+
+`we-gui` 默认使用英语。在 **Settings → Language → 简体中文** 中切换后，窗口和
+Linux 托盘菜单会立即改用简体中文。语言选择独立于渲染器配置，保存在
+`$XDG_CONFIG_HOME/we-layerd/gui.toml`；未设置 `XDG_CONFIG_HOME` 时使用
+`~/.config/we-layerd/gui.toml`：
+
+```toml
+language = "zh-Hans"
+```
+
+支持的 BCP 47 语言标签为 `en` 和 `zh-Hans`。文件缺失、格式损坏或值不受支持时
+都会回退到英语。GUI 使用同目录临时文件加重命名的方式原子写入此文件；切换语言
+不会修改渲染器设置。
+
+可用以下命令运行本地化、偏好设置持久化和无头状态测试：
+
+```bash
+cargo test -p we-gui
+```

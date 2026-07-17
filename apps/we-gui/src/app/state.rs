@@ -3,7 +3,16 @@ use std::{collections::{BTreeSet, HashMap}, path::PathBuf, process::Child};
 use iced::{widget::pane_grid, window, Size, Theme};
 use we_core::{config::LaunchSettings, wallpaper::{properties::UserPropertySchema, WallpaperEntry, WallpaperType}};
 
-use crate::{domain::{settings::{ScaleModeOption, UiSettings}, ui_state::{AnimatedPreview, GifFrame, Pane, Sidebar}}, platform::tray, ui::sidebar::detail::DetailMessage};
+use crate::{
+    domain::{
+        i18n::Language,
+        runtime_status::RuntimeStatus,
+        settings::{ScaleModeOption, UiSettings},
+        ui_state::{AnimatedPreview, GifFrame, Pane, Sidebar},
+    },
+    platform::tray,
+    ui::sidebar::detail::DetailMessage,
+};
 
 pub(crate) struct App {
     pub entries: Vec<WallpaperEntry>, pub selected_id: Option<String>, pub selected_schema: UserPropertySchema,
@@ -15,6 +24,8 @@ pub(crate) struct App {
     pub main_window_id: Option<window::Id>, pub theme: Theme, pub runtime_shutdown: bool,
     pub outputs: Vec<String>, pub selected_outputs: BTreeSet<String>,
     pub running_source: Option<String>,
+    pub language: Language, pub preferences_path: Option<PathBuf>, pub runtime_status: RuntimeStatus,
+    pub preferences_generation: u64,
 }
 
 impl App {
@@ -49,7 +60,7 @@ pub(crate) enum Message {
     SelectWallpaper(usize), PlayPressed, StopPressed, SettingsPressed, SearchChanged(String), TypeFilterSelected(Option<WallpaperType>), PaneResized(pane_grid::ResizeEvent),
     AssetsPathChanged(String), WorkshopPathChanged(String), RendererLibraryPathChanged(String), RendererCachePathChanged(String), PickAssetsPath, PickWorkshopPath,
     AssetsPathPicked(Option<PathBuf>), WorkshopPathPicked(Option<PathBuf>), FpsLimitChanged(String), InteractiveToggled(bool), ForceSceneAudioLoopToggled(bool), ShowFpsToggled(bool),
-    ScaleModeSelected(ScaleModeOption), PreferDmabufToggled(bool), AllowShmFallbackToggled(bool), Detail(DetailMessage), StatusLoaded(Result<String, String>), StatusTick,
+    ScaleModeSelected(ScaleModeOption), PreferDmabufToggled(bool), AllowShmFallbackToggled(bool), LanguageSelected(Language), PreferencesSaved { generation: u64, result: Result<(), String> }, Detail(DetailMessage), StatusLoaded(Result<Option<String>, String>), StatusTick,
     WindowResized(Size), WindowCloseRequested(window::Id), WindowOpened(window::Id), WindowClosed(window::Id), TrayTick, ThemeTick, TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>), ToggleOutput(String),
 }

@@ -2,86 +2,169 @@ use iced::{
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
     Background, Border, Color, Element, Fill, Theme,
 };
-use crate::{app::Message, domain::settings::{ScaleModeOption, UiSettings}, ui::theme::scrollbar};
+use crate::{
+    app::Message,
+    domain::{
+        i18n::{Language, Localized, Text},
+        runtime_status::RuntimeStatus,
+        settings::{ScaleModeOption, UiSettings},
+    },
+    ui::theme::scrollbar,
+};
 
-pub fn build_settings_overlay<'a>(ui_settings: &'a UiSettings) -> Element<'a, Message> {
+pub fn build_settings_overlay<'a>(
+    ui_settings: &'a UiSettings,
+    language: Language,
+    runtime_status: &'a RuntimeStatus,
+) -> Element<'a, Message> {
     let assets_path_display = format_path_for_display(&ui_settings.assets_path, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
     let library_path_display = format_path_for_display(&ui_settings.renderer_library_path, 64);
     let cache_path_display = format_path_for_display(&ui_settings.renderer_cache_path, 64);
+    let scale_options = vec![
+        Localized::new(ScaleModeOption::Fit, language.text(Text::ScaleFit)),
+        Localized::new(ScaleModeOption::Cover, language.text(Text::ScaleCover)),
+        Localized::new(ScaleModeOption::Stretch, language.text(Text::ScaleStretch)),
+    ];
+    let selected_scale = scale_options
+        .iter()
+        .find(|option| option.value == ui_settings.scale_mode)
+        .cloned();
 
     let content = column![
         row![
-            column![text("Settings").size(26), text("Renderer and library preferences").size(13)].spacing(3).width(Fill),
-            button(text("×").size(22)).on_press(Message::SettingsPressed).style(outlined_button_style),
+            column![
+                text(language.text(Text::Settings)).size(26),
+                text(language.text(Text::SettingsSubtitle)).size(13),
+            ]
+            .spacing(3)
+            .width(Fill),
+            container(
+                button(text(language.text(Text::CloseSettings)).size(14))
+                    .on_press(Message::SettingsPressed)
+                    .style(outlined_button_style),
+            )
+            .id("settings.close"),
         ].align_y(iced::Alignment::Center),
-        section_title("Wallpaper Engine"),
-        text("Wallpaper Engine Assets Path").size(14),
+        section_title(language.text(Text::Language)),
+        container(
+            pick_list(
+                Language::ALL.to_vec(),
+                Some(language),
+                Message::LanguageSelected,
+            )
+            .padding([14, 10])
+            .style(md_pick_list_style)
+            .menu_style(md_menu_style),
+        )
+        .id("settings.language"),
+        section_title(language.text(Text::WallpaperEngine)),
+        text(language.text(Text::AssetsPath)).size(14),
         row![
             text_input("/path/to/wallpaper_engine", &ui_settings.assets_path)
+                .id("settings.assets-path")
                 .on_input(Message::AssetsPathChanged)
                 .padding([14, 10]).style(md_text_input_style)
                 .on_submit(Message::AutoScan)
                 .width(Fill),
-            button(text("…").size(20)).on_press(Message::PickAssetsPath).style(outlined_button_style),
+            container(
+                button(text(language.text(Text::Browse)).size(14))
+                    .on_press(Message::PickAssetsPath)
+                    .style(outlined_button_style),
+            )
+            .id("settings.assets-path.browse"),
         ]
         .spacing(10),
         text(assets_path_display).size(12),
-        text("Workshop Path").size(14),
+        text(language.text(Text::WorkshopPath)).size(14),
         row![
             text_input("/path/to/workshop/content/431960", &ui_settings.workshop_path)
+                .id("settings.workshop-path")
                 .on_input(Message::WorkshopPathChanged)
                 .padding([14, 10]).style(md_text_input_style)
                 .on_submit(Message::AutoScan)
                 .width(Fill),
-            button(text("…").size(20)).on_press(Message::PickWorkshopPath).style(outlined_button_style),
+            container(
+                button(text(language.text(Text::Browse)).size(14))
+                    .on_press(Message::PickWorkshopPath)
+                    .style(outlined_button_style),
+            )
+            .id("settings.workshop-path.browse"),
         ]
         .spacing(10),
         text(workshop_path_display).size(12),
-        section_title("Renderer"),
-        text("Renderer Library").size(14),
-        text_input("Leave blank for automatic search", &ui_settings.renderer_library_path)
+        section_title(language.text(Text::Renderer)),
+        text(language.text(Text::RendererLibrary)).size(14),
+        text_input(language.text(Text::AutomaticSearch), &ui_settings.renderer_library_path)
+            .id("settings.renderer-library")
             .on_input(Message::RendererLibraryPathChanged)
             .padding([14, 10]).style(md_text_input_style),
         text(library_path_display).size(12),
-        text("Renderer Cache Path").size(14),
+        text(language.text(Text::RendererCachePath)).size(14),
         text_input("~/.cache/we-layerd/renderer", &ui_settings.renderer_cache_path)
+            .id("settings.renderer-cache")
             .on_input(Message::RendererCachePathChanged)
             .padding([14, 10]).style(md_text_input_style),
         text(cache_path_display).size(12),
-        section_title("Presentation"),
-        text("Frame Rate Limit (FPS)").size(14),
-        text_input("60", &ui_settings.fps_limit).on_input(Message::FpsLimitChanged).padding([14, 10]).style(md_text_input_style),
-        text("Scale Mode").size(14),
-        pick_list(
-            vec![ScaleModeOption::Fit, ScaleModeOption::Cover, ScaleModeOption::Stretch],
-            Some(ui_settings.scale_mode),
-            Message::ScaleModeSelected,
+        section_title(language.text(Text::Presentation)),
+        text(language.text(Text::FrameRateLimit)).size(14),
+        text_input("60", &ui_settings.fps_limit)
+            .id("settings.fps-limit")
+            .on_input(Message::FpsLimitChanged)
+            .padding([14, 10])
+            .style(md_text_input_style),
+        text(language.text(Text::ScaleMode)).size(14),
+        container(
+            pick_list(
+                scale_options,
+                selected_scale,
+                |option| Message::ScaleModeSelected(option.value),
+            )
+            .padding([14, 10])
+            .style(md_pick_list_style)
+            .menu_style(md_menu_style),
         )
-        .padding([14, 10]).style(md_pick_list_style).menu_style(md_menu_style),
-        section_title("Behaviour"),
-        checkbox(ui_settings.interactive)
-            .label("Enable wallpaper input")
-            .on_toggle(Message::InteractiveToggled).style(md_checkbox_style),
+        .id("settings.scale-mode"),
+        section_title(language.text(Text::Behaviour)),
+        container(
+            checkbox(ui_settings.interactive)
+                .label(language.text(Text::EnableWallpaperInput))
+                .on_toggle(Message::InteractiveToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.wallpaper-input"),
         container(
             checkbox(ui_settings.force_scene_audio_loop)
-                .label("Force loop scene audio")
+                .label(language.text(Text::ForceSceneAudioLoop))
                 .on_toggle(Message::ForceSceneAudioLoopToggled)
                 .style(md_checkbox_style),
         )
-        .id(iced::widget::Id::new("settings.audio.force-loop")),
-        text("Overrides visible, automatically started scene sounds authored as single; start-silent sounds are unchanged.").size(12),
-        checkbox(ui_settings.show_fps)
-            .label("Show realtime FPS")
-            .on_toggle(Message::ShowFpsToggled).style(md_checkbox_style),
-        checkbox(ui_settings.prefer_dmabuf)
-            .label("Prefer DMA-BUF presentation")
-            .on_toggle(Message::PreferDmabufToggled).style(md_checkbox_style),
-        checkbox(ui_settings.allow_shm_fallback)
-            .label("Allow SHM fallback")
-            .on_toggle(Message::AllowShmFallbackToggled).style(md_checkbox_style),
-        section_title("Runtime status"),
-        container(text(&ui_settings.status_text).size(14))
+        .id("settings.audio.force-loop"),
+        text(language.text(Text::ForceSceneAudioLoopDescription)).size(12),
+        container(
+            checkbox(ui_settings.show_fps)
+                .label(language.text(Text::ShowRealtimeFps))
+                .on_toggle(Message::ShowFpsToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.show-fps"),
+        container(
+            checkbox(ui_settings.prefer_dmabuf)
+                .label(language.text(Text::PreferDmabuf))
+                .on_toggle(Message::PreferDmabufToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.prefer-dmabuf"),
+        container(
+            checkbox(ui_settings.allow_shm_fallback)
+                .label(language.text(Text::AllowShmFallback))
+                .on_toggle(Message::AllowShmFallbackToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.allow-shm-fallback"),
+        section_title(language.text(Text::RuntimeStatus)),
+        container(text(language.runtime_status(runtime_status)).size(14))
+            .id("settings.runtime-status")
             .padding(12)
             .width(Fill)
             .style(status_box_style),
