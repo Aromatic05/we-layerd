@@ -37,7 +37,10 @@ use we_renderer::Frame;
 
 use crate::backend::{
     layer_shell::state::{LayerShellState, WaylandBuffer},
-    wayland_common::output::FRACTIONAL_SCALE_DENOMINATOR,
+    wayland_common::{
+        input::PointerAxis,
+        output::FRACTIONAL_SCALE_DENOMINATOR,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -53,6 +56,25 @@ fn to_opaque_drm_fourcc(fourcc: u32) -> u32 {
         DRM_FORMAT_ABGR8888 => DRM_FORMAT_XBGR8888,
         DRM_FORMAT_ARGB8888 => DRM_FORMAT_XRGB8888,
         _ => fourcc,
+    }
+}
+
+fn release_wayland_pointer(pointer: WlPointer) {
+    if pointer.version() >= wl_pointer::REQ_RELEASE_SINCE {
+        pointer.release();
+        return;
+    }
+
+    if let Some(backend) = pointer.backend().upgrade() {
+        let _ = backend.destroy_object(&pointer.id());
+    }
+}
+
+fn pointer_axis(axis: WEnum<wl_pointer::Axis>) -> Option<PointerAxis> {
+    match axis {
+        WEnum::Value(wl_pointer::Axis::HorizontalScroll) => Some(PointerAxis::Horizontal),
+        WEnum::Value(wl_pointer::Axis::VerticalScroll) => Some(PointerAxis::Vertical),
+        _ => None,
     }
 }
 
@@ -131,7 +153,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerShellState {
         event: LayerSurfaceEvent,
         _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         match event {
             LayerSurfaceEvent::Configure { serial, width, height } => {
@@ -143,6 +165,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerShellState {
                     if height > 0 { height } else { state.output.fallback_height };
                 state.update_render_extent();
                 state.update_viewport_destination();
+                update_input_region(state, qh, true);
             }
             LayerSurfaceEvent::Closed => state.running = false,
             _ => {}
@@ -202,15 +225,21 @@ impl Dispatch<WlSeat, ()> for LayerShellState {
         qh: &QueueHandle<Self>,
     ) {
         if let wayland_client::protocol::wl_seat::Event::Capabilities { capabilities } = event {
-            let has_pointer = matches!(
-                capabilities,
-                WEnum::Value(value)
-                    if value.contains(wayland_client::protocol::wl_seat::Capability::Pointer)
-            );
+            let capability_bits = match capabilities {
+                WEnum::Value(value) => value.bits(),
+                WEnum::Unknown(value) => value,
+            };
+            let has_pointer = capability_bits
+                & wayland_client::protocol::wl_seat::Capability::Pointer.bits()
+                != 0;
             if has_pointer && state.objects.pointer.is_none() {
+                state.clear_pointer_input();
                 state.objects.pointer = Some(seat.get_pointer(qh, ()));
             } else if !has_pointer {
-                state.objects.pointer = None;
+                state.pointer_left();
+                if let Some(pointer) = state.objects.pointer.take() {
+                    release_wayland_pointer(pointer);
+                }
             }
         }
     }
@@ -219,7 +248,7 @@ impl Dispatch<WlSeat, ()> for LayerShellState {
 impl Dispatch<WlPointer, ()> for LayerShellState {
     fn event(
         state: &mut Self,
-        _proxy: &WlPointer,
+        pointer: &WlPointer,
         event: wl_pointer::Event,
         _data: &(),
         _conn: &Connection,
@@ -230,66 +259,44 @@ impl Dispatch<WlPointer, ()> for LayerShellState {
         }
         match event {
             wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
-                state.output.pointer_x = surface_x;
-                state.output.pointer_y = surface_y;
-                if let Some((x, y)) = state.normalized_pointer() {
-                    state.pending_input_events.push(we_renderer::InputEvent::PointerMove { x, y });
-                }
+                state.pointer_entered(surface_x, surface_y);
             }
-            wl_pointer::Event::Leave { .. } => {}
+            wl_pointer::Event::Leave { .. } => state.pointer_left(),
             wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
-                state.output.pointer_x = surface_x;
-                state.output.pointer_y = surface_y;
-                if let Some((x, y)) = state.normalized_pointer() {
-                    state.pending_input_events.push(we_renderer::InputEvent::PointerMove { x, y });
-                }
+                state.pointer_moved(surface_x, surface_y);
             }
             wl_pointer::Event::Button { button, state: button_state, .. } => {
-                let Some((x, y)) = state.normalized_pointer() else { return };
-                let mapped_button = match button {
-                    0x110 => 0, // BTN_LEFT
-                    _ => button as i32,
+                let pressed = match button_state {
+                    WEnum::Value(wl_pointer::ButtonState::Pressed) => true,
+                    WEnum::Value(wl_pointer::ButtonState::Released) => false,
+                    _ => return,
                 };
-                match button_state {
-                    WEnum::Value(wl_pointer::ButtonState::Pressed) => {
-                        state.pending_input_events.push(we_renderer::InputEvent::PointerDown {
-                            x,
-                            y,
-                            button: mapped_button,
-                        });
-                    }
-                    WEnum::Value(wl_pointer::ButtonState::Released) => {
-                        state.pending_input_events.push(we_renderer::InputEvent::PointerUp {
-                            x,
-                            y,
-                            button: mapped_button,
-                        });
-                    }
-                    _ => {}
-                }
+                state.pointer_button(button, pressed);
             }
             wl_pointer::Event::Axis { axis, value, .. } => {
-                let Some((x, y)) = state.normalized_pointer() else { return };
-                let mut delta_x = 0;
-                let mut delta_y = 0;
-                match axis {
-                    WEnum::Value(wl_pointer::Axis::VerticalScroll) => {
-                        delta_y = value.round() as i32
+                if let Some(axis) = pointer_axis(axis) {
+                    state.pointer_axis(axis, value);
+                    if pointer.version() < wl_pointer::EVT_FRAME_SINCE {
+                        state.pointer_axis_frame();
                     }
-                    WEnum::Value(wl_pointer::Axis::HorizontalScroll) => {
-                        delta_x = value.round() as i32
-                    }
-                    _ => {}
-                }
-                if delta_x != 0 || delta_y != 0 {
-                    state.pending_input_events.push(we_renderer::InputEvent::PointerWheel {
-                        x,
-                        y,
-                        delta_x,
-                        delta_y,
-                    });
                 }
             }
+            wl_pointer::Event::AxisDiscrete { axis, discrete } => {
+                if let Some(axis) = pointer_axis(axis) {
+                    state.pointer_axis_discrete(axis, discrete);
+                }
+            }
+            wl_pointer::Event::AxisValue120 { axis, value120 } => {
+                if let Some(axis) = pointer_axis(axis) {
+                    state.pointer_axis_value120(axis, value120);
+                }
+            }
+            wl_pointer::Event::AxisStop { axis, .. } => {
+                if let Some(axis) = pointer_axis(axis) {
+                    state.pointer_axis_stopped(axis);
+                }
+            }
+            wl_pointer::Event::Frame => state.pointer_axis_frame(),
             _ => {}
         }
     }
@@ -440,6 +447,7 @@ pub(super) fn present_frame(
     };
     let entry = create_buffer_for_frame(state, qh, frame)?;
     state.update_viewport_destination_for_frame(frame_width, frame_height);
+    update_input_region(state, qh, false);
     let surface = state.objects.surface.as_ref().ok_or_else(|| anyhow!("no surface"))?;
     surface.attach(Some(&entry.buffer), 0, 0);
     if state.compositor_version >= 4 {
@@ -465,6 +473,10 @@ pub(super) fn begin_stop_teardown(state: &mut LayerShellState) -> Result<()> {
     state.frame_callback.ready_for_next_frame = false;
     state.objects.frame_callback = None;
     state.pending_input_events.clear();
+    state.clear_pointer_input();
+    if let Some(pointer) = state.objects.pointer.take() {
+        release_wayland_pointer(pointer);
+    }
 
     let surface = state.objects.surface.as_ref().ok_or_else(|| anyhow!("no surface"))?;
     surface.attach(None, 0, 0);
@@ -584,16 +596,34 @@ pub(super) fn init_wayland(
 // Input region helper
 // ---------------------------------------------------------------------------
 
-pub(super) fn update_input_region(state: &LayerShellState, qh: &QueueHandle<LayerShellState>) {
-    if let (Some(ref compositor), Some(ref surface)) =
-        (&state.objects.compositor, &state.objects.surface)
-    {
-        let region = compositor.create_region(qh, ());
-        if state.interactive && state.output.logical_width > 0 && state.output.logical_height > 0 {
-            region.add(0, 0, state.output.logical_width as i32, state.output.logical_height as i32);
-        }
-        surface.set_input_region(Some(&region));
-        region.destroy();
+pub(super) fn update_input_region(
+    state: &mut LayerShellState,
+    qh: &QueueHandle<LayerShellState>,
+    commit: bool,
+) {
+    let desired = if state.interactive {
+        (state.presentation_geometry.viewport_width, state.presentation_geometry.viewport_height)
+    } else {
+        (0, 0)
+    };
+    if state.last_input_region == Some(desired) {
+        return;
+    }
+
+    let (Some(compositor), Some(surface)) =
+        (state.objects.compositor.clone(), state.objects.surface.clone())
+    else {
+        return;
+    };
+    let region = compositor.create_region(qh, ());
+    if desired.0 > 0 && desired.1 > 0 {
+        region.add(0, 0, desired.0 as i32, desired.1 as i32);
+    }
+    surface.set_input_region(Some(&region));
+    region.destroy();
+    state.last_input_region = Some(desired);
+    if commit {
+        surface.commit();
     }
 }
 

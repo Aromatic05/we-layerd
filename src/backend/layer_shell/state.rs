@@ -21,7 +21,11 @@ use wayland_protocols::wp::{
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
 
 use crate::{
-    backend::wayland_common::{dmabuf::DmabufFeedbackState, output::OutputState},
+    backend::wayland_common::{
+        dmabuf::DmabufFeedbackState,
+        input::{PointerAxis, PointerInputState},
+        output::{OutputState, PresentationGeometry},
+    },
     runtime::status::{FrameStats, RuntimeDiagnostics, RuntimeStatusSnapshot},
     runtime::{input::PendingInput, renderer_session::RendererSession},
 };
@@ -82,6 +86,9 @@ impl Default for BufferBookkeeping {
 pub(crate) struct LayerShellState {
     pub(super) objects: WaylandObjects,
     pub(super) output: OutputState,
+    pub(super) presentation_geometry: PresentationGeometry,
+    pub(super) pointer_input: PointerInputState,
+    pub(super) last_input_region: Option<(u32, u32)>,
     pub(super) buffers: BufferBookkeeping,
     pub(super) frame_callback: FrameCallbackState,
     pub(super) frame_stats: FrameStats,
@@ -114,16 +121,20 @@ impl LayerShellState {
         }
     }
 
-    pub(super) fn update_viewport_destination(&self) {
-        self.apply_viewport_geometry(self.output.geometry);
+    pub(super) fn update_viewport_destination(&mut self) {
+        let geometry = self.output.geometry;
+        self.apply_viewport_geometry(geometry);
+        self.presentation_geometry = geometry;
     }
 
     pub(super) fn update_viewport_destination_for_frame(
-        &self,
+        &mut self,
         frame_width: u32,
         frame_height: u32,
     ) {
-        self.apply_viewport_geometry(self.output.geometry_for_frame(frame_width, frame_height));
+        let geometry = self.output.geometry_for_frame(frame_width, frame_height);
+        self.apply_viewport_geometry(geometry);
+        self.presentation_geometry = geometry;
     }
 
     fn apply_viewport_geometry(
@@ -150,8 +161,59 @@ impl LayerShellState {
         }
     }
 
-    pub(super) fn normalized_pointer(&self) -> Option<(f32, f32)> {
-        self.output.normalized_pointer()
+    pub(super) fn pointer_entered(&mut self, surface_x: f64, surface_y: f64) {
+        let events = self.pointer_input.enter(surface_x, surface_y, self.presentation_geometry);
+        for event in events {
+            self.pending_input_events.push(event);
+        }
+    }
+
+    pub(super) fn pointer_moved(&mut self, surface_x: f64, surface_y: f64) {
+        if let Some(event) =
+            self.pointer_input.move_to(surface_x, surface_y, self.presentation_geometry)
+        {
+            self.pending_input_events.push(event);
+        }
+    }
+
+    pub(super) fn pointer_button(&mut self, linux_button: u32, pressed: bool) {
+        if let Some(event) =
+            self.pointer_input.button(linux_button, pressed, self.presentation_geometry)
+        {
+            self.pending_input_events.push(event);
+        }
+    }
+
+    pub(super) fn pointer_axis(&mut self, axis: PointerAxis, value: f64) {
+        self.pointer_input.axis(axis, value);
+    }
+
+    pub(super) fn pointer_axis_discrete(&mut self, axis: PointerAxis, steps: i32) {
+        self.pointer_input.axis_discrete(axis, steps);
+    }
+
+    pub(super) fn pointer_axis_value120(&mut self, axis: PointerAxis, value: i32) {
+        self.pointer_input.axis_value120(axis, value);
+    }
+
+    pub(super) fn pointer_axis_stopped(&mut self, axis: PointerAxis) {
+        self.pointer_input.axis_stop(axis);
+    }
+
+    pub(super) fn pointer_axis_frame(&mut self) {
+        if let Some(event) = self.pointer_input.finish_axis_frame(self.presentation_geometry) {
+            self.pending_input_events.push(event);
+        }
+    }
+
+    pub(super) fn pointer_left(&mut self) {
+        for event in self.pointer_input.leave(self.presentation_geometry) {
+            self.pending_input_events.push(event);
+        }
+    }
+
+    pub(super) fn clear_pointer_input(&mut self) {
+        self.pointer_input.clear();
     }
 
     pub(super) fn snapshot(&self) -> RuntimeStatusSnapshot {
@@ -205,9 +267,14 @@ impl LayerShellState {
 
     #[cfg(test)]
     pub(crate) fn test_default(scale_mode: crate::config::ScaleMode) -> Self {
+        let output = OutputState::new(scale_mode);
+        let presentation_geometry = output.geometry;
         Self {
             objects: WaylandObjects::default(),
-            output: OutputState::new(scale_mode),
+            output,
+            presentation_geometry,
+            pointer_input: PointerInputState::default(),
+            last_input_region: None,
             buffers: BufferBookkeeping::default(),
             frame_callback: FrameCallbackState::default(),
             frame_stats: FrameStats::default(),
@@ -232,6 +299,7 @@ impl LayerShellState {
 mod tests {
     use super::LayerShellState;
     use crate::config::ScaleMode;
+    use we_renderer::InputEvent;
 
     #[test]
     fn snapshot_reflects_runtime_geometry_without_layer_shell_protocol_objects() {
@@ -244,4 +312,24 @@ mod tests {
         assert_eq!(snapshot.presentation.render_width, 1280);
         assert_eq!(snapshot.presentation.render_height, 720);
     }
+
+    #[test]
+    fn pointer_mapping_uses_the_geometry_of_the_last_presented_frame() {
+        let mut state = LayerShellState::test_default(ScaleMode::Cover);
+        state.output.logical_width = 100;
+        state.output.logical_height = 100;
+        state.update_render_extent();
+        state.update_viewport_destination_for_frame(200, 100);
+
+        state.pointer_entered(0.0, 50.0);
+
+        assert_eq!(
+            state.pending_input_events.drain(),
+            vec![
+                InputEvent::Focus { focused: true },
+                InputEvent::PointerMove { x: 0.25, y: 0.5 },
+            ]
+        );
+    }
+
 }

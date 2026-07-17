@@ -183,8 +183,6 @@ pub(crate) struct OutputState {
     pub(crate) scale_mode: ScaleMode,
     pub(crate) render_size_override: Option<(u32, u32)>,
     pub(crate) geometry: PresentationGeometry,
-    pub(crate) pointer_x: f64,
-    pub(crate) pointer_y: f64,
 }
 
 impl OutputState {
@@ -207,8 +205,6 @@ impl OutputState {
                 viewport_height: 1080,
                 viewport_source: None,
             },
-            pointer_x: 0.0,
-            pointer_y: 0.0,
         };
         output.recompute_geometry();
         output
@@ -255,15 +251,6 @@ impl OutputState {
         )
     }
 
-    pub(crate) fn normalized_pointer(&self) -> Option<(f32, f32)> {
-        if self.logical_width == 0 || self.logical_height == 0 {
-            return None;
-        }
-        Some((
-            (self.pointer_x / self.logical_width as f64) as f32,
-            (self.pointer_y / self.logical_height as f64) as f32,
-        ))
-    }
 }
 
 #[cfg(test)]

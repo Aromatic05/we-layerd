@@ -190,7 +190,7 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     let dmabuf_version = dmabuf_global.as_ref().map(|g| g.version).unwrap_or(0);
     let dmabuf = globals.bind::<ZwpLinuxDmabufV1, _, _>(&qh, 3..=4, ()).ok();
 
-    let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=5, ()).ok();
+    let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=10, ()).ok();
     let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
     let fractional_scale_manager =
         globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()).ok();
@@ -211,9 +211,14 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     let (options_json_present, options_json_len, options_json_valid) =
         cfg.renderer.options_json_diagnostics();
 
+    let output = OutputState::new(cfg.general.scale_mode);
+    let presentation_geometry = output.geometry;
     let mut state = LayerShellState {
         objects: WaylandObjects::default(),
-        output: OutputState::new(cfg.general.scale_mode),
+        output,
+        presentation_geometry,
+        pointer_input: Default::default(),
+        last_input_region: None,
         buffers: BufferBookkeeping::default(),
         frame_callback: FrameCallbackState {
             pending: false,
@@ -267,27 +272,8 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     )?;
     status_sink(state.snapshot());
 
-    // Set input region and commit initial surface state
-    {
-        if let (Some(ref compositor), Some(ref surface)) =
-            (&state.objects.compositor, &state.objects.surface)
-        {
-            let region = compositor.create_region(&qh, ());
-            if state.interactive {
-                region.add(
-                    0,
-                    0,
-                    state.output.logical_width as i32,
-                    state.output.logical_height as i32,
-                );
-            }
-            surface.set_input_region(Some(&region));
-            region.destroy();
-        }
-        if let Some(ref surface) = &state.objects.surface {
-            surface.commit();
-        }
-    }
+    // Commit the initial empty buffer and input region so layer-shell can configure the surface.
+    surface::update_input_region(&mut state, &qh, true);
 
     // Wait for the first configure
     while !state.configured {
@@ -553,7 +539,6 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
             event_queue
                 .dispatch_pending(&mut state)
                 .context("failed to dispatch Wayland events after read")?;
-            surface::update_input_region(&state, &qh);
             status_sink(state.snapshot());
         } else {
             drop(read_guard);
