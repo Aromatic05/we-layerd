@@ -3,11 +3,26 @@ use std::{collections::HashMap, path::PathBuf};
 use iced::{widget::pane_grid, window, Task, Theme};
 use we_core::{config::{load_launch_settings, LaunchSettings}, steam, wallpaper::properties::UserPropertySchema};
 
-use crate::{domain::{settings::{ScaleModeOption, UiSettings}, ui_state::Pane}, platform::tray, ui::sidebar::detail::DetailTab};
+use crate::{
+    domain::{
+        runtime_status::RuntimeStatus,
+        settings::{ScaleModeOption, UiSettings},
+        ui_state::Pane,
+    },
+    platform::tray,
+    services::preferences,
+    ui::sidebar::detail::DetailTab,
+};
 
 use super::{App, Message};
 
 pub(crate) fn initialize() -> (App, Task<Message>) {
+    let preferences_path = preferences::path();
+    let preferences = preferences_path
+        .as_deref()
+        .map(preferences::load)
+        .unwrap_or_default();
+    let language = preferences.language;
     let config_path = steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
     let mut launch_settings = load_launch_settings(&config_path).unwrap_or_else(|_| LaunchSettings::default());
     if launch_settings.workshop_path.trim().is_empty() {
@@ -31,7 +46,6 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         fps_limit: launch_settings.fps_limit.to_string(),
         show_fps: launch_settings.show_fps,
         scale_mode: ScaleModeOption::from(launch_settings.scale_mode),
-        status_text: "status unavailable: daemon is not running".to_string(),
     };
 
     (
@@ -61,12 +75,16 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
                 b: Box::new(pane_grid::Configuration::Pane(Pane::Sidebar)),
             }),
             animated_previews: HashMap::new(),
-            tray: tray::TrayController::new().ok(),
+            tray: tray::TrayController::new(language).ok(),
             main_window_id: None,
             theme: detect_system_theme(),
             runtime_shutdown: false,
             outputs: Vec::new(), selected_outputs: Default::default(),
             running_source: None,
+            language,
+            preferences_path,
+            runtime_status: RuntimeStatus::DaemonNotRunning,
+            preferences_generation: 0,
         },
         Task::batch(vec![
             Task::done(Message::AutoScan),

@@ -10,6 +10,7 @@
 - Forwards pointer input to interactive wallpapers
 - Exposes `ctl status` and `doctor` diagnostics for the native runtime
 - Ships a GUI companion, `we-gui`, for workshop browsing and config generation
+- Switches `we-gui` immediately between English and Simplified Chinese
 
 ## Build
 

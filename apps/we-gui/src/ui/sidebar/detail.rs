@@ -12,7 +12,10 @@ use we_core::{
         WallpaperEntry,
     },
 };
-use crate::{ui::{sidebar::properties, theme::scrollbar}};
+use crate::{
+    domain::i18n::{Language, Localized, Text},
+    ui::{sidebar::properties, theme::scrollbar},
+};
 
 #[derive(Debug, Clone)]
 pub enum DetailMessage {
@@ -48,15 +51,6 @@ pub enum ResolutionMode {
     Fixed,
 }
 
-impl std::fmt::Display for ResolutionMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Automatic => "Follow output",
-            Self::Fixed => "Fixed resolution",
-        })
-    }
-}
-
 pub fn view<'a>(
     entry: &'a WallpaperEntry,
     settings: &'a WallpaperSettings,
@@ -68,22 +62,48 @@ pub fn view<'a>(
     is_paused: bool,
     outputs: &'a [String],
     selected_outputs: &'a BTreeSet<String>,
+    language: Language,
 ) -> Element<'a, DetailMessage> {
     let tabs = row![
-        tab_button("Actions", DetailTab::Actions, active_tab),
-        tab_button("User properties", DetailTab::UserProperties, active_tab),
+        tab_button(language.text(Text::Actions), "detail.tab.actions", DetailTab::Actions, active_tab),
+        tab_button(language.text(Text::UserProperties), "detail.tab.user-properties", DetailTab::UserProperties, active_tab),
     ]
     .spacing(8);
 
     let body = match active_tab {
-        DetailTab::Actions => actions_view(settings, resolution_width, resolution_height, outputs, selected_outputs),
-        DetailTab::UserProperties => properties::view(schema, settings),
+        DetailTab::Actions => actions_view(
+            settings,
+            resolution_width,
+            resolution_height,
+            outputs,
+            selected_outputs,
+            language,
+        ),
+        DetailTab::UserProperties => properties::view(schema, settings, language),
     };
 
     let actions = container(row![
-        icon_action(include_bytes!("../../../assets/icons/check.svg"), DetailMessage::Apply, primary_button_style),
-        icon_action(if !is_running || is_paused { include_bytes!("../../../assets/icons/play_arrow.svg") } else { include_bytes!("../../../assets/icons/pause.svg") }, DetailMessage::TogglePlayback, tonal_button_style),
-        icon_action(include_bytes!("../../../assets/icons/stop.svg"), DetailMessage::Stop, outlined_button_style),
+        container(icon_action(
+            include_bytes!("../../../assets/icons/check.svg"),
+            language.text(Text::ApplyAndPlay),
+            DetailMessage::Apply,
+            primary_button_style,
+        ))
+        .id("detail.apply-and-play"),
+        container(icon_action(
+            if !is_running || is_paused { include_bytes!("../../../assets/icons/play_arrow.svg") } else { include_bytes!("../../../assets/icons/pause.svg") },
+            if !is_running || is_paused { language.text(Text::Play) } else { language.text(Text::Pause) },
+            DetailMessage::TogglePlayback,
+            tonal_button_style,
+        ))
+        .id("detail.toggle-playback"),
+        container(icon_action(
+            include_bytes!("../../../assets/icons/stop.svg"),
+            language.text(Text::Stop),
+            DetailMessage::Stop,
+            outlined_button_style,
+        ))
+        .id("detail.stop"),
     ].spacing(12)).width(Fill).align_x(Horizontal::Right);
 
     container(column![
@@ -109,49 +129,127 @@ fn actions_view<'a>(
     resolution_height: &'a str,
     outputs: &'a [String],
     selected_outputs: &'a BTreeSet<String>,
+    language: Language,
 ) -> Element<'a, DetailMessage> {
     let resolution_mode = match settings.render_resolution {
         RenderResolution::Automatic => ResolutionMode::Automatic,
         RenderResolution::Fixed { .. } => ResolutionMode::Fixed,
     };
-    let playback = section("Playback", column![
-        field_label("Frame rate"),
-        text_input("60", &settings.fps.to_string()).on_input(DetailMessage::FpsChanged).padding([14, 10]).style(md_text_input_style),
-        text(format!("Speed  {:.2}×", settings.speed)).size(13).color(Color::from_rgb8(196, 199, 204)),
-        slider(0.1..=3.0, settings.speed, DetailMessage::SpeedChanged).style(md_slider_style),
-        text(format!("Volume  {:.0}%", settings.volume * 100.0)).size(13).color(Color::from_rgb8(196, 199, 204)),
-        slider(0.0..=1.0, settings.volume, DetailMessage::VolumeChanged).style(md_slider_style),
-        checkbox(settings.muted).label("Mute wallpaper audio").on_toggle(DetailMessage::MutedChanged).style(md_checkbox_style),
+    let resolution_options = vec![
+        Localized::new(ResolutionMode::Automatic, language.text(Text::FollowOutput)),
+        Localized::new(ResolutionMode::Fixed, language.text(Text::FixedResolution)),
+    ];
+    let selected_resolution = resolution_options
+        .iter()
+        .find(|option| option.value == resolution_mode)
+        .cloned();
+    let fill_options = vec![
+        Localized::new(WallpaperFillMode::Cover, language.text(Text::FillCover)),
+        Localized::new(WallpaperFillMode::Fit, language.text(Text::FillFit)),
+        Localized::new(WallpaperFillMode::Stretch, language.text(Text::FillStretch)),
+        Localized::new(WallpaperFillMode::Center, language.text(Text::FillCenter)),
+    ];
+    let selected_fill = fill_options
+        .iter()
+        .find(|option| option.value == settings.fill_mode)
+        .cloned();
+    let playback = section(language.text(Text::Playback), column![
+        field_label(language.text(Text::FrameRate)),
+        text_input("60", &settings.fps.to_string())
+            .id("detail.frame-rate")
+            .on_input(DetailMessage::FpsChanged)
+            .padding([14, 10])
+            .style(md_text_input_style),
+        text(language.speed(settings.speed)).size(13).color(Color::from_rgb8(196, 199, 204)),
+        container(slider(0.1..=3.0, settings.speed, DetailMessage::SpeedChanged).style(md_slider_style))
+            .id("detail.speed"),
+        text(language.volume(settings.volume * 100.0)).size(13).color(Color::from_rgb8(196, 199, 204)),
+        container(slider(0.0..=1.0, settings.volume, DetailMessage::VolumeChanged).style(md_slider_style))
+            .id("detail.volume"),
+        container(
+            checkbox(settings.muted)
+                .label(language.text(Text::MuteWallpaperAudio))
+                .on_toggle(DetailMessage::MutedChanged)
+                .style(md_checkbox_style),
+        )
+        .id("detail.mute-audio"),
     ].spacing(10));
-    let presentation = section("Display", column![
-        field_label("Apply to displays"),
-        output_chips(outputs, selected_outputs),
-        field_label("Render resolution"),
-        pick_list(vec![ResolutionMode::Automatic, ResolutionMode::Fixed], Some(resolution_mode), DetailMessage::ResolutionModeChanged).padding([14, 10]).width(Fill).style(md_pick_list_style).menu_style(md_menu_style),
+    let presentation = section(language.text(Text::Display), column![
+        field_label(language.text(Text::ApplyToDisplays)),
+        output_chips(outputs, selected_outputs, language),
+        field_label(language.text(Text::RenderResolution)),
+        container(
+            pick_list(
+                resolution_options,
+                selected_resolution,
+                |option| DetailMessage::ResolutionModeChanged(option.value),
+            )
+            .padding([14, 10])
+            .width(Fill)
+            .style(md_pick_list_style)
+            .menu_style(md_menu_style),
+        )
+        .id("detail.resolution-mode"),
         row![
-            text_input("Width", resolution_width).on_input(DetailMessage::ResolutionWidthChanged).padding([14, 10]).width(Fill).style(md_text_input_style),
-            text_input("Height", resolution_height).on_input(DetailMessage::ResolutionHeightChanged).padding([14, 10]).width(Fill).style(md_text_input_style),
+            text_input(language.text(Text::Width), resolution_width)
+                .id("detail.resolution-width")
+                .on_input(DetailMessage::ResolutionWidthChanged)
+                .padding([14, 10])
+                .width(Fill)
+                .style(md_text_input_style),
+            text_input(language.text(Text::Height), resolution_height)
+                .id("detail.resolution-height")
+                .on_input(DetailMessage::ResolutionHeightChanged)
+                .padding([14, 10])
+                .width(Fill)
+                .style(md_text_input_style),
         ].spacing(8),
-        field_label("Scaling"),
-        pick_list(vec![WallpaperFillMode::Cover, WallpaperFillMode::Fit, WallpaperFillMode::Stretch, WallpaperFillMode::Center], Some(settings.fill_mode), DetailMessage::FillModeChanged).padding([14, 10]).width(Fill).style(md_pick_list_style).menu_style(md_menu_style),
-        field_label("Rotation"),
-        pick_list(vec![Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270], Some(settings.rotation_degrees), DetailMessage::RotationChanged).padding([14, 10]).width(Fill).style(md_pick_list_style).menu_style(md_menu_style),
+        field_label(language.text(Text::Scaling)),
+        container(
+            pick_list(fill_options, selected_fill, |option| DetailMessage::FillModeChanged(option.value))
+                .padding([14, 10])
+                .width(Fill)
+                .style(md_pick_list_style)
+                .menu_style(md_menu_style),
+        )
+        .id("detail.scaling"),
+        field_label(language.text(Text::Rotation)),
+        container(
+            pick_list(vec![Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270], Some(settings.rotation_degrees), DetailMessage::RotationChanged)
+                .padding([14, 10])
+                .width(Fill)
+                .style(md_pick_list_style)
+                .menu_style(md_menu_style),
+        )
+        .id("detail.rotation"),
     ].spacing(10));
 
     column![playback, presentation].spacing(16).into()
 }
 
-fn output_chips<'a>(outputs: &'a [String], selected: &'a BTreeSet<String>) -> Element<'a, DetailMessage> {
+fn output_chips<'a>(
+    outputs: &'a [String],
+    selected: &'a BTreeSet<String>,
+    language: Language,
+) -> Element<'a, DetailMessage> {
     if outputs.is_empty() {
-        return text("No Wayland displays detected.").size(13).into();
+        return text(language.text(Text::NoWaylandDisplaysDetected)).size(13).into();
     }
     outputs.iter().fold(row![].spacing(8), |row, output| {
         let output_name = output.clone();
         let active = selected.contains(output);
-        row.push(button(text(output).size(13)).on_press(DetailMessage::ToggleOutput(output_name)).padding([8, 12]).style(move |_theme, status| {
-            let background = if active { Color::from_rgb8(70, 92, 130) } else if matches!(status, button::Status::Hovered) { Color::from_rgb8(48, 50, 55) } else { Color::from_rgb8(43, 44, 48) };
-            button::Style { background: Some(Background::Color(background)), text_color: Color::from_rgb8(224, 232, 255), border: Border { radius: 18.0.into(), width: 1.0, color: Color::from_rgb8(110, 116, 128) }, ..Default::default() }
-        }))
+        row.push(
+            container(
+                button(text(output).size(13))
+                    .on_press(DetailMessage::ToggleOutput(output_name))
+                    .padding([8, 12])
+                    .style(move |_theme, status| {
+                        let background = if active { Color::from_rgb8(70, 92, 130) } else if matches!(status, button::Status::Hovered) { Color::from_rgb8(48, 50, 55) } else { Color::from_rgb8(43, 44, 48) };
+                        button::Style { background: Some(Background::Color(background)), text_color: Color::from_rgb8(224, 232, 255), border: Border { radius: 18.0.into(), width: 1.0, color: Color::from_rgb8(110, 116, 128) }, ..Default::default() }
+                    }),
+            )
+            .id(format!("detail.output.{output}")),
+        )
     }).into()
 }
 
@@ -163,16 +261,37 @@ fn section<'a>(title: &'a str, content: impl Into<Element<'a, DetailMessage>>) -
     container(column![text(title).size(18), content.into()].spacing(12)).padding(16).style(section_style).into()
 }
 
-fn tab_button<'a>(label: &'a str, tab: DetailTab, active: DetailTab) -> iced::widget::Button<'a, DetailMessage> {
-    button(text(label).size(14)).on_press(DetailMessage::SelectTab(tab)).padding([9, 14]).style(move |_theme, status| {
+fn tab_button<'a>(
+    label: &'a str,
+    id: &'static str,
+    tab: DetailTab,
+    active: DetailTab,
+) -> Element<'a, DetailMessage> {
+    container(button(text(label).size(14)).on_press(DetailMessage::SelectTab(tab)).padding([9, 14]).style(move |_theme, status| {
         let selected = tab == active;
         let background = if selected { Color::from_rgb8(70, 92, 130) } else if matches!(status, button::Status::Hovered) { Color::from_rgb8(48, 50, 55) } else { Color::TRANSPARENT };
         button::Style { background: Some(Background::Color(background)), text_color: if selected { Color::from_rgb8(224, 232, 255) } else { Color::from_rgb8(198, 199, 204) }, border: Border { radius: 20.0.into(), ..Default::default() }, ..Default::default() }
-    })
+    }))
+    .id(id)
+    .into()
 }
 
-fn icon_action<'a>(icon: &'static [u8], message: DetailMessage, style: fn(&Theme, button::Status) -> button::Style) -> iced::widget::Button<'a, DetailMessage> {
-    button(iced::widget::svg(iced::widget::svg::Handle::from_memory(icon)).width(22).height(22)).on_press(message).width(48).height(48).style(style)
+fn icon_action<'a>(
+    icon: &'static [u8],
+    label: &'a str,
+    message: DetailMessage,
+    style: fn(&Theme, button::Status) -> button::Style,
+) -> iced::widget::Button<'a, DetailMessage> {
+    button(row![
+        iced::widget::svg(iced::widget::svg::Handle::from_memory(icon)).width(22).height(22),
+        text(label).size(13),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center))
+    .on_press(message)
+    .height(48)
+    .padding([8, 12])
+    .style(style)
 }
 
 fn sidebar_style(_theme: &Theme) -> container::Style {
