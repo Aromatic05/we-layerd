@@ -7,7 +7,10 @@ use we_core::wallpaper::{WallpaperEntry, WallpaperType};
 
 use crate::{
     app::{App, Message},
-    domain::ui_state::AnimatedPreview,
+    domain::{
+        i18n::{Language, Text},
+        ui_state::AnimatedPreview,
+    },
 };
 
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
@@ -16,35 +19,48 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             && entry.title.to_lowercase().contains(&app.search_query.to_lowercase())
     });
     let entries = matches.collect::<Vec<_>>();
+    let language = app.language;
     let grid = responsive(move |size| {
+        if entries.is_empty() {
+            return container(text(language.text(Text::NoMatchingWallpapers)).size(16))
+                .width(Fill)
+                .align_x(iced::alignment::Horizontal::Center)
+                .padding(32)
+                .into();
+        }
         build_wallpaper_grid(
             entries.iter().copied(),
             app.selected_id.as_ref(),
             size.width,
             &app.animated_previews,
+            language,
         )
     });
     let filters = row![
-        filter_chip("All", app.type_filter.is_none(), None),
-        filter_chip("Web", app.type_filter == Some(WallpaperType::Web), Some(WallpaperType::Web)),
-        filter_chip("Scene", app.type_filter == Some(WallpaperType::Scene), Some(WallpaperType::Scene)),
-        filter_chip("Video", app.type_filter == Some(WallpaperType::Video), Some(WallpaperType::Video)),
+        filter_chip(language.text(Text::FilterAll), "library.filter.all", app.type_filter.is_none(), None),
+        filter_chip(language.text(Text::FilterWeb), "library.filter.web", app.type_filter == Some(WallpaperType::Web), Some(WallpaperType::Web)),
+        filter_chip(language.text(Text::FilterScene), "library.filter.scene", app.type_filter == Some(WallpaperType::Scene), Some(WallpaperType::Scene)),
+        filter_chip(language.text(Text::FilterVideo), "library.filter.video", app.type_filter == Some(WallpaperType::Video), Some(WallpaperType::Video)),
     ]
     .spacing(8);
     let toolbar = row![
-        column![text("Wallpapers").size(28), text(format!("{} items", app.entries.len())).size(13)]
+        column![text(language.text(Text::Wallpapers)).size(28), text(language.item_count(app.entries.len())).size(13)]
             .spacing(2)
             .width(Fill),
-        button(text("⚙").size(20))
-            .on_press(Message::SettingsPressed)
-            .style(top_bar_button_style),
+        container(
+            button(text(format!("⚙  {}", language.text(Text::OpenSettings))).size(16))
+                .on_press(Message::SettingsPressed)
+                .style(top_bar_button_style),
+        )
+        .id("library.settings"),
     ]
     .align_y(Vertical::Center);
     container(
         column![
             toolbar,
             row![
-                text_input("Search wallpapers", &app.search_query)
+                text_input(language.text(Text::SearchWallpapers), &app.search_query)
+                    .id("library.search")
                     .on_input(Message::SearchChanged)
                     .padding(12)
                     .style(search_style)
@@ -69,6 +85,7 @@ fn build_wallpaper_grid<'a>(
     selected_id: Option<&String>,
     width: f32,
     animated_previews: &'a std::collections::HashMap<std::path::PathBuf, AnimatedPreview>,
+    language: Language,
 ) -> Element<'a, Message> {
     let spacing = 12.0;
     let target_card_width = 360.0;
@@ -81,7 +98,14 @@ fn build_wallpaper_grid<'a>(
         let mut row = row!().spacing(spacing);
         for (index, entry) in chunk.iter() {
             let selected = selected_id.is_some_and(|id| id == &entry.id);
-            row = row.push(make_wallpaper_card(entry, *index, card_width, selected, animated_previews));
+            row = row.push(make_wallpaper_card(
+                entry,
+                *index,
+                card_width,
+                selected,
+                animated_previews,
+                language,
+            ));
         }
         root = root.push(row);
     }
@@ -94,6 +118,7 @@ fn make_wallpaper_card<'a>(
     card_width: f32,
     selected: bool,
     animated_previews: &'a std::collections::HashMap<std::path::PathBuf, AnimatedPreview>,
+    language: Language,
 ) -> Element<'a, Message> {
     let card_height = (card_width * 9.0 / 16.0).round();
     let media: Element<'a, Message> = if let Some(path) = &entry.preview {
@@ -120,7 +145,7 @@ fn make_wallpaper_card<'a>(
             .into()
     };
 
-    let chip = container(text(wallpaper_type_name(entry.ty)).size(12))
+    let chip = container(text(wallpaper_type_name(entry.ty, language)).size(12))
         .padding([3, 8])
         .style(|_theme: &Theme| container::Style {
             text_color: Some(Color::WHITE),
@@ -128,7 +153,15 @@ fn make_wallpaper_card<'a>(
             border: Border { radius: 10.0.into(), ..Default::default() },
             ..Default::default()
         });
-    let overlay = container(chip)
+    let title = container(text(&entry.title).size(13).color(Color::WHITE))
+        .width(Fill)
+        .padding([3, 8])
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.45 })),
+            border: Border { radius: 10.0.into(), ..Default::default() },
+            ..Default::default()
+        });
+    let overlay = container(row![title, chip].spacing(8).align_y(Vertical::Center))
         .width(Fill)
         .height(Fill)
         .align_x(iced::alignment::Horizontal::Right)
@@ -147,18 +180,21 @@ fn make_wallpaper_card<'a>(
             },
             ..Default::default()
         });
-    button(frame)
-        .on_press(Message::SelectWallpaper(index))
-        .style(image_card_button_style)
-        .into()
+    container(
+        button(frame)
+            .on_press(Message::SelectWallpaper(index))
+            .style(image_card_button_style),
+    )
+    .id(format!("library.wallpaper.{}", entry.id))
+    .into()
 }
 
-fn wallpaper_type_name(ty: WallpaperType) -> &'static str {
+fn wallpaper_type_name(ty: WallpaperType, language: Language) -> &'static str {
     match ty {
-        WallpaperType::Video => "video",
-        WallpaperType::Scene => "scene",
-        WallpaperType::Web => "web",
-        WallpaperType::Unknown => "unknown",
+        WallpaperType::Video => language.text(Text::TypeVideo),
+        WallpaperType::Scene => language.text(Text::TypeScene),
+        WallpaperType::Web => language.text(Text::TypeWeb),
+        WallpaperType::Unknown => language.text(Text::TypeUnknown),
     }
 }
 
@@ -182,11 +218,17 @@ fn search_style(_theme: &Theme, status: text_input::Status) -> text_input::Style
     }
 }
 
-fn filter_chip<'a>(label: &'a str, selected: bool, value: Option<WallpaperType>) -> iced::widget::Button<'a, Message> {
-    button(text(if selected { format!("✓ {label}") } else { label.to_string() }).size(14))
-        .on_press(Message::TypeFilterSelected(value))
-        .padding([8, 14])
-        .style(move |_theme, status| {
+fn filter_chip<'a>(
+    label: &'a str,
+    id: &'static str,
+    selected: bool,
+    value: Option<WallpaperType>,
+) -> Element<'a, Message> {
+    container(
+        button(text(if selected { format!("✓ {label}") } else { label.to_string() }).size(14))
+            .on_press(Message::TypeFilterSelected(value))
+            .padding([8, 14])
+            .style(move |_theme, status| {
             let background = if selected { Color::from_rgb8(70, 91, 129) } else if matches!(status, button::Status::Hovered) { Color::from_rgb8(54, 56, 62) } else { Color::TRANSPARENT };
             button::Style {
                 background: Some(Background::Color(background)),
@@ -194,7 +236,10 @@ fn filter_chip<'a>(label: &'a str, selected: bool, value: Option<WallpaperType>)
                 border: Border { radius: 20.0.into(), width: if selected { 0.0 } else { 1.0 }, color: Color::from_rgb8(143, 147, 156) },
                 ..Default::default()
             }
-        })
+        }),
+    )
+    .id(id)
+    .into()
 }
 
 fn top_bar_button_style(_theme: &Theme, status: button::Status) -> button::Style {

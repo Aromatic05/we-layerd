@@ -2,6 +2,7 @@
 Type=Application
 Name=we-gui
 Comment=Wallpaper Engine helper GUI for Linux
+Comment[zh_CN]=适用于 Linux 的 Wallpaper Engine 辅助图形界面
 Exec=we-gui
 Icon=we-gui
 Terminal=false

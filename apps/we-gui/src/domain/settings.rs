@@ -1,5 +1,3 @@
-use std::fmt;
-
 use we_core::config::ScaleMode;
 
 #[derive(Debug, Clone)]
@@ -11,10 +9,10 @@ pub(crate) struct UiSettings {
     pub prefer_dmabuf: bool,
     pub allow_shm_fallback: bool,
     pub interactive: bool,
+    pub force_scene_audio_loop: bool,
     pub fps_limit: String,
     pub show_fps: bool,
     pub scale_mode: ScaleModeOption,
-    pub status_text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,16 +20,6 @@ pub(crate) enum ScaleModeOption {
     Fit,
     Cover,
     Stretch,
-}
-
-impl fmt::Display for ScaleModeOption {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Fit => "Fit",
-            Self::Cover => "Cover",
-            Self::Stretch => "Stretch",
-        })
-    }
 }
 
 impl From<ScaleMode> for ScaleModeOption {

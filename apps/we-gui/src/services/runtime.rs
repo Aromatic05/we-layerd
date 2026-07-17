@@ -20,7 +20,7 @@ pub fn start(config_path: &Path) -> std::io::Result<Child> {
         .spawn()
 }
 
-pub async fn fetch_status() -> Result<String, String> {
+pub async fn fetch_status() -> Result<Option<String>, String> {
     let output = Command::new("we-layerd")
         .arg("ctl")
         .arg("status")
@@ -30,9 +30,9 @@ pub async fn fetch_status() -> Result<String, String> {
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if text.is_empty() {
-            Ok("status unavailable: daemon returned empty response".to_string())
+            Ok(None)
         } else {
-            Ok(text)
+            Ok(Some(text))
         }
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())

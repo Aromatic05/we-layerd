@@ -1,7 +1,11 @@
 use iced::Task;
 use we_core::wallpaper::settings::{RenderResolution, WallpaperSettings};
 
-use crate::{services::{config, runtime}, ui::sidebar::detail as wallpaper_detail};
+use crate::{
+    domain::runtime_status::RuntimeStatus,
+    services::{config, runtime},
+    ui::sidebar::detail as wallpaper_detail,
+};
 
 use super::{App, Message};
 
@@ -12,7 +16,11 @@ pub(crate) fn update(
     use wallpaper_detail::{DetailMessage, ResolutionMode};
 
     if matches!(message, DetailMessage::Apply) {
-        persist_current_config(app);
+        if let Err(error) = persist_current_config(app) {
+            app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+            eprintln!("failed to save config: {error}");
+            return Task::none();
+        }
         return super::update::update(app, Message::PlayPressed);
     }
     match message {
@@ -34,9 +42,10 @@ pub(crate) fn update(
         _ => {}
     }
     if let DetailMessage::PickPath { key, directory } = message {
+        let title = app.language.text(crate::domain::i18n::Text::SelectPropertyPath);
         return Task::perform(
             async move {
-                let dialog = rfd::FileDialog::new().set_title("Select wallpaper property path");
+                let dialog = rfd::FileDialog::new().set_title(title);
                 let path = if directory { dialog.pick_folder() } else { dialog.pick_file() };
                 DetailMessage::PathPicked { key, path: path.map(|path| path.display().to_string()) }
             },
@@ -91,7 +100,10 @@ pub(crate) fn update(
         DetailMessage::PickPath { .. } => unreachable!("path picker handled before profile mutation"),
         DetailMessage::ResetProperties => profile.user_properties.clear(),
     }
-    persist_current_config(app);
+    if let Err(error) = persist_current_config(app) {
+        app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+        eprintln!("failed to save config: {error}");
+    }
     Task::none()
 }
 
@@ -115,13 +127,13 @@ pub(crate) fn set_resolution_inputs(app: &mut App, profile: &WallpaperSettings) 
     }
 }
 
-pub(crate) fn persist_current_config(app: &App) {
+pub(crate) fn persist_current_config(app: &App) -> Result<(), String> {
     let Some(selected_id) = app.selected_id.as_deref() else {
-        return;
+        return Ok(());
     };
     let Some(entry) = app.entries.iter().find(|entry| entry.id == selected_id) else {
-        return;
+        return Ok(());
     };
 
-    config::persist_selected(&app.config_path, &app.launch_settings, entry);
+    config::persist_selected(&app.config_path, &app.launch_settings, entry)
 }

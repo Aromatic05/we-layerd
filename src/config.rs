@@ -23,6 +23,8 @@ pub struct GeneralConfig {
     #[serde(default = "default_interactive")]
     pub interactive: bool,
     #[serde(default)]
+    pub force_scene_audio_loop: bool,
+    #[serde(default)]
     pub show_fps: bool,
     #[serde(default = "default_fps_report_interval_secs")]
     pub fps_report_interval_secs: u64,
@@ -145,6 +147,7 @@ impl Default for GeneralConfig {
         Self {
             backend: default_backend(),
             interactive: default_interactive(),
+            force_scene_audio_loop: false,
             show_fps: false,
             fps_report_interval_secs: default_fps_report_interval_secs(),
             scale_mode: ScaleMode::default(),
@@ -229,6 +232,7 @@ mod tests {
         assert_eq!(cfg.general.backend, ConfigBackend::LayerShell);
         assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert!(cfg.general.interactive);
+        assert!(!cfg.general.force_scene_audio_loop);
         assert_eq!(cfg.general.scale_mode, ScaleMode::Cover);
         assert!(cfg.renderer.library_path.is_empty());
         assert_eq!(cfg.renderer.fps, 60);
@@ -241,6 +245,7 @@ mod tests {
         let raw = r#"
             [general]
             backend = "gnome"
+            force_scene_audio_loop = true
 
             [renderer]
             source = "/tmp/workshop/item"
@@ -259,6 +264,7 @@ mod tests {
         let cfg: Config = toml::from_str(raw).expect("valid renderer config");
 
         assert_eq!(cfg.general.backend, ConfigBackend::Gnome);
+        assert!(cfg.general.force_scene_audio_loop);
         assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert_eq!(cfg.renderer.source, "/tmp/workshop/item");
         assert_eq!(cfg.renderer.assets_path, "/tmp/wallpaper_engine/assets");

@@ -8,8 +8,10 @@
 - 通过 Wayland layer-shell 展示壁纸
 - 支持 DMA-BUF / SHM 帧呈现
 - 将指针输入转发给交互壁纸
+- 可选地让原本为 `single` 的可见、自动开始 scene 音频循环播放
 - 每个 output 一个 renderer session
 - 提供 `we-gui` 图形界面与托盘控制
+- `we-gui` 支持英语与简体中文即时切换
 - 支持 `stop`、`pause`、`resume`、`reload`、`status`
 
 ## 构建

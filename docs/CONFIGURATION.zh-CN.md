@@ -27,11 +27,13 @@ interactive = true
 show_fps = false
 fps_report_interval_secs = 1
 scale_mode = "cover"
+force_scene_audio_loop = false
 ```
 
 - 后端自动选择：GNOME 会话走 GNOME actor clone，其它桌面环境走 layer-shell
 - `interactive`：为 `false` 时会设置空 input region，让壁纸不阻挡桌面鼠标交互
 - `show_fps`：保留 FPS 统计开关
+- `force_scene_audio_loop`：默认关闭；开启后会循环原本设为 `single`、可见且自动开始播放的 scene 声音，不改变 start-silent 声音和 `random` 播放。守护进程会把它安全合并到 `scene.audio.forceLoop`，并保留其它版本 1 source options。
 - `scale_mode`：`fit`、`cover`、`stretch`
 
 ## Renderer 设置
@@ -75,4 +77,27 @@ muted = false
 
 - 将 `renderer.source` 写成选中的 workshop 壁纸目录
 - 从 Wallpaper Engine 安装目录推导 `renderer.assets_path`
+- 合并 scene 用户属性和可选的音频循环覆盖，同时保留其它 `renderer.options_json` 字段
+- 遇到无效 JSON、非对象的 scene/audio 容器或不支持的 options 版本时会拒绝保存，不会覆盖原配置
 - 不再生成 Wine、Proton、X11 capture、video-native 或 `openWallpaper` 参数
+
+## GUI 语言
+
+`we-gui` 默认使用英语。在 **Settings → Language → 简体中文** 中切换后，窗口和
+Linux 托盘菜单会立即改用简体中文。语言选择独立于渲染器配置，保存在
+`$XDG_CONFIG_HOME/we-layerd/gui.toml`；未设置 `XDG_CONFIG_HOME` 时使用
+`~/.config/we-layerd/gui.toml`：
+
+```toml
+language = "zh-Hans"
+```
+
+支持的 BCP 47 语言标签为 `en` 和 `zh-Hans`。文件缺失、格式损坏或值不受支持时
+都会回退到英语。GUI 使用同目录临时文件加重命名的方式原子写入此文件；切换语言
+不会修改渲染器设置。
+
+可用以下命令运行本地化、偏好设置持久化和无头状态测试：
+
+```bash
+cargo test -p we-gui
+```
