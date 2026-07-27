@@ -120,4 +120,4 @@ override_dh_strip:
 override_dh_dwz:
 
 override_dh_auto_clean:
-	cargo clean
+	if [ -z "$(WE_LAYERD_PREBUILT_ROOT)" ]; then cargo clean; fi

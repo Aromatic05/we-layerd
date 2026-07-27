@@ -49,7 +49,11 @@ export PATH="${DXC_ROOT}/bin:${PATH}"
 
 (
   cd "${source_dir}"
-  dpkg-buildpackage --build=binary --no-sign
+  dpkg_build_args=(--build=binary --no-sign)
+  if [[ -n "${WE_LAYERD_PREBUILT_ROOT:-}" ]]; then
+    dpkg_build_args+=(--no-check-builddeps)
+  fi
+  dpkg-buildpackage "${dpkg_build_args[@]}"
 )
 
 find "${work_dir}" -maxdepth 1 -type f \
