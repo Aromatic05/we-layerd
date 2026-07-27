@@ -5656,7 +5656,7 @@ dependencies = [
 
 [[package]]
 name = "we-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -5666,7 +5666,7 @@ dependencies = [
 
 [[package]]
 name = "we-gui"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ctrlc",
  "dark-light",
@@ -5684,7 +5684,7 @@ dependencies = [
 
 [[package]]
 name = "we-layerd"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -5706,7 +5706,7 @@ dependencies = [
 
 [[package]]
 name = "we-renderer"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "libc",
  "thiserror 2.0.18",
@@ -5715,7 +5715,7 @@ dependencies = [
 
 [[package]]
 name = "we-renderer-sys"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "libloading 0.8.9",
  "thiserror 2.0.18",
@@ -6402,7 +6402,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.2.2"
+version = "0.2.3"
 
 [[package]]
 name = "y4m"
