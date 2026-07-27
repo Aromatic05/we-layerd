@@ -16,6 +16,28 @@ for command in cargo curl dpkg-buildpackage sha256sum tar; do
   fi
 done
 
+prebuilt_root="${WE_LAYERD_PREBUILT_ROOT:-}"
+if [[ -n "${prebuilt_root}" ]]; then
+  prebuilt_files=(
+    "${prebuilt_root}/bin/we-layerd"
+    "${prebuilt_root}/bin/we-gui"
+    "${prebuilt_root}/lib/libwallpaper-engine-renderer.so"
+    "${prebuilt_root}/lib/we-cef-helper"
+  )
+  for artifact in "${prebuilt_files[@]}"; do
+    if [[ ! -f "${artifact}" ]]; then
+      printf 'Missing prebuilt release artifact: %s\n' "${artifact}" >&2
+      exit 1
+    fi
+  done
+
+  # GitHub artifact transport does not preserve executable mode bits.
+  chmod 0755 \
+    "${prebuilt_root}/bin/we-layerd" \
+    "${prebuilt_root}/bin/we-gui" \
+    "${prebuilt_root}/lib/we-cef-helper"
+fi
+
 # shellcheck source=../common/versions.env
 source "${common_dir}/versions.env"
 "${common_dir}/fetch-dependencies.sh" all
