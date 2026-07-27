@@ -1,6 +1,49 @@
-# Fedora / Ubuntu 构建与依赖
+# 构建与打包
 
-本文说明如何在 Fedora 和 Ubuntu 上从源码构建 `we-layerd`，以及如何生成对应的 RPM / DEB 包。
+本文说明如何从源码安装 `we-layerd`，以及如何生成对应的原生发行版软件包。
+
+## Arch Linux 源码构建
+
+安装项目本体与渲染器依赖：
+
+```bash
+sudo pacman -S --needed \
+  rustup gcc cmake pkgconf git \
+  wayland wayland-protocols libxkbcommon \
+  gtk3 xdotool \
+  vulkan-headers vulkan-icd-loader mesa libglvnd \
+  gstreamer gst-plugins-base-libs \
+  lz4 pango fontconfig freetype2 \
+  directx-shader-compiler cef
+```
+
+初始化渲染器 submodule，并构建完整 workspace：
+
+```bash
+git submodule update --init --recursive
+cargo build --locked --workspace --release
+```
+
+源码构建默认使用 `~/.local` 作为安装前缀，可以直接安装：
+
+```bash
+cargo xtask install
+```
+
+如需安装到系统目录，应在构建时记录 `/usr` 前缀，并使用相同路径安装：
+
+```bash
+WE_LAYERD_INSTALL_PREFIX=/usr cargo build --locked --workspace --release
+sudo cargo xtask install --prefix /usr
+```
+
+发行版打包可以通过 `DESTDIR` 暂存安装结果：
+
+```bash
+DESTDIR="$pkgdir" cargo xtask install --prefix /usr
+```
+
+构建脚本会启用网页壁纸后端。`directx-shader-compiler` 用于满足渲染器的 DXC 探测，`cef` 则提供网页壁纸所需的 Chromium 运行时。
 
 ## 支持范围
 

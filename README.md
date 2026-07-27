@@ -1,121 +1,88 @@
 # we-layerd
 
-`we-layerd` is a Rust daemon for running Wallpaper Engine wallpapers on Wayland through the native `wallpaper-engine-renderer` library.
+[简体中文](./docs/README.zh-CN.md)
 
-## What it does
+A native Wallpaper Engine runtime for Wayland. `we-layerd` renders **scene**, **video**, and **web** wallpapers without Wine, while `we-gui` provides the desktop interface for browsing, configuring, and controlling them.
 
-- Builds the bundled `wallpaper-engine-renderer` submodule
-- Presents renderer output through Wayland layer-shell
-- Supports DMA-BUF and SHM frame presentation
-- Forwards pointer input to interactive wallpapers
-- Provides an opt-in loop override for visible, automatically started scene audio
-- Exposes `ctl status` and `doctor` diagnostics for the native runtime
-- Ships a GUI companion, `we-gui`, for workshop browsing and config generation
-- Switches `we-gui` immediately between English and Simplified Chinese
+It supports compositors implementing the layer-shell protocol, including niri, Hyprland, and KDE Plasma, as well as GNOME through the bundled Shell extension.
 
-## Build
+## Screenshots
 
-Initialize the bundled renderer submodule and build the workspace:
+### Wallpaper library
 
-```bash
-git submodule update --init --recursive
-cargo build --workspace --release
-WE_LAYERD_INSTALL_PREFIX=/usr cargo build --workspace --release
-```
+![we-gui wallpaper library](./screenshot/we-gui-library.png)
 
-### Arch Linux packages
+<table>
+  <tr>
+    <td><img src="./screenshot/scene-wallpaper.png" alt="A scene wallpaper running on Wayland"></td>
+    <td><img src="./screenshot/web-wallpaper.png" alt="A web wallpaper running on Wayland"></td>
+  </tr>
+  <tr>
+    <td align="center">Scene wallpaper</td>
+    <td align="center">Web wallpaper</td>
+  </tr>
+</table>
 
-For this repository itself:
+## Features
 
-```bash
-sudo pacman -S --needed \
-  rustup gcc cmake pkgconf git \
-  wayland wayland-protocols libxkbcommon \
-  gtk3 xdotool
-```
+### Wallpaper compatibility
 
-For the renderer build:
+- Runs Wallpaper Engine **scene**, **video**, and **web** wallpapers through a native Linux renderer.
+- Automatically discovers common Steam and Wallpaper Engine Workshop locations.
+- Scans subscribed Workshop items and displays their titles, types, and static or animated previews.
+- Provides title search and type filters for large wallpaper libraries.
+- Reads wallpaper-defined user properties and exposes supported toggles, sliders, choices, colors, text fields, files, and directories in the GUI.
+- Stores settings per wallpaper, so switching back restores its playback, presentation, and user-property values.
 
-```bash
-sudo pacman -S --needed \
-  vulkan-headers vulkan-icd-loader mesa libglvnd \
-  gstreamer gst-plugins-base-libs \
-  lz4 pango fontconfig freetype2 \
-  directx-shader-compiler cef
-```
+### Playback and presentation
 
-Notes:
+- Applies and switches wallpapers directly from `we-gui` without manually restarting the runtime.
+- Provides play, pause, resume, stop, and tray controls.
+- Configures frame rate, playback speed, audio volume, and mute state per wallpaper.
+- Can follow the output resolution or use a fixed rendering resolution.
+- Supports cover, fit, stretch, and center scaling modes, plus 0°, 90°, 180°, and 270° rotation.
+- Forwards pointer movement, clicks, and scrolling to interactive wallpapers.
+- Includes an optional compatibility setting for looping visible scene audio authored as a one-shot sound.
 
-- `BUILD_WEWEB=ON` is forced during the upstream configure step.
-- `gtk3` is needed by the current tray/GUI stack on Linux.
-- `directx-shader-compiler` satisfies the upstream DXC probe used by the renderer submodule.
+### Wayland-native rendering
 
-Fedora and Ubuntu dependency installation, source-build, distrobox, and native package instructions are documented in:
+- Presents wallpapers as desktop surfaces through layer-shell rather than ordinary application windows.
+- Uses DMA-BUF presentation for a zero-copy path when the renderer and compositor share compatible formats and modifiers.
+- Falls back to shared-memory presentation when DMA-BUF is unavailable or unsuitable, including common hybrid-GPU configurations.
+- Handles output size, integer and fractional scaling, viewport cropping, and dynamic renderer resizing.
+- Uses Wayland frame callbacks and bounded in-flight buffers to avoid uncontrolled frame production.
+- Supports GNOME through the bundled extension while keeping rendering in the native runtime.
 
-- [docs/BUILDING.md](./docs/BUILDING.md)
-- [docs/BUILDING.zh-CN.md](./docs/BUILDING.zh-CN.md)
+### Desktop integration
 
-Native package entry points:
+- Provides an adaptive wallpaper grid with animated GIF previews.
+- Follows the desktop light or dark appearance.
+- Switches immediately between English and Simplified Chinese.
+- Exposes runtime state and renderer settings from the GUI.
+- Keeps playback accessible from a system tray menu after the main window is closed.
 
-```bash
-package/fedora/build.sh
-package/ubuntu/build.sh
-```
+## Start
 
-## Install binaries
-
-`cargo xtask install` follows the prefix recorded by the build. The default build prefix is `~/.local`.
-
-```bash
-cargo xtask install
-sudo cargo xtask install --prefix /usr
-DESTDIR="$pkgdir" cargo xtask install --prefix /usr
-```
-
-Installed layout:
-
-```text
-$prefix/bin/we-layerd
-$prefix/bin/we-gui
-$prefix/lib/libwallpaper-engine-renderer.so
-$prefix/lib/we-cef-helper
-$prefix/share/gnome-shell/extensions/we-layerd@aromatic/
-```
-
-## Config
-
-Start from:
+After installing the project, launch the graphical interface:
 
 ```bash
-cp config.example.toml ~/.config/we-layerd/config.toml
+we-gui
 ```
 
-The important paths are:
+The GUI detects common Steam paths, opens the Workshop library, saves wallpaper settings, and starts or switches the runtime when a wallpaper is applied.
 
-- `renderer.library_path`
-- `renderer.source`
-- `renderer.assets_path`
-- `renderer.cache_path`
+## Requirements
 
-Leave `renderer.library_path = ""` to enable automatic lookup.
+- Linux with a Wayland session.
+- A compositor with layer-shell support, or GNOME with the bundled extension enabled.
+- A local Wallpaper Engine installation and downloaded Workshop wallpapers.
+- Linux x86_64 for the current CEF-based web wallpaper helper.
 
-See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for the config model.
+## Documentation
 
-## Runtime commands
-
-```bash
-we-layerd ctl stop
-we-layerd ctl pause
-we-layerd ctl resume
-we-layerd ctl reload
-we-layerd ctl status
-we-layerd doctor --config ~/.config/we-layerd/config.toml
-```
-
-## More docs
-
-- [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
-- [docs/BUILDING.md](./docs/BUILDING.md)
-- [docs/BUILDING.zh-CN.md](./docs/BUILDING.zh-CN.md)
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
-- [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
+- [Building and installation](./docs/BUILDING.md)
+- [Manual configuration](./docs/CONFIGURATION.md)
+- [Daemon, IPC, and command-line controls](./docs/ADVANCED.md)
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Troubleshooting](./docs/TROUBLESHOOTING.md)
+- [Chinese documentation](./docs/README.zh-CN.md)

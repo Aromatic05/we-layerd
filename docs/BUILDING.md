@@ -1,6 +1,49 @@
-# Fedora and Ubuntu builds
+# Building and packaging
 
-This document covers source builds and native RPM/DEB package builds for `we-layerd`.
+This document covers source installation and native package builds for `we-layerd`.
+
+## Arch Linux source build
+
+Install the project and renderer dependencies:
+
+```bash
+sudo pacman -S --needed \
+  rustup gcc cmake pkgconf git \
+  wayland wayland-protocols libxkbcommon \
+  gtk3 xdotool \
+  vulkan-headers vulkan-icd-loader mesa libglvnd \
+  gstreamer gst-plugins-base-libs \
+  lz4 pango fontconfig freetype2 \
+  directx-shader-compiler cef
+```
+
+Initialize the renderer submodule and build the complete workspace:
+
+```bash
+git submodule update --init --recursive
+cargo build --locked --workspace --release
+```
+
+The default source-build prefix is `~/.local`. Install the built workspace with:
+
+```bash
+cargo xtask install
+```
+
+For a system installation, record `/usr` as the build prefix and install with matching paths:
+
+```bash
+WE_LAYERD_INSTALL_PREFIX=/usr cargo build --locked --workspace --release
+sudo cargo xtask install --prefix /usr
+```
+
+Package builds can stage the same installation under `DESTDIR`:
+
+```bash
+DESTDIR="$pkgdir" cargo xtask install --prefix /usr
+```
+
+The renderer is configured with web wallpaper support enabled. `directx-shader-compiler` satisfies its DXC probe, while `cef` provides the Chromium runtime used by web wallpapers.
 
 ## Supported baseline
 
