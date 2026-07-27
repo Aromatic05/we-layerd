@@ -167,7 +167,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=30s 15m \
+          timeout --signal=TERM --kill-after=30s 25m \
             cargo build --frozen --offline --release \
               -p we-core -p we-renderer-sys -p we-renderer -p we-gui -p xtask
 
@@ -372,7 +372,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=30s 15m \
+          timeout --signal=TERM --kill-after=30s 25m \
             cargo build --frozen --offline --release \
               -p we-core -p we-renderer-sys -p we-renderer -p we-gui -p xtask
 
