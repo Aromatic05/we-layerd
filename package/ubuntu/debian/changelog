@@ -1,3 +1,9 @@
+we-layerd (0.2.4-1) unstable; urgency=medium
+
+  * Prepare 0.2.4.
+
+ -- we-layerd contributors <noreply@example.invalid>  Mon, 27 Jul 2026 14:30:10 +0000
+
 we-layerd (0.2.3-1) unstable; urgency=medium
 
   * Release 0.2.3.
