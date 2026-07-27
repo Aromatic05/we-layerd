@@ -54,7 +54,8 @@ runs:
         # Register the container-visible mount before reading the gitlink SHA.
         git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
-        cache_root="${GITHUB_WORKSPACE}/../.we-layerd-cache"
+        workspace_parent="$(dirname -- "${GITHUB_WORKSPACE}")"
+        cache_root="${workspace_parent}/.we-layerd-cache"
         cargo_home="${cache_root}/common/cargo"
         rustup_home="${cache_root}/common/rustup"
         download_cache="${cache_root}/common/downloads"
