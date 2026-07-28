@@ -37,6 +37,15 @@ WE_LAYERD_INSTALL_PREFIX=/usr cargo build --locked --workspace --release
 sudo cargo xtask install --prefix /usr
 ```
 
+Uninstall the files installed by `xtask` with the matching prefix:
+
+```bash
+cargo xtask uninstall
+sudo cargo xtask uninstall --prefix /usr
+```
+
+The uninstall command removes the two executables, renderer library, CEF helper, and GNOME extension installed by `cargo xtask install`. User configuration and renderer caches are left intact.
+
 Package builds can stage the same installation under `DESTDIR`:
 
 ```bash

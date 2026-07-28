@@ -37,6 +37,15 @@ WE_LAYERD_INSTALL_PREFIX=/usr cargo build --locked --workspace --release
 sudo cargo xtask install --prefix /usr
 ```
 
+使用相同的安装前缀即可卸载 `xtask` 安装的文件：
+
+```bash
+cargo xtask uninstall
+sudo cargo xtask uninstall --prefix /usr
+```
+
+卸载命令只移除 `cargo xtask install` 安装的两个可执行文件、渲染器动态库、CEF helper 和 GNOME 扩展，不会删除用户配置或渲染器缓存。
+
 发行版打包可以通过 `DESTDIR` 暂存安装结果：
 
 ```bash
