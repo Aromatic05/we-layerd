@@ -67,50 +67,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Detail(message) => super::detail_update::update(app, message),
-        Message::PlayPressed => {
-            app.runtime_shutdown = false;
-            if !app.layerd_available {
-                app.runtime_status = RuntimeStatus::DaemonNotFound;
-                return Task::none();
-            }
-
-            if let Err(error) = persist_current_config(app) {
-                app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
-                eprintln!("failed to save config: {error}");
-                return Task::none();
-            }
-
-            if let Err(error) = runtime::reap(&mut app.runtime_child) {
-                eprintln!("failed to query daemon child status: {error}");
-            }
-
-            if runtime::try_switch(&app.config_path) {
-                app.runtime_status = RuntimeStatus::SwitchedDaemon;
-                app.playback_running = true;
-                app.playback_paused = false;
-                app.running_source = selected_wallpaper_source(app);
-                app.shuffle_elapsed = Duration::ZERO;
-                return Task::none();
-            }
-
-            let spawn = runtime::start(&app.config_path);
-
-            match spawn {
-                Ok(child) => {
-                    app.runtime_child = Some(child);
-                    app.runtime_status = RuntimeStatus::StartedDaemon;
-                    app.playback_running = true;
-                    app.playback_paused = false;
-                    app.running_source = selected_wallpaper_source(app);
-                    app.shuffle_elapsed = Duration::ZERO;
-                }
-                Err(err) => {
-                    app.runtime_status = RuntimeStatus::StartFailed(err.to_string());
-                    eprintln!("failed to start daemon: {err}");
-                }
-            }
-            Task::none()
-        }
+        Message::PlayPressed => play_selected(app, PlaybackStart::SwitchOrStart),
+        Message::ShufflePlaybackPressed => play_selected(app, PlaybackStart::Restart),
         Message::StopPressed => {
             app.shuffle_elapsed = Duration::ZERO;
             let stopped = app.shutdown_runtime();
@@ -409,6 +367,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 task.map(Message::WindowOpened)
             }
             tray::TrayAction::PlaySwitch => Task::done(Message::PlayPressed),
+            tray::TrayAction::ShuffleOnce => Task::done(Message::ShufflePressed),
             tray::TrayAction::Stop => Task::done(Message::StopPressed),
             tray::TrayAction::Pause => {
                 if runtime::send_control("pause") {
@@ -502,7 +461,63 @@ fn shuffle_to_next(app: &mut App) -> Task<Message> {
     if !select_wallpaper(app, index, false) {
         return Task::none();
     }
-    Task::done(Message::PlayPressed)
+    Task::done(Message::ShufflePlaybackPressed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackStart {
+    SwitchOrStart,
+    Restart,
+}
+
+fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
+    app.runtime_shutdown = false;
+    if !app.layerd_available {
+        app.runtime_status = RuntimeStatus::DaemonNotFound;
+        return Task::none();
+    }
+
+    if let Err(error) = persist_current_config(app) {
+        app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+        eprintln!("failed to save config: {error}");
+        return Task::none();
+    }
+
+    if let Err(error) = runtime::reap(&mut app.runtime_child) {
+        eprintln!("failed to query daemon child status: {error}");
+    }
+
+    if start == PlaybackStart::SwitchOrStart && runtime::try_switch(&app.config_path) {
+        app.runtime_status = RuntimeStatus::SwitchedDaemon;
+        mark_selected_wallpaper_running(app);
+        return Task::none();
+    }
+
+    let spawn = match start {
+        PlaybackStart::SwitchOrStart => runtime::start(&app.config_path).map_err(|error| error.to_string()),
+        PlaybackStart::Restart => runtime::restart(&app.config_path, &mut app.runtime_child),
+    };
+
+    match spawn {
+        Ok(child) => {
+            app.runtime_child = Some(child);
+            app.runtime_status = RuntimeStatus::StartedDaemon;
+            mark_selected_wallpaper_running(app);
+        }
+        Err(error) => {
+            app.clear_playback_state();
+            app.runtime_status = RuntimeStatus::StartFailed(error.clone());
+            eprintln!("failed to start daemon: {error}");
+        }
+    }
+    Task::none()
+}
+
+fn mark_selected_wallpaper_running(app: &mut App) {
+    app.playback_running = true;
+    app.playback_paused = false;
+    app.running_source = selected_wallpaper_source(app);
+    app.shuffle_elapsed = Duration::ZERO;
 }
 
 fn shuffle_candidate_indices(app: &App) -> Vec<usize> {

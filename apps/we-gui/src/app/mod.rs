@@ -204,4 +204,52 @@ mod tests {
         assert!(commands.lines().any(|line| line == "ctl stop"));
         fs::remove_dir_all(temp).expect("remove test directory");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn shuffle_restart_stops_old_daemon_before_starting_new_one() {
+        let _lock = ENV_LOCK.lock().expect("environment lock");
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
+        let temp = std::env::temp_dir().join(format!("we-gui-restart-{suffix}"));
+        let command = temp.join("we-layerd");
+        let config = temp.join("config.toml");
+        let log = temp.join("commands.log");
+        fs::create_dir_all(&temp).expect("create test directory");
+        fs::write(
+            &command,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$WE_GUI_TEST_LOG\"\nif [ \"$1 $2\" = \"ctl status\" ]; then exit 1; fi\nif [ \"$1\" = \"run\" ]; then /usr/bin/sleep 30; fi\n",
+        )
+        .expect("write fake we-layerd");
+        let mut permissions = fs::metadata(&command).expect("fake command metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&command, permissions).expect("make fake command executable");
+
+        let old_path = std::env::var_os("PATH");
+        let old_log = std::env::var_os("WE_GUI_TEST_LOG");
+        std::env::set_var("PATH", &temp);
+        std::env::set_var("WE_GUI_TEST_LOG", &log);
+
+        let mut owned_child = None;
+        let mut replacement = crate::services::runtime::restart(&config, &mut owned_child)
+            .expect("restart daemon");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let _ = replacement.kill();
+        let _ = replacement.wait();
+
+        match old_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        match old_log {
+            Some(value) => std::env::set_var("WE_GUI_TEST_LOG", value),
+            None => std::env::remove_var("WE_GUI_TEST_LOG"),
+        }
+
+        let commands = fs::read_to_string(&log).expect("read fake command log");
+        let lines = commands.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "ctl stop");
+        assert_eq!(lines[1], "ctl status");
+        assert_eq!(lines[2], format!("run --config {}", config.display()));
+        fs::remove_dir_all(temp).expect("remove test directory");
+    }
 }

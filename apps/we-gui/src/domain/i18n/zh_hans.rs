@@ -90,6 +90,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::SelectPropertyPath => "选择壁纸属性路径",
         Text::TrayShowWindow => "显示窗口",
         Text::TrayPlaySwitch => "播放 / 切换",
+        Text::TrayShuffleOnce => "随机切换一次",
         Text::TrayStop => "停止",
         Text::TrayPause => "暂停",
         Text::TrayResume => "继续",

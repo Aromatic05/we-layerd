@@ -237,6 +237,7 @@ pub(crate) enum Text {
     SelectPropertyPath,
     TrayShowWindow,
     TrayPlaySwitch,
+    TrayShuffleOnce,
     TrayStop,
     TrayPause,
     TrayResume,

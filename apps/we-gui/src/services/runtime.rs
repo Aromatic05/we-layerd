@@ -20,6 +20,19 @@ pub fn start(config_path: &Path) -> std::io::Result<Child> {
         .spawn()
 }
 
+pub fn restart(config_path: &Path, child: &mut Option<Child>) -> Result<Child, String> {
+    let _ = stop(child);
+
+    for _ in 0..40 {
+        if !daemon_is_running() {
+            return start(config_path).map_err(|error| error.to_string());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    Err("timed out waiting for the previous daemon to stop".to_string())
+}
+
 pub async fn fetch_status() -> Result<Option<String>, String> {
     let output = Command::new("we-layerd")
         .arg("ctl")
@@ -74,4 +87,12 @@ pub fn stop(child: &mut Option<Child>) -> bool {
         stopped = true;
     }
     stopped
+}
+
+fn daemon_is_running() -> bool {
+    Command::new("we-layerd")
+        .arg("ctl")
+        .arg("status")
+        .output()
+        .is_ok_and(|output| output.status.success())
 }

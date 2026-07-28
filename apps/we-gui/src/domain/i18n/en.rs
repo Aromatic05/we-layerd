@@ -94,6 +94,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::SelectPropertyPath => "Select wallpaper property path",
         Text::TrayShowWindow => "Show Window",
         Text::TrayPlaySwitch => "Play / Switch",
+        Text::TrayShuffleOnce => "Shuffle once",
         Text::TrayStop => "Stop",
         Text::TrayPause => "Pause",
         Text::TrayResume => "Resume",
