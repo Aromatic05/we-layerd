@@ -6,7 +6,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::SearchWallpapers => "Search wallpapers",
         Text::NoMatchingWallpapers => "No wallpapers match your search and filters.",
         Text::OpenSettings => "Open settings",
-        Text::ShuffleWallpapers => "Shuffle wallpapers",
+        Text::ShuffleWallpapers => "Shuffle once",
         Text::FilterAll => "All",
         Text::FilterWeb => "Web",
         Text::FilterScene => "Scene",
@@ -44,7 +44,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ShuffleEveryHour => "Every hour",
         Text::ShuffleSources => "Wallpaper sources",
         Text::ShuffleDescription => {
-            "Random playback avoids the current wallpaper and only advances while playback is running."
+            "Random playback avoids the currently running wallpaper and only advances while playback is running."
         }
         Text::EnableWallpaperInput => "Enable wallpaper input",
         Text::ForceSceneAudioLoop => "Force loop scene audio",

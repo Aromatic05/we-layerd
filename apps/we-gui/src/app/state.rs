@@ -43,9 +43,15 @@ impl App {
         }
         self.runtime_shutdown = true;
         let stopped = crate::services::runtime::stop(&mut self.runtime_child);
+        self.clear_playback_state();
+        stopped
+    }
+
+    pub(crate) fn clear_playback_state(&mut self) {
         self.playback_running = false;
         self.playback_paused = false;
-        stopped
+        self.running_source = None;
+        self.shuffle_elapsed = Duration::ZERO;
     }
 }
 

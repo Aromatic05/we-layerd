@@ -88,6 +88,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 app.runtime_status = RuntimeStatus::SwitchedDaemon;
                 app.playback_running = true;
                 app.playback_paused = false;
+                app.running_source = selected_wallpaper_source(app);
                 app.shuffle_elapsed = Duration::ZERO;
                 return Task::none();
             }
@@ -100,6 +101,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.runtime_status = RuntimeStatus::StartedDaemon;
                     app.playback_running = true;
                     app.playback_paused = false;
+                    app.running_source = selected_wallpaper_source(app);
                     app.shuffle_elapsed = Duration::ZERO;
                 }
                 Err(err) => {
@@ -272,15 +274,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::ShufflePressed => {
-            let preferences_task = if app.ui_settings.shuffle_enabled {
-                Task::none()
-            } else {
-                app.ui_settings.shuffle_enabled = true;
-                queue_preferences_save(app)
-            };
-            Task::batch(vec![preferences_task, shuffle_to_next(app)])
-        }
+        Message::ShufflePressed => shuffle_to_next(app),
         Message::ShuffleEnabledToggled(value) => {
             app.ui_settings.shuffle_enabled = value;
             app.shuffle_elapsed = Duration::ZERO;
@@ -345,16 +339,21 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 Ok(Some(text)) => {
                     app.playback_running = status_value(&text, "phase") == Some("running");
                     app.playback_paused = status_value(&text, "phase") == Some("paused");
-                    app.running_source = status_value(&text, "source").map(str::to_string);
+                    if app.playback_running || app.playback_paused {
+                        app.running_source = status_value(&text, "source").map(str::to_string);
+                    } else {
+                        app.clear_playback_state();
+                    }
                     RuntimeStatus::Raw(text)
                 }
                 Ok(None) => {
-                    app.playback_running = false;
-                    app.playback_paused = false;
-                    app.running_source = None;
+                    app.clear_playback_state();
                     RuntimeStatus::EmptyResponse
                 }
-                Err(err) => RuntimeStatus::Unavailable(err),
+                Err(err) => {
+                    app.clear_playback_state();
+                    RuntimeStatus::Unavailable(err)
+                }
             };
             Task::none()
         }
@@ -507,18 +506,88 @@ fn shuffle_to_next(app: &mut App) -> Task<Message> {
 }
 
 fn shuffle_candidate_indices(app: &App) -> Vec<usize> {
-    app.entries
+    shuffle_candidate_indices_for(
+        &app.entries,
+        app.running_source.as_deref(),
+        app.ui_settings.shuffle_include_video,
+        app.ui_settings.shuffle_include_scene,
+        app.ui_settings.shuffle_include_web,
+    )
+}
+
+fn shuffle_candidate_indices_for(
+    entries: &[we_core::wallpaper::WallpaperEntry],
+    running_source: Option<&str>,
+    include_video: bool,
+    include_scene: bool,
+    include_web: bool,
+) -> Vec<usize> {
+    entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| {
             let included = match entry.ty {
-                WallpaperType::Video => app.ui_settings.shuffle_include_video,
-                WallpaperType::Scene => app.ui_settings.shuffle_include_scene,
-                WallpaperType::Web => app.ui_settings.shuffle_include_web,
+                WallpaperType::Video => include_video,
+                WallpaperType::Scene => include_scene,
+                WallpaperType::Web => include_web,
                 WallpaperType::Unknown => false,
             };
-            included && app.selected_id.as_deref() != Some(entry.id.as_str())
+            let source = entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy();
+            included && running_source != Some(source.as_ref())
         })
         .map(|(index, _)| index)
         .collect()
+}
+
+fn selected_wallpaper_source(app: &App) -> Option<String> {
+    let selected_id = app.selected_id.as_deref()?;
+    let entry = app.entries.iter().find(|entry| entry.id == selected_id)?;
+    Some(
+        entry
+            .project_json
+            .parent()
+            .unwrap_or(&entry.project_json)
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use we_core::wallpaper::{WallpaperEntry, WallpaperType};
+
+    use super::shuffle_candidate_indices_for;
+
+    #[test]
+    fn shuffle_excludes_running_source_not_an_unplayed_selection() {
+        let entries = vec![
+            wallpaper("selected", "/wallpapers/selected/project.json", WallpaperType::Video),
+            wallpaper("running", "/wallpapers/running/project.json", WallpaperType::Scene),
+            wallpaper("other", "/wallpapers/other/project.json", WallpaperType::Web),
+        ];
+
+        assert_eq!(
+            shuffle_candidate_indices_for(
+                &entries,
+                Some("/wallpapers/running"),
+                true,
+                true,
+                true,
+            ),
+            vec![0, 2],
+        );
+    }
+
+    fn wallpaper(id: &str, project_json: &str, ty: WallpaperType) -> WallpaperEntry {
+        WallpaperEntry {
+            id: id.to_string(),
+            project_json: PathBuf::from(project_json),
+            title: id.to_string(),
+            ty,
+            preview: None,
+            source_file: None,
+        }
+    }
 }

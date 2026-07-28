@@ -6,7 +6,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::SearchWallpapers => "搜索壁纸",
         Text::NoMatchingWallpapers => "没有符合搜索和筛选条件的壁纸。",
         Text::OpenSettings => "打开设置",
-        Text::ShuffleWallpapers => "随机播放",
+        Text::ShuffleWallpapers => "随机切换一次",
         Text::FilterAll => "全部",
         Text::FilterWeb => "网页",
         Text::FilterScene => "场景",
@@ -43,7 +43,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ShuffleEvery30Minutes => "每 30 分钟",
         Text::ShuffleEveryHour => "每 1 小时",
         Text::ShuffleSources => "壁纸来源",
-        Text::ShuffleDescription => "随机播放会避开当前壁纸，且仅在壁纸正常播放时计时。",
+        Text::ShuffleDescription => "随机播放会避开当前正在运行的壁纸，且仅在壁纸正常播放时计时。",
         Text::EnableWallpaperInput => "启用壁纸输入",
         Text::ForceSceneAudioLoop => "强制循环场景音频",
         Text::ForceSceneAudioLoopDescription => {
