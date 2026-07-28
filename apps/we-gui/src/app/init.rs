@@ -47,6 +47,12 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         fps_limit: launch_settings.fps_limit.to_string(),
         show_fps: launch_settings.show_fps,
         scale_mode: ScaleModeOption::from(launch_settings.scale_mode),
+        shuffle_enabled: preferences.shuffle_enabled,
+        shuffle_interval_ms: preferences.shuffle_interval_ms,
+        shuffle_interval_input: preferences.shuffle_interval_ms.to_string(),
+        shuffle_include_video: preferences.shuffle_include_video,
+        shuffle_include_scene: preferences.shuffle_include_scene,
+        shuffle_include_web: preferences.shuffle_include_web,
     };
 
     (
@@ -86,6 +92,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             preferences_path,
             runtime_status: RuntimeStatus::DaemonNotRunning,
             preferences_generation: 0,
+            shuffle_elapsed: std::time::Duration::ZERO,
         },
         Task::batch(vec![
             Task::done(Message::AutoScan),

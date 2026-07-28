@@ -9,6 +9,7 @@ ctrlc = "3.4"
 iced = { version = "0.14", features = ["tokio", "image", "svg"] }
 image_rs = { package = "image", version = "0.25", default-features = false, features = ["gif"] }
 html2text = "0.14"
+rand = "0.9"
 resvg = "0.42"
 rfd = "0.15"
 serde_json = "1.0"

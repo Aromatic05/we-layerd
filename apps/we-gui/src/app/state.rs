@@ -1,4 +1,4 @@
-use std::{collections::{BTreeSet, HashMap}, path::PathBuf, process::Child};
+use std::{collections::{BTreeSet, HashMap}, path::PathBuf, process::Child, time::Duration};
 
 use iced::{widget::pane_grid, window, Size, Theme};
 use we_core::{config::LaunchSettings, wallpaper::{properties::UserPropertySchema, WallpaperEntry, WallpaperType}};
@@ -26,6 +26,7 @@ pub(crate) struct App {
     pub running_source: Option<String>,
     pub language: Language, pub preferences_path: Option<PathBuf>, pub runtime_status: RuntimeStatus,
     pub preferences_generation: u64,
+    pub shuffle_elapsed: Duration,
 }
 
 impl App {
@@ -42,9 +43,15 @@ impl App {
         }
         self.runtime_shutdown = true;
         let stopped = crate::services::runtime::stop(&mut self.runtime_child);
+        self.clear_playback_state();
+        stopped
+    }
+
+    pub(crate) fn clear_playback_state(&mut self) {
         self.playback_running = false;
         self.playback_paused = false;
-        stopped
+        self.running_source = None;
+        self.shuffle_elapsed = Duration::ZERO;
     }
 }
 
@@ -61,6 +68,7 @@ pub(crate) enum Message {
     AssetsPathChanged(String), WorkshopPathChanged(String), RendererLibraryPathChanged(String), RendererCachePathChanged(String), PickAssetsPath, PickWorkshopPath,
     AssetsPathPicked(Option<PathBuf>), WorkshopPathPicked(Option<PathBuf>), FpsLimitChanged(String), InteractiveToggled(bool), ForceSceneAudioLoopToggled(bool), ShowFpsToggled(bool),
     ScaleModeSelected(ScaleModeOption), PreferDmabufToggled(bool), AllowShmFallbackToggled(bool), LanguageSelected(Language), PreferencesSaved { generation: u64, result: Result<(), String> }, Detail(DetailMessage), StatusLoaded(Result<Option<String>, String>), StatusTick,
+    ShufflePressed, ShufflePlaybackPressed, ShuffleEnabledToggled(bool), ShuffleIntervalSelected(u32), ShuffleIntervalChanged(String), ShuffleIncludeVideoToggled(bool), ShuffleIncludeSceneToggled(bool), ShuffleIncludeWebToggled(bool),
     WindowResized(Size), WindowCloseRequested(window::Id), WindowOpened(window::Id), WindowClosed(window::Id), TrayTick, ThemeTick, TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>), ToggleOutput(String),
 }

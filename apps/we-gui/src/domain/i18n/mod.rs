@@ -130,6 +130,12 @@ impl Language {
             (Self::SimplifiedChinese, RuntimeStatus::PreferencesSaveFailed(detail)) => {
                 format!("保存界面偏好设置失败：{detail}")
             }
+            (Self::English, RuntimeStatus::NoShuffleWallpapers) => {
+                "no wallpapers match the random playback sources".to_string()
+            }
+            (Self::SimplifiedChinese, RuntimeStatus::NoShuffleWallpapers) => {
+                "没有符合随机播放来源设置的壁纸".to_string()
+            }
         }
     }
 }
@@ -149,6 +155,7 @@ pub(crate) enum Text {
     SearchWallpapers,
     NoMatchingWallpapers,
     OpenSettings,
+    ShuffleWallpapers,
     FilterAll,
     FilterWeb,
     FilterScene,
@@ -175,6 +182,17 @@ pub(crate) enum Text {
     ScaleCover,
     ScaleStretch,
     Behaviour,
+    ShufflePlayback,
+    EnableAutomaticShuffle,
+    ShuffleInterval,
+    ShuffleCustomInterval,
+    ShuffleEveryMinute,
+    ShuffleEvery5Minutes,
+    ShuffleEvery15Minutes,
+    ShuffleEvery30Minutes,
+    ShuffleEveryHour,
+    ShuffleSources,
+    ShuffleDescription,
     EnableWallpaperInput,
     ForceSceneAudioLoop,
     ForceSceneAudioLoopDescription,
@@ -219,6 +237,7 @@ pub(crate) enum Text {
     SelectPropertyPath,
     TrayShowWindow,
     TrayPlaySwitch,
+    TrayShuffleOnce,
     TrayStop,
     TrayPause,
     TrayResume,

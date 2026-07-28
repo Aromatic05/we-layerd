@@ -1,6 +1,6 @@
 use iced::{
     alignment::Vertical,
-    widget::{button, column, container, image, responsive, row, scrollable, stack, text, text_input},
+    widget::{button, column, container, image, responsive, row, scrollable, stack, svg, text, text_input},
     Background, Border, Color, ContentFit, Element, Fill, Theme,
 };
 use we_core::wallpaper::{WallpaperEntry, WallpaperType};
@@ -47,6 +47,19 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         column![text(language.text(Text::Wallpapers)).size(28), text(language.item_count(app.entries.len())).size(13)]
             .spacing(2)
             .width(Fill),
+        container(
+            button(row![
+                svg(svg::Handle::from_memory(include_bytes!("../../assets/icons/shuffle.svg")))
+                    .width(20)
+                    .height(20),
+                text(language.text(Text::ShuffleWallpapers)).size(16),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center))
+                .on_press(Message::ShufflePressed)
+                .style(top_bar_button_style),
+        )
+        .id("library.shuffle"),
         container(
             button(text(format!("⚙  {}", language.text(Text::OpenSettings))).size(16))
                 .on_press(Message::SettingsPressed)

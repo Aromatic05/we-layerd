@@ -5674,6 +5674,7 @@ dependencies = [
  "html2text",
  "iced",
  "image",
+ "rand 0.9.4",
  "resvg 0.42.0",
  "rfd",
  "serde_json",

@@ -1,7 +1,8 @@
 use std::{path::Path, time::Duration};
 
 use iced::{window, Task};
-use we_core::wallpaper::properties::UserPropertySchema;
+use rand::Rng;
+use we_core::wallpaper::{properties::UserPropertySchema, WallpaperType};
 
 use crate::{
     domain::{
@@ -35,23 +36,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Err(_err) => Task::none(),
         },
         Message::SelectWallpaper(index) => {
-            let Some(entry) = app.entries.get(index).cloned() else {
+            if !select_wallpaper(app, index, true) {
                 return Task::none();
-            };
-
-            app.selected_id = Some(entry.id.clone());
-            app.selected_schema = UserPropertySchema::from_project_file(&entry.project_json)
-                .unwrap_or(UserPropertySchema { entries: Vec::new() });
-            let profile = app.launch_settings.wallpapers.entry(entry.id.clone()).or_default().clone();
-            set_resolution_inputs(app, &profile);
-            if let Err(error) =
-                config::persist_selected(&app.config_path, &app.launch_settings, &entry)
-            {
-                app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
-                eprintln!("failed to save config: {error}");
             }
-            app.sidebar = Some(Sidebar::Detail);
-            app.detail_tab = wallpaper_detail::DetailTab::Actions;
             Task::perform(runtime::fetch_status(), Message::StatusLoaded)
         }
         Message::GifLoaded(path, result) => {
@@ -70,50 +57,20 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     preview.current = (preview.current + 1) % preview.frames.len();
                 }
             }
+            if app.ui_settings.shuffle_enabled && app.playback_running && !app.playback_paused {
+                app.shuffle_elapsed += Duration::from_millis(16);
+                let interval = Duration::from_millis(u64::from(app.ui_settings.shuffle_interval_ms));
+                if app.shuffle_elapsed >= interval {
+                    return shuffle_to_next(app);
+                }
+            }
             Task::none()
         }
         Message::Detail(message) => super::detail_update::update(app, message),
-        Message::PlayPressed => {
-            app.runtime_shutdown = false;
-            if !app.layerd_available {
-                app.runtime_status = RuntimeStatus::DaemonNotFound;
-                return Task::none();
-            }
-
-            if let Err(error) = persist_current_config(app) {
-                app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
-                eprintln!("failed to save config: {error}");
-                return Task::none();
-            }
-
-            if let Err(error) = runtime::reap(&mut app.runtime_child) {
-                eprintln!("failed to query daemon child status: {error}");
-            }
-
-            if runtime::try_switch(&app.config_path) {
-                app.runtime_status = RuntimeStatus::SwitchedDaemon;
-                app.playback_running = true;
-                app.playback_paused = false;
-                return Task::none();
-            }
-
-            let spawn = runtime::start(&app.config_path);
-
-            match spawn {
-                Ok(child) => {
-                    app.runtime_child = Some(child);
-                    app.runtime_status = RuntimeStatus::StartedDaemon;
-                    app.playback_running = true;
-                    app.playback_paused = false;
-                }
-                Err(err) => {
-                    app.runtime_status = RuntimeStatus::StartFailed(err.to_string());
-                    eprintln!("failed to start daemon: {err}");
-                }
-            }
-            Task::none()
-        }
+        Message::PlayPressed => play_selected(app, PlaybackStart::SwitchOrStart),
+        Message::ShufflePlaybackPressed => play_selected(app, PlaybackStart::Restart),
         Message::StopPressed => {
+            app.shuffle_elapsed = Duration::ZERO;
             let stopped = app.shutdown_runtime();
             app.runtime_status = if stopped {
                 RuntimeStatus::StoppedDaemon
@@ -260,22 +217,14 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::LanguageSelected(language) => {
             app.language = language;
-            app.preferences_generation = app.preferences_generation.wrapping_add(1);
             if let Some(tray) = app.tray.as_mut() {
                 tray.set_language(language);
             }
-            if app.preferences_path.is_some() {
-                persist_language_preferences(app)
-            } else {
-                let error = "XDG_CONFIG_HOME and HOME are unavailable".to_string();
-                eprintln!("failed to save GUI preferences: {error}");
-                app.runtime_status = RuntimeStatus::PreferencesSaveFailed(error);
-                Task::none()
-            }
+            queue_preferences_save(app)
         }
         Message::PreferencesSaved { generation, result } => {
             if generation != app.preferences_generation {
-                return persist_language_preferences(app);
+                return persist_gui_preferences(app);
             }
             if let Err(error) = result {
                 eprintln!("failed to save GUI preferences: {error}");
@@ -283,21 +232,86 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::ShufflePressed => shuffle_to_next(app),
+        Message::ShuffleEnabledToggled(value) => {
+            app.ui_settings.shuffle_enabled = value;
+            app.shuffle_elapsed = Duration::ZERO;
+            queue_preferences_save(app)
+        }
+        Message::ShuffleIntervalSelected(value) => {
+            if crate::domain::settings::is_shuffle_interval_ms(value) {
+                app.ui_settings.shuffle_interval_ms = value;
+                app.ui_settings.shuffle_interval_input = value.to_string();
+                app.shuffle_elapsed = Duration::ZERO;
+                return queue_preferences_save(app);
+            }
+            Task::none()
+        }
+        Message::ShuffleIntervalChanged(value) => {
+            app.ui_settings.shuffle_interval_input = value.clone();
+            let Ok(interval_ms) = value.parse::<u32>() else {
+                return Task::none();
+            };
+            if !crate::domain::settings::is_shuffle_interval_ms(interval_ms) {
+                return Task::none();
+            }
+            app.ui_settings.shuffle_interval_ms = interval_ms;
+            app.shuffle_elapsed = Duration::ZERO;
+            queue_preferences_save(app)
+        }
+        Message::ShuffleIncludeVideoToggled(value) => {
+            if !value
+                && !app.ui_settings.shuffle_include_scene
+                && !app.ui_settings.shuffle_include_web
+            {
+                return Task::none();
+            }
+            app.ui_settings.shuffle_include_video = value;
+            app.shuffle_elapsed = Duration::ZERO;
+            queue_preferences_save(app)
+        }
+        Message::ShuffleIncludeSceneToggled(value) => {
+            if !value
+                && !app.ui_settings.shuffle_include_video
+                && !app.ui_settings.shuffle_include_web
+            {
+                return Task::none();
+            }
+            app.ui_settings.shuffle_include_scene = value;
+            app.shuffle_elapsed = Duration::ZERO;
+            queue_preferences_save(app)
+        }
+        Message::ShuffleIncludeWebToggled(value) => {
+            if !value
+                && !app.ui_settings.shuffle_include_video
+                && !app.ui_settings.shuffle_include_scene
+            {
+                return Task::none();
+            }
+            app.ui_settings.shuffle_include_web = value;
+            app.shuffle_elapsed = Duration::ZERO;
+            queue_preferences_save(app)
+        }
         Message::StatusLoaded(result) => {
             app.runtime_status = match result {
                 Ok(Some(text)) => {
                     app.playback_running = status_value(&text, "phase") == Some("running");
                     app.playback_paused = status_value(&text, "phase") == Some("paused");
-                    app.running_source = status_value(&text, "source").map(str::to_string);
+                    if app.playback_running || app.playback_paused {
+                        app.running_source = status_value(&text, "source").map(str::to_string);
+                    } else {
+                        app.clear_playback_state();
+                    }
                     RuntimeStatus::Raw(text)
                 }
                 Ok(None) => {
-                    app.playback_running = false;
-                    app.playback_paused = false;
-                    app.running_source = None;
+                    app.clear_playback_state();
                     RuntimeStatus::EmptyResponse
                 }
-                Err(err) => RuntimeStatus::Unavailable(err),
+                Err(err) => {
+                    app.clear_playback_state();
+                    RuntimeStatus::Unavailable(err)
+                }
             };
             Task::none()
         }
@@ -353,6 +367,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 task.map(Message::WindowOpened)
             }
             tray::TrayAction::PlaySwitch => Task::done(Message::PlayPressed),
+            tray::TrayAction::ShuffleOnce => Task::done(Message::ShufflePressed),
             tray::TrayAction::Stop => Task::done(Message::StopPressed),
             tray::TrayAction::Pause => {
                 if runtime::send_control("pause") {
@@ -382,14 +397,212 @@ fn status_value<'a>(status: &'a str, key: &str) -> Option<&'a str> {
         .map(|value| value.trim_matches('"'))
 }
 
-fn persist_language_preferences(app: &App) -> Task<Message> {
+fn queue_preferences_save(app: &mut App) -> Task<Message> {
+    app.preferences_generation = app.preferences_generation.wrapping_add(1);
+    if app.preferences_path.is_some() {
+        return persist_gui_preferences(app);
+    }
+
+    let error = "XDG_CONFIG_HOME and HOME are unavailable".to_string();
+    eprintln!("failed to save GUI preferences: {error}");
+    app.runtime_status = RuntimeStatus::PreferencesSaveFailed(error);
+    Task::none()
+}
+
+fn persist_gui_preferences(app: &App) -> Task<Message> {
     let Some(path) = app.preferences_path.clone() else {
         return Task::none();
     };
-    let language = app.language;
     let generation = app.preferences_generation;
-    Task::perform(
-        async move { preferences::save(&path, preferences::GuiPreferences { language }) },
-        move |result| Message::PreferencesSaved { generation, result },
+    let preferences = preferences::GuiPreferences {
+        language: app.language,
+        shuffle_enabled: app.ui_settings.shuffle_enabled,
+        shuffle_interval_ms: app.ui_settings.shuffle_interval_ms,
+        shuffle_include_video: app.ui_settings.shuffle_include_video,
+        shuffle_include_scene: app.ui_settings.shuffle_include_scene,
+        shuffle_include_web: app.ui_settings.shuffle_include_web,
+    };
+    Task::perform(async move { preferences::save(&path, preferences) }, move |result| {
+        Message::PreferencesSaved { generation, result }
+    })
+}
+
+fn select_wallpaper(app: &mut App, index: usize, show_details: bool) -> bool {
+    let Some(entry) = app.entries.get(index).cloned() else {
+        return false;
+    };
+
+    app.selected_id = Some(entry.id.clone());
+    app.selected_schema = UserPropertySchema::from_project_file(&entry.project_json)
+        .unwrap_or(UserPropertySchema { entries: Vec::new() });
+    let profile = app.launch_settings.wallpapers.entry(entry.id.clone()).or_default().clone();
+    set_resolution_inputs(app, &profile);
+    app.shuffle_elapsed = Duration::ZERO;
+    if let Err(error) = config::persist_selected(&app.config_path, &app.launch_settings, &entry) {
+        app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+        eprintln!("failed to save config: {error}");
+    }
+    if show_details {
+        app.sidebar = Some(Sidebar::Detail);
+        app.detail_tab = wallpaper_detail::DetailTab::Actions;
+    }
+    true
+}
+
+fn shuffle_to_next(app: &mut App) -> Task<Message> {
+    let candidates = shuffle_candidate_indices(app);
+    if candidates.is_empty() {
+        app.shuffle_elapsed = Duration::ZERO;
+        app.runtime_status = RuntimeStatus::NoShuffleWallpapers;
+        return Task::none();
+    }
+
+    let index = candidates[rand::rng().random_range(0..candidates.len())];
+    if !select_wallpaper(app, index, false) {
+        return Task::none();
+    }
+    Task::done(Message::ShufflePlaybackPressed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackStart {
+    SwitchOrStart,
+    Restart,
+}
+
+fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
+    app.runtime_shutdown = false;
+    if !app.layerd_available {
+        app.runtime_status = RuntimeStatus::DaemonNotFound;
+        return Task::none();
+    }
+
+    if let Err(error) = persist_current_config(app) {
+        app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+        eprintln!("failed to save config: {error}");
+        return Task::none();
+    }
+
+    if let Err(error) = runtime::reap(&mut app.runtime_child) {
+        eprintln!("failed to query daemon child status: {error}");
+    }
+
+    if start == PlaybackStart::SwitchOrStart && runtime::try_switch(&app.config_path) {
+        app.runtime_status = RuntimeStatus::SwitchedDaemon;
+        mark_selected_wallpaper_running(app);
+        return Task::none();
+    }
+
+    let spawn = match start {
+        PlaybackStart::SwitchOrStart => runtime::start(&app.config_path).map_err(|error| error.to_string()),
+        PlaybackStart::Restart => runtime::restart(&app.config_path, &mut app.runtime_child),
+    };
+
+    match spawn {
+        Ok(child) => {
+            app.runtime_child = Some(child);
+            app.runtime_status = RuntimeStatus::StartedDaemon;
+            mark_selected_wallpaper_running(app);
+        }
+        Err(error) => {
+            app.clear_playback_state();
+            app.runtime_status = RuntimeStatus::StartFailed(error.clone());
+            eprintln!("failed to start daemon: {error}");
+        }
+    }
+    Task::none()
+}
+
+fn mark_selected_wallpaper_running(app: &mut App) {
+    app.playback_running = true;
+    app.playback_paused = false;
+    app.running_source = selected_wallpaper_source(app);
+    app.shuffle_elapsed = Duration::ZERO;
+}
+
+fn shuffle_candidate_indices(app: &App) -> Vec<usize> {
+    shuffle_candidate_indices_for(
+        &app.entries,
+        app.running_source.as_deref(),
+        app.ui_settings.shuffle_include_video,
+        app.ui_settings.shuffle_include_scene,
+        app.ui_settings.shuffle_include_web,
     )
+}
+
+fn shuffle_candidate_indices_for(
+    entries: &[we_core::wallpaper::WallpaperEntry],
+    running_source: Option<&str>,
+    include_video: bool,
+    include_scene: bool,
+    include_web: bool,
+) -> Vec<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            let included = match entry.ty {
+                WallpaperType::Video => include_video,
+                WallpaperType::Scene => include_scene,
+                WallpaperType::Web => include_web,
+                WallpaperType::Unknown => false,
+            };
+            let source = entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy();
+            included && running_source != Some(source.as_ref())
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn selected_wallpaper_source(app: &App) -> Option<String> {
+    let selected_id = app.selected_id.as_deref()?;
+    let entry = app.entries.iter().find(|entry| entry.id == selected_id)?;
+    Some(
+        entry
+            .project_json
+            .parent()
+            .unwrap_or(&entry.project_json)
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use we_core::wallpaper::{WallpaperEntry, WallpaperType};
+
+    use super::shuffle_candidate_indices_for;
+
+    #[test]
+    fn shuffle_excludes_running_source_not_an_unplayed_selection() {
+        let entries = vec![
+            wallpaper("selected", "/wallpapers/selected/project.json", WallpaperType::Video),
+            wallpaper("running", "/wallpapers/running/project.json", WallpaperType::Scene),
+            wallpaper("other", "/wallpapers/other/project.json", WallpaperType::Web),
+        ];
+
+        assert_eq!(
+            shuffle_candidate_indices_for(
+                &entries,
+                Some("/wallpapers/running"),
+                true,
+                true,
+                true,
+            ),
+            vec![0, 2],
+        );
+    }
+
+    fn wallpaper(id: &str, project_json: &str, ty: WallpaperType) -> WallpaperEntry {
+        WallpaperEntry {
+            id: id.to_string(),
+            project_json: PathBuf::from(project_json),
+            title: id.to_string(),
+            ty,
+            preview: None,
+            source_file: None,
+        }
+    }
 }
