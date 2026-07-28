@@ -6,7 +6,7 @@ if [ -z "${APPDIR:-}" ]; then
 fi
 
 export PATH="${APPDIR}/usr/bin${PATH:+:${PATH}}"
-private_library_path="${APPDIR}/usr/lib:${APPDIR}/usr/lib/cef:${APPDIR}/usr/lib/we-layerd/dxc"
+private_library_path="${APPDIR}/usr/lib:${APPDIR}/usr/lib/we-layerd/dxc"
 export LD_LIBRARY_PATH="${private_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export XDG_DATA_DIRS="${APPDIR}/usr/share${XDG_DATA_DIRS:+:${XDG_DATA_DIRS}}"
 

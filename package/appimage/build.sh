@@ -18,7 +18,7 @@ if [[ "${architecture}" != "x86_64" ]]; then
   exit 1
 fi
 
-for command in cargo curl file find gcc grep gst-inspect-1.0 install patch patchelf readelf sha256sum strip tar xdotool; do
+for command in cargo curl ffmpeg file find gcc grep gst-inspect-1.0 gst-launch-1.0 install patch patchelf readelf sha256sum strip tar xdotool; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     printf 'Missing required command: %s\n' "${command}" >&2
     exit 1
@@ -143,18 +143,26 @@ install -d "${appdir}/usr/lib/gstreamer-1.0" \
   "${appdir}/usr/lib/gstreamer1.0/gstreamer-1.0"
 required_gstreamer_plugins=(
   libgstapp.so
+  libgstalsa.so
+  libgstaudioconvert.so
+  libgstaudioparsers.so
+  libgstaudioresample.so
+  libgstautodetect.so
   libgstcoreelements.so
+  libgstdeinterlace.so
   libgstgio.so
   libgstisomp4.so
   libgstlibav.so
   libgstplayback.so
+  libgstpulseaudio.so
   libgsttypefindfunctions.so
   libgstvideoconvertscale.so
+  libgstvideofilter.so
   libgstvideoparsersbad.so
+  libgstvolume.so
 )
 optional_gstreamer_plugins=(
   libgstva.so
-  libgstnvcodec.so
 )
 for plugin in "${required_gstreamer_plugins[@]}"; do
   if [[ ! -f "${gstreamer_plugins_dir}/${plugin}" ]]; then
@@ -294,13 +302,33 @@ smoke_test_cef_helper_dlopen "${appdir}/usr/lib/we-cef-helper"
 
 gstreamer_registry="${out_dir}/gstreamer-build-check-registry.bin"
 rm -f "${gstreamer_registry}"
-for element in filesrc queue qtdemux h264parse decodebin videoconvert appsink giostreamsrc; do
-  GST_REGISTRY_1_0="${gstreamer_registry}" \
-  GST_PLUGIN_SYSTEM_PATH_1_0="${appdir}/usr/lib/gstreamer-1.0" \
-  GST_PLUGIN_PATH_1_0="${appdir}/usr/lib/gstreamer-1.0" \
-  GST_PLUGIN_SCANNER_1_0="${appdir}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner" \
-    gst-inspect-1.0 "${element}" >/dev/null
+gstreamer_environment=(
+  "GST_REGISTRY_1_0=${gstreamer_registry}"
+  "GST_PLUGIN_SYSTEM_PATH_1_0=${appdir}/usr/lib/gstreamer-1.0"
+  "GST_PLUGIN_PATH_1_0=${appdir}/usr/lib/gstreamer-1.0"
+  "GST_PLUGIN_SCANNER_1_0=${appdir}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner"
+)
+for element in \
+  filesrc queue qtdemux h264parse avdec_h264 avdec_aac decodebin \
+  audioconvert audioresample volume autoaudiosink pulsesink alsasink \
+  videoconvert videobalance deinterlace appsink giostreamsrc; do
+  env "${gstreamer_environment[@]}" gst-inspect-1.0 "${element}" >/dev/null
 done
+
+if [[ -e "${appdir}/usr/lib/gstreamer-1.0/libgstnvcodec.so" ]]; then
+  printf 'NVIDIA codec plugin must not be bundled in the portable AppImage\n' >&2
+  exit 1
+fi
+
+gstreamer_fixture="${tools_dir}/gstreamer-smoke.mp4"
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i 'testsrc2=size=64x64:rate=10' \
+  -f lavfi -i 'sine=frequency=440:sample_rate=48000' \
+  -t 1 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest \
+  "${gstreamer_fixture}"
+env "${gstreamer_environment[@]}" gst-launch-1.0 -q \
+  playbin3 uri="file://${gstreamer_fixture}" \
+  video-sink=fakesink audio-sink=fakesink
 rm -f "${gstreamer_registry}"
 
 (

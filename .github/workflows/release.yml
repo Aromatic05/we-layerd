@@ -455,9 +455,11 @@ jobs:
           set -euo pipefail
           apt-get -o Acquire::Retries=5 update
           apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-            binutils build-essential bzip2 ca-certificates curl file git \
+            binutils build-essential bzip2 ca-certificates curl ffmpeg file git \
+            gstreamer1.0-alsa \
             gstreamer1.0-libav gstreamer1.0-plugins-bad \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-pulseaudio \
             gstreamer1.0-tools libasound2-dev libdrm-dev libfontconfig1-dev \
             libfreetype-dev libgl-dev libgstreamer-plugins-bad1.0-dev \
             libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
