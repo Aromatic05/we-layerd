@@ -58,6 +58,12 @@ mod tests {
             fps_limit: "144".to_string(),
             show_fps: true,
             scale_mode: ScaleModeOption::Stretch,
+            shuffle_enabled: false,
+            shuffle_interval_ms: 1_800_000,
+            shuffle_interval_input: "1800000".to_string(),
+            shuffle_include_video: true,
+            shuffle_include_scene: true,
+            shuffle_include_web: true,
         }
     }
 
@@ -104,6 +110,7 @@ mod tests {
             language: Language::English, preferences_path: Some(preferences_path.clone()),
             runtime_status: RuntimeStatus::DaemonNotRunning,
             preferences_generation: 0,
+            shuffle_elapsed: std::time::Duration::ZERO,
         };
 
         let _task = update::update(
@@ -180,6 +187,7 @@ mod tests {
             language: Language::English, preferences_path: None,
             runtime_status: RuntimeStatus::DaemonNotRunning,
             preferences_generation: 0,
+            shuffle_elapsed: std::time::Duration::ZERO,
         };
         drop(app);
 
