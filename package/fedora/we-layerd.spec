@@ -44,11 +44,12 @@ BuildRequires:  libxdo-devel
 BuildRequires:  wayland-protocols-devel
 
 Requires:       cef
+Requires:       gstreamer1-plugin-libav
+Requires:       gstreamer1-plugins-bad-free
+Requires:       gstreamer1-plugins-base
+Requires:       gstreamer1-plugins-good
 Requires:       xdotool
 Suggests:       gnome-shell
-Recommends:     gstreamer1-plugins-bad-free
-Recommends:     gstreamer1-plugins-base
-Recommends:     gstreamer1-plugins-good
 
 %description
 we-layerd runs Wallpaper Engine wallpapers through a native renderer on
