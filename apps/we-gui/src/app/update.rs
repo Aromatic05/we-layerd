@@ -487,6 +487,12 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
         eprintln!("failed to query daemon child status: {error}");
     }
 
+    let start = effective_playback_start(
+        start,
+        std::env::var_os(we_core::install_layout::RENDERER_LIBRARY_OVERRIDE_ENV).is_some(),
+        app.runtime_child.is_some(),
+    );
+
     if start == PlaybackStart::SwitchOrStart && runtime::try_switch(&app.config_path) {
         app.runtime_status = RuntimeStatus::SwitchedDaemon;
         mark_selected_wallpaper_running(app);
@@ -511,6 +517,18 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
         }
     }
     Task::none()
+}
+
+fn effective_playback_start(
+    requested: PlaybackStart,
+    forced_renderer_library: bool,
+    owns_daemon_child: bool,
+) -> PlaybackStart {
+    if requested == PlaybackStart::SwitchOrStart && forced_renderer_library && !owns_daemon_child {
+        PlaybackStart::Restart
+    } else {
+        requested
+    }
 }
 
 fn mark_selected_wallpaper_running(app: &mut App) {
@@ -573,7 +591,23 @@ mod tests {
 
     use we_core::wallpaper::{WallpaperEntry, WallpaperType};
 
-    use super::shuffle_candidate_indices_for;
+    use super::{effective_playback_start, shuffle_candidate_indices_for, PlaybackStart};
+
+    #[test]
+    fn appimage_restarts_an_unowned_daemon_before_first_playback() {
+        assert_eq!(
+            effective_playback_start(PlaybackStart::SwitchOrStart, true, false),
+            PlaybackStart::Restart,
+        );
+        assert_eq!(
+            effective_playback_start(PlaybackStart::SwitchOrStart, true, true),
+            PlaybackStart::SwitchOrStart,
+        );
+        assert_eq!(
+            effective_playback_start(PlaybackStart::SwitchOrStart, false, false),
+            PlaybackStart::SwitchOrStart,
+        );
+    }
 
     #[test]
     fn shuffle_excludes_running_source_not_an_unplayed_selection() {

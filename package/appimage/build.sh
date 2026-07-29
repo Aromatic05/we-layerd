@@ -267,6 +267,39 @@ audit_no_executable_stack() {
   return "${failed}"
 }
 
+audit_bundled_gstreamer_closure() {
+  local tree="$1"
+  local target
+  local dependency
+  local resolved
+  local failed=0
+  local targets=(
+    "${tree}/usr/lib/libwallpaper-engine-renderer.so"
+    "${tree}/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner"
+  )
+  while IFS= read -r -d '' target; do
+    targets+=("${target}")
+  done < <(find "${tree}/usr/lib/gstreamer-1.0" -maxdepth 1 -type f -name '*.so' -print0)
+
+  for target in "${targets[@]}"; do
+    while read -r dependency _ resolved _; do
+      case "${dependency}" in
+        libgst*.so*|libgstreamer*.so*)
+          if [[ "${resolved}" != "${tree}/usr/lib/"* ]]; then
+            printf 'GStreamer dependency escaped AppImage: %s -> %s (%s)\n' \
+              "${dependency}" "${resolved}" "${target}" >&2
+            failed=1
+          fi
+          ;;
+      esac
+    done < <(
+      LD_LIBRARY_PATH="${tree}/usr/lib:${tree}/usr/lib/we-layerd/dxc" \
+        ldd "${target}"
+    )
+  done
+  return "${failed}"
+}
+
 smoke_test_cef_helper_dlopen() {
   local helper="$1"
   local source_file="${tools_dir}/cef-helper-dlopen-smoke.c"
@@ -298,6 +331,7 @@ EOF
 audit_no_glibc "${appdir}"
 audit_no_host_graphics "${appdir}"
 audit_no_executable_stack "${appdir}"
+audit_bundled_gstreamer_closure "${appdir}"
 smoke_test_cef_helper_dlopen "${appdir}/usr/lib/we-cef-helper"
 
 gstreamer_registry="${out_dir}/gstreamer-build-check-registry.bin"
@@ -358,8 +392,31 @@ audit_no_glibc "${extract_dir}/squashfs-root"
 audit_no_host_graphics "${extract_dir}/squashfs-root"
 audit_no_executable_stack "${extract_dir}/squashfs-root"
 smoke_test_cef_helper_dlopen "${extract_dir}/squashfs-root/usr/lib/we-cef-helper"
+audit_bundled_gstreamer_closure "${extract_dir}/squashfs-root"
 
 APPIMAGE_EXTRACT_AND_RUN=1 "${output_appimage}" --cli --help >/dev/null
+
+poison_home="$(mktemp -d)"
+mkdir -p "${poison_home}/.local/lib" "${poison_home}/.cache"
+printf '%s\n' 'intentionally invalid host renderer' \
+  > "${poison_home}/.local/lib/libwallpaper-engine-renderer.so"
+doctor_output="$(
+  HOME="${poison_home}" \
+    XDG_CACHE_HOME="${poison_home}/.cache" \
+    APPIMAGE_EXTRACT_AND_RUN=1 \
+    "${output_appimage}" --cli doctor 2>&1
+)"
+if ! grep -Fq 'OK renderer_symbols = loaded' <<<"${doctor_output}"; then
+  printf 'AppImage failed to load its bundled renderer with a conflicting host installation:\n%s\n' \
+    "${doctor_output}" >&2
+  exit 1
+fi
+if grep -Fq "${poison_home}/.local/lib/libwallpaper-engine-renderer.so" <<<"${doctor_output}"; then
+  printf 'AppImage selected a host renderer instead of its bundled renderer:\n%s\n' \
+    "${doctor_output}" >&2
+  exit 1
+fi
+rm -rf "${poison_home}"
 
 printf '\nBuilt AppImage:\n%s\n' "${output_appimage}"
 printf 'Size: %s\n' "$(du -h "${output_appimage}" | cut -f1)"

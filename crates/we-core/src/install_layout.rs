@@ -3,6 +3,7 @@ use std::{collections::HashSet, path::PathBuf};
 use anyhow::{anyhow, Result};
 
 pub const RENDERER_LIBRARY_NAME: &str = "libwallpaper-engine-renderer.so";
+pub const RENDERER_LIBRARY_OVERRIDE_ENV: &str = "WE_LAYERD_RENDERER_LIBRARY_PATH";
 
 pub fn expand_tilde(raw: &str) -> PathBuf {
     if raw == "~" {
@@ -83,6 +84,27 @@ pub fn renderer_library_candidates(configured_path: &str) -> Vec<PathBuf> {
 }
 
 pub fn resolve_renderer_library(configured_path: &str) -> Result<PathBuf> {
+    let forced_override = std::env::var_os(RENDERER_LIBRARY_OVERRIDE_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    resolve_renderer_library_with_override(configured_path, forced_override)
+}
+
+fn resolve_renderer_library_with_override(
+    configured_path: &str,
+    forced_override: Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(forced_path) = forced_override {
+        if forced_path.is_file() {
+            return Ok(forced_path);
+        }
+        return Err(anyhow!(
+            "renderer library forced by {env} does not exist or is not a file: {path}",
+            env = RENDERER_LIBRARY_OVERRIDE_ENV,
+            path = forced_path.display()
+        ));
+    }
+
     let candidates = renderer_library_candidates(configured_path);
     for candidate in &candidates {
         if candidate.is_file() {
@@ -128,9 +150,26 @@ fn format_candidate_list(candidates: &[PathBuf]) -> String {
 }
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
-    use super::{expand_tilde, renderer_library_candidates};
+    use super::{
+        expand_tilde, renderer_library_candidates, resolve_renderer_library_with_override,
+    };
+
+    fn temporary_directory(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir()
+            .join(format!("we-layerd-install-layout-{name}-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&path).expect("failed to create temporary directory");
+        path
+    }
 
     #[test]
     fn expand_tilde_keeps_plain_paths() {
@@ -142,5 +181,40 @@ mod tests {
         let candidates = renderer_library_candidates("");
         assert!(!candidates.is_empty());
         assert_ne!(candidates[0], PathBuf::from(""));
+    }
+
+    #[test]
+    fn forced_renderer_library_overrides_an_existing_configured_library() {
+        let root = temporary_directory("forced-override");
+        let forced = root.join("bundled-renderer.so");
+        let configured = root.join("host-renderer.so");
+        fs::write(&forced, b"bundled").expect("failed to create bundled renderer");
+        fs::write(&configured, b"host").expect("failed to create configured renderer");
+
+        let resolved = resolve_renderer_library_with_override(
+            configured.to_str().expect("configured path must be UTF-8"),
+            Some(forced.clone()),
+        )
+        .expect("forced renderer should resolve");
+
+        assert_eq!(resolved, forced);
+        fs::remove_dir_all(root).expect("failed to clean temporary directory");
+    }
+
+    #[test]
+    fn missing_forced_renderer_library_does_not_fall_back_to_configured_library() {
+        let root = temporary_directory("missing-forced-override");
+        let forced = root.join("missing-bundled-renderer.so");
+        let configured = root.join("host-renderer.so");
+        fs::write(&configured, b"host").expect("failed to create configured renderer");
+
+        let error = resolve_renderer_library_with_override(
+            configured.to_str().expect("configured path must be UTF-8"),
+            Some(forced.clone()),
+        )
+        .expect_err("missing forced renderer must fail closed");
+
+        assert!(error.to_string().contains(&forced.display().to_string()));
+        fs::remove_dir_all(root).expect("failed to clean temporary directory");
     }
 }
