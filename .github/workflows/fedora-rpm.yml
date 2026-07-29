@@ -44,7 +44,7 @@ jobs:
             wayland-devel wayland-protocols-devel xz
 
       - name: Check out source and submodules
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -70,7 +70,7 @@ jobs:
           compgen -G 'package/fedora/out/SRPMS/*.src.rpm' >/dev/null
 
       - name: Upload packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: we-layerd-fedora44-x86_64-${{ github.sha }}
           path: |
