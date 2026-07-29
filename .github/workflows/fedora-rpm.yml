@@ -22,9 +22,9 @@ concurrency:
 
 jobs:
   rpm:
-    name: Fedora 43 x86_64 RPM
+    name: Fedora 44 x86_64 RPM
     runs-on: ubuntu-24.04
-    container: fedora:43
+    container: fedora:44
     timeout-minutes: 60
 
     steps:
@@ -72,7 +72,7 @@ jobs:
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: we-layerd-fedora43-x86_64-${{ github.sha }}
+          name: we-layerd-fedora44-x86_64-${{ github.sha }}
           path: |
             package/fedora/out/RPMS/x86_64/*.rpm
             package/fedora/out/SRPMS/*.src.rpm
