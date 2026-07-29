@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_BUILD_JOBS: "2"
+  CARGO_INCREMENTAL: "0"
+  CMAKE_BUILD_PARALLEL_LEVEL: "2"
+  MAKEFLAGS: "-j2"
+
 concurrency:
   group: fedora-rpm-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

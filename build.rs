@@ -8,6 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=.gitmodules");
     println!("cargo:rerun-if-env-changed=CEF_ROOT");
+    println!("cargo:rerun-if-env-changed=CMAKE_BUILD_PARALLEL_LEVEL");
     println!("cargo:rerun-if-env-changed=WE_LAYERD_INSTALL_PREFIX");
     println!("cargo:rerun-if-env-changed=WE_LAYERD_PREBUILT_RENDERER_ROOT");
 
@@ -53,6 +54,7 @@ fn main() {
     ensure_cmake_cache_value(&build_root.join("CMakeCache.txt"), "BUILD_WEWEB:BOOL", "ON")
         .expect("failed to verify BUILD_WEWEB in CMakeCache.txt");
 
+    let parallel_jobs = env::var("CMAKE_BUILD_PARALLEL_LEVEL").unwrap_or_else(|_| "1".into());
     for target in ["wallpaper-engine-renderer", "we-cef-helper"] {
         run(
             Command::new("cmake")
@@ -60,7 +62,8 @@ fn main() {
                 .arg(&build_root)
                 .arg("--target")
                 .arg(target)
-                .arg("--parallel"),
+                .arg("--parallel")
+                .arg(&parallel_jobs),
             &format!("build upstream target {target}"),
         );
     }
