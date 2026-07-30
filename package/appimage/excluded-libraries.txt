@@ -32,3 +32,26 @@ libgbm*.so*
 libvulkan*.so*
 libva*.so*
 libvdpau*.so*
+
+# Host graphics drivers must also keep their transitive ABI dependencies.
+# Bundling these stable-SONAME libraries lets a host Mesa/NVIDIA ICD reuse
+# Ubuntu copies that were loaded earlier by GTK/GStreamer, which can make the
+# driver fail to load with VK_ERROR_INCOMPATIBLE_DRIVER.
+libudev.so*
+libffi.so*
+libelf.so*
+libdw.so*
+libunwind.so*
+libzstd.so*
+liblzma.so*
+libxcb*.so*
+libX11*.so*
+libXau.so*
+libXdmcp.so*
+libXext.so*
+libXrender.so*
+libwayland-client.so*
+libwayland-server.so*
+libwayland-cursor.so*
+libwayland-egl.so*
+libxshmfence.so*

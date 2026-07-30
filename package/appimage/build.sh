@@ -226,12 +226,25 @@ find "${appdir}/usr/lib/gstreamer1.0/gstreamer-1.0" -maxdepth 1 -type f \
   -exec sh -c 'file "$1" | grep -q ELF && patchelf --set-rpath '\''$ORIGIN/../..:$ORIGIN/../../..'\'' "$1" || true' sh {} \;
 
 forbidden_name_regex='^(ld-linux[^/]*\.so(\..*)?|lib(c|pthread|dl|rt|m|resolv|util|anl|BrokenLocale)\.so(\..*)?|libnss_[^/]*\.so(\..*)?|lib(memusage|pcprofile|SegFault)\.so(\..*)?)$'
+host_driver_abi_name_regex='^(lib(udev|ffi|elf|dw|unwind|zstd|lzma|xcb[^/]*|X11[^/]*|Xau|Xdmcp|Xext|Xrender|wayland-(client|server|cursor|egl)|xshmfence)\.so(\..*)?)$'
 audit_no_glibc() {
   local tree="$1"
   local found
   found="$(find -L "${tree}" \( -type f -o -type l \) -printf '%f\n' | grep -E "${forbidden_name_regex}" || true)"
   if [[ -n "${found}" ]]; then
     printf 'Forbidden glibc or dynamic-loader files were bundled under %s:\n%s\n' \
+      "${tree}" "${found}" >&2
+    return 1
+  fi
+}
+
+audit_no_host_driver_abi() {
+  local tree="$1"
+  local found
+  found="$(find -L "${tree}/usr/lib" -maxdepth 1 \( -type f -o -type l \) -printf '%f\n' | \
+    grep -E "${host_driver_abi_name_regex}" || true)"
+  if [[ -n "${found}" ]]; then
+    printf 'Host graphics driver ABI dependencies were bundled under %s/usr/lib:\n%s\n' \
       "${tree}" "${found}" >&2
     return 1
   fi
@@ -329,6 +342,7 @@ EOF
 }
 
 audit_no_glibc "${appdir}"
+audit_no_host_driver_abi "${appdir}"
 audit_no_host_graphics "${appdir}"
 audit_no_executable_stack "${appdir}"
 audit_bundled_gstreamer_closure "${appdir}"
@@ -389,6 +403,7 @@ trap 'rm -rf "${extract_dir}"' EXIT
   "${output_appimage}" --appimage-extract >/dev/null
 )
 audit_no_glibc "${extract_dir}/squashfs-root"
+audit_no_host_driver_abi "${extract_dir}/squashfs-root"
 audit_no_host_graphics "${extract_dir}/squashfs-root"
 audit_no_executable_stack "${extract_dir}/squashfs-root"
 smoke_test_cef_helper_dlopen "${extract_dir}/squashfs-root/usr/lib/we-cef-helper"
