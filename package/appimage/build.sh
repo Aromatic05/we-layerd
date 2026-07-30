@@ -313,6 +313,50 @@ audit_bundled_gstreamer_closure() {
   return "${failed}"
 }
 
+smoke_test_apprun_xdg_data_dirs() {
+  local probe_root="${tools_dir}/apprun-xdg-data-dirs-smoke"
+  local actual
+  local expected
+  rm -rf "${probe_root}"
+  mkdir -p \
+    "${probe_root}/usr/bin" \
+    "${probe_root}/usr/lib/we-layerd/dxc" \
+    "${probe_root}/usr/share" \
+    "${probe_root}/home/.cache"
+  cat > "${probe_root}/usr/bin/we-layerd" <<'EOF'
+#!/bin/sh
+printf '%s\n' "${XDG_DATA_DIRS-}"
+EOF
+  chmod 0755 "${probe_root}/usr/bin/we-layerd"
+  install -m0755 "${script_dir}/AppRun" "${probe_root}/AppRun"
+
+  actual="$(
+    env -u XDG_DATA_DIRS \
+      HOME="${probe_root}/home" \
+      APPDIR="${probe_root}" \
+      "${probe_root}/AppRun" --cli
+  )"
+  expected="${probe_root}/usr/share:/usr/local/share:/usr/share"
+  if [[ "${actual}" != "${expected}" ]]; then
+    printf 'AppRun replaced the default XDG data directories: expected %s, got %s\n' \
+      "${expected}" "${actual}" >&2
+    return 1
+  fi
+
+  actual="$(
+    XDG_DATA_DIRS='/opt/share:/srv/share' \
+      HOME="${probe_root}/home" \
+      APPDIR="${probe_root}" \
+      "${probe_root}/AppRun" --cli
+  )"
+  expected="${probe_root}/usr/share:/opt/share:/srv/share"
+  if [[ "${actual}" != "${expected}" ]]; then
+    printf 'AppRun failed to preserve configured XDG data directories: expected %s, got %s\n' \
+      "${expected}" "${actual}" >&2
+    return 1
+  fi
+}
+
 smoke_test_cef_helper_dlopen() {
   local helper="$1"
   local source_file="${tools_dir}/cef-helper-dlopen-smoke.c"
@@ -341,6 +385,7 @@ EOF
   "${test_binary}" "${helper}"
 }
 
+smoke_test_apprun_xdg_data_dirs
 audit_no_glibc "${appdir}"
 audit_no_host_driver_abi "${appdir}"
 audit_no_host_graphics "${appdir}"
