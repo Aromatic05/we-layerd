@@ -3,6 +3,7 @@ name: Release binaries
 on:
   push:
     tags:
+      - "v*"
       - "dev-*"
   workflow_dispatch:
 
@@ -34,7 +35,6 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       is_release: ${{ steps.version.outputs.is_release }}
       tag: ${{ steps.version.outputs.tag }}
-      tag_exists: ${{ steps.version.outputs.tag_exists }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -44,8 +44,6 @@ jobs:
       - name: Resolve build version
         id: version
         shell: bash
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           manifest_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n1)"
@@ -53,46 +51,43 @@ jobs:
             printf 'Failed to read package version from Cargo.toml\n' >&2
             exit 1
           fi
+          if [[ ! "${manifest_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'Package version must use MAJOR.MINOR.PATCH, got %s\n' \
+              "${manifest_version}" >&2
+            exit 1
+          fi
 
           is_release=false
           tag=""
-          tag_exists=false
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            if [[ "${GITHUB_REF_TYPE}" != "branch" || "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]]; then
-              printf 'Stable releases must be dispatched from the default branch %s, got %s/%s\n' \
-                "${DEFAULT_BRANCH}" "${GITHUB_REF_TYPE}" "${GITHUB_REF_NAME}" >&2
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              printf 'Release tag must use vMAJOR.MINOR.PATCH, got %s\n' "${tag}" >&2
               exit 1
             fi
-
-            is_release=true
-            tag="v${manifest_version}"
-            if git show-ref --verify --quiet "refs/tags/${tag}"; then
-              tag_commit="$(git rev-list -n 1 "${tag}")"
-              if [[ "${tag_commit}" != "${GITHUB_SHA}" ]]; then
-                printf 'Release tag %s already points to %s instead of the selected commit %s\n' \
-                  "${tag}" "${tag_commit}" "${GITHUB_SHA}" >&2
-                printf 'Delete the failed tag or select a new version before publishing.\n' >&2
-                exit 1
-              fi
-              tag_exists=true
+            tag_version="${tag#v}"
+            if [[ "${tag_version}" != "${manifest_version}" ]]; then
+              printf 'Tag version %s does not match Cargo.toml version %s\n' \
+                "${tag_version}" "${manifest_version}" >&2
+              exit 1
             fi
-          elif [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != dev-* ]]; then
+            is_release=true
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == dev-* ]]; then
+            :
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            :
+          else
             printf 'Unsupported release workflow trigger: %s %s/%s\n' \
               "${GITHUB_EVENT_NAME}" "${GITHUB_REF_TYPE}" "${GITHUB_REF_NAME}" >&2
             exit 1
           fi
 
-          if [[ ! "${manifest_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            printf 'Package version must use MAJOR.MINOR.PATCH, got %s\n' \
-              "${manifest_version}" >&2
-              exit 1
-          fi
-
-          printf 'version=%s\n' "${manifest_version}" >> "${GITHUB_OUTPUT}"
-          printf 'is_release=%s\n' "${is_release}" >> "${GITHUB_OUTPUT}"
-          printf 'tag=%s\n' "${tag}" >> "${GITHUB_OUTPUT}"
-          printf 'tag_exists=%s\n' "${tag_exists}" >> "${GITHUB_OUTPUT}"
+          {
+            printf 'version=%s\n' "${manifest_version}"
+            printf 'is_release=%s\n' "${is_release}"
+            printf 'tag=%s\n' "${tag}"
+          } >> "${GITHUB_OUTPUT}"
 
   build-ubuntu:
     name: Compile for Ubuntu 26.04
@@ -555,79 +550,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.validate.outputs.tag }}
-          TAG_EXISTS: ${{ needs.validate.outputs.tag_exists }}
-          TARGET: ${{ github.sha }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" release-assets/* --clobber
-          elif [[ "${TAG_EXISTS}" == "true" ]]; then
+          else
             gh release create "${TAG}" release-assets/* \
               --verify-tag \
               --title "we-layerd ${VERSION}" \
               --generate-notes
-          else
-            gh release create "${TAG}" release-assets/* \
-              --target "${TARGET}" \
-              --title "we-layerd ${VERSION}" \
-              --generate-notes
           fi
-
-  bump-version:
-    name: Start next development version
-    if: needs.validate.outputs.is_release == 'true'
-    needs:
-      - validate
-      - release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Check out default branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          fetch-depth: 0
-
-      - name: Bump patch version after publishing
-        shell: bash
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-        run: |
-          set -euo pipefail
-
-          IFS=. read -r major minor patch <<< "${RELEASE_VERSION}"
-          next_version="${major}.${minor}.$((patch + 1))"
-          current_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n1)"
-
-          if [[ "${current_version}" != "${RELEASE_VERSION}" && "${current_version}" != "${next_version}" ]]; then
-            printf 'Default branch version changed from released version %s to %s\n' \
-              "${RELEASE_VERSION}" "${current_version}" >&2
-            exit 1
-          fi
-
-          python3 package/common/bump-version.py "${next_version}"
-          git diff --check
-
-          if git diff --quiet; then
-            printf 'Version files are already synchronized at %s.\n' "${next_version}"
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            Cargo.toml Cargo.lock \
-            apps/we-gui/Cargo.toml \
-            crates/we-core/Cargo.toml \
-            crates/we-renderer-sys/Cargo.toml \
-            crates/we-renderer/Cargo.toml \
-            xtask/Cargo.toml \
-            package/archlinux/PKGBUILD \
-            package/fedora/we-layerd.spec \
-            package/ubuntu/debian/changelog
-          git commit -m "chore: start ${next_version} development"
-          git push origin "HEAD:${DEFAULT_BRANCH}"
