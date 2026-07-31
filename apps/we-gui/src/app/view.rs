@@ -37,15 +37,17 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         stack![
             content,
             container(
-                text(app.language.runtime_status(
-                    &crate::domain::runtime_status::RuntimeStatus::DaemonNotFound,
-                ))
+                text(
+                    app.language.runtime_status(
+                        &crate::domain::runtime_status::RuntimeStatus::DaemonNotFound,
+                    )
+                )
                 .size(18)
                 .color(Color::from_rgb8(255, 180, 171)),
             )
-                .width(Fill)
-                .align_x(Horizontal::Center)
-                .padding(16),
+            .width(Fill)
+            .align_x(Horizontal::Center)
+            .padding(16),
         ]
         .into()
     }
@@ -57,15 +59,20 @@ pub(crate) fn daemon_view(app: &App, _window: window::Id) -> Element<'_, Message
 
 fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
     match sidebar {
-        Sidebar::Settings => settings::build_settings_overlay(
-            &app.ui_settings,
-            app.language,
-            &app.runtime_status,
-        ),
-        Sidebar::Detail => match app.selected_id.as_deref().and_then(|id| app.entries.iter().find(|entry| entry.id == id)) {
+        Sidebar::Settings => {
+            settings::build_settings_overlay(&app.ui_settings, app.language, &app.runtime_status)
+        }
+        Sidebar::Detail => match app
+            .selected_id
+            .as_deref()
+            .and_then(|id| app.entries.iter().find(|entry| entry.id == id))
+        {
             Some(entry) => detail::view(
                 entry,
-                app.launch_settings.wallpapers.get(&entry.id).expect("selected wallpaper must have a profile"),
+                app.launch_settings
+                    .wallpapers
+                    .get(&entry.id)
+                    .expect("selected wallpaper must have a profile"),
                 &app.selected_schema,
                 &app.resolution_width,
                 &app.resolution_height,
@@ -77,9 +84,9 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
                 app.language,
             )
             .map(Message::Detail),
-            None => container(text(app.language.text(Text::SelectWallpaperDetails)))
-                .padding(24)
-                .into(),
+            None => {
+                container(text(app.language.text(Text::SelectWallpaperDetails))).padding(24).into()
+            }
         },
     }
 }

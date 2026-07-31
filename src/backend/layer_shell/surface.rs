@@ -37,10 +37,7 @@ use we_renderer::Frame;
 
 use crate::backend::{
     layer_shell::state::{LayerShellState, WaylandBuffer},
-    wayland_common::{
-        input::PointerAxis,
-        output::FRACTIONAL_SCALE_DENOMINATOR,
-    },
+    wayland_common::{input::PointerAxis, output::FRACTIONAL_SCALE_DENOMINATOR},
 };
 
 // ---------------------------------------------------------------------------

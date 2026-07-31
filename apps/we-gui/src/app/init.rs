@@ -1,7 +1,11 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use iced::{widget::pane_grid, window, Task, Theme};
-use we_core::{config::{load_launch_settings, LaunchSettings}, steam, wallpaper::properties::UserPropertySchema};
+use we_core::{
+    config::{load_launch_settings, LaunchSettings},
+    steam,
+    wallpaper::properties::UserPropertySchema,
+};
 
 use crate::{
     domain::{
@@ -18,13 +22,11 @@ use super::{App, Message};
 
 pub(crate) fn initialize() -> (App, Task<Message>) {
     let preferences_path = preferences::path();
-    let preferences = preferences_path
-        .as_deref()
-        .map(preferences::load)
-        .unwrap_or_default();
+    let preferences = preferences_path.as_deref().map(preferences::load).unwrap_or_default();
     let language = preferences.language;
     let config_path = steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
-    let mut launch_settings = load_launch_settings(&config_path).unwrap_or_else(|_| LaunchSettings::default());
+    let mut launch_settings =
+        load_launch_settings(&config_path).unwrap_or_else(|_| LaunchSettings::default());
     if launch_settings.workshop_path.trim().is_empty() {
         launch_settings.workshop_path = steam::discover_workshop_wallpaper_root()
             .map(|path| path.display().to_string())
@@ -86,7 +88,8 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             main_window_id: None,
             theme: detect_system_theme(),
             runtime_shutdown: false,
-            outputs: Vec::new(), selected_outputs: Default::default(),
+            outputs: Vec::new(),
+            selected_outputs: Default::default(),
             running_source: None,
             language,
             preferences_path,

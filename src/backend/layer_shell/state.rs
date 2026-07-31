@@ -325,11 +325,7 @@ mod tests {
 
         assert_eq!(
             state.pending_input_events.drain(),
-            vec![
-                InputEvent::Focus { focused: true },
-                InputEvent::PointerMove { x: 0.25, y: 0.5 },
-            ]
+            vec![InputEvent::Focus { focused: true }, InputEvent::PointerMove { x: 0.25, y: 0.5 },]
         );
     }
-
 }

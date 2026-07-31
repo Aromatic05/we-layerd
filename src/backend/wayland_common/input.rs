@@ -370,10 +370,7 @@ mod tests {
         let mut pointer = PointerInputState::default();
         assert_eq!(
             pointer.enter(20.0, 30.0, geometry),
-            vec![
-                InputEvent::Focus { focused: true },
-                InputEvent::PointerMove { x: 0.2, y: 0.3 },
-            ]
+            vec![InputEvent::Focus { focused: true }, InputEvent::PointerMove { x: 0.2, y: 0.3 },]
         );
         assert_eq!(
             pointer.button(BTN_LEFT, true, geometry),
@@ -404,12 +401,7 @@ mod tests {
         pointer.axis_value120(PointerAxis::Vertical, -240);
         assert_eq!(
             pointer.finish_axis_frame(geometry),
-            Some(InputEvent::PointerWheel {
-                x: 0.5,
-                y: 0.5,
-                delta_x: -120,
-                delta_y: 240,
-            })
+            Some(InputEvent::PointerWheel { x: 0.5, y: 0.5, delta_x: -120, delta_y: 240 })
         );
     }
 
@@ -425,12 +417,7 @@ mod tests {
 
         assert_eq!(
             pointer.finish_axis_frame(geometry),
-            Some(InputEvent::PointerWheel {
-                x: 0.5,
-                y: 0.5,
-                delta_x: -120,
-                delta_y: 240,
-            })
+            Some(InputEvent::PointerWheel { x: 0.5, y: 0.5, delta_x: -120, delta_y: 240 })
         );
     }
 
@@ -444,12 +431,7 @@ mod tests {
         pointer.axis(PointerAxis::Vertical, 0.6);
         assert_eq!(
             pointer.finish_axis_frame(geometry),
-            Some(InputEvent::PointerWheel {
-                x: 0.5,
-                y: 0.5,
-                delta_x: 0,
-                delta_y: -1,
-            })
+            Some(InputEvent::PointerWheel { x: 0.5, y: 0.5, delta_x: 0, delta_y: -1 })
         );
     }
 
@@ -469,9 +451,6 @@ mod tests {
     #[test]
     fn invalid_geometry_and_positions_are_ignored() {
         assert_eq!(map_surface_position(1.0, 1.0, geometry(0, 100, 100, 100, None)), None);
-        assert_eq!(
-            map_surface_position(f64::NAN, 1.0, geometry(100, 100, 100, 100, None)),
-            None
-        );
+        assert_eq!(map_surface_position(f64::NAN, 1.0, geometry(100, 100, 100, 100, None)), None);
     }
 }

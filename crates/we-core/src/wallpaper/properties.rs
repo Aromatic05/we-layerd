@@ -63,7 +63,9 @@ impl UserPropertySchema {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        entries.sort_by(|left, right| left.order.total_cmp(&right.order).then(left.key.cmp(&right.key)));
+        entries.sort_by(|left, right| {
+            left.order.total_cmp(&right.order).then(left.key.cmp(&right.key))
+        });
         Ok(Self { entries })
     }
 
@@ -72,10 +74,8 @@ impl UserPropertySchema {
             self.entries
                 .iter()
                 .map(|entry| {
-                    let value = overrides
-                        .get(&entry.key)
-                        .cloned()
-                        .unwrap_or_else(|| entry.default.clone());
+                    let value =
+                        overrides.get(&entry.key).cloned().unwrap_or_else(|| entry.default.clone());
                     (entry.key.clone(), value)
                 })
                 .collect(),

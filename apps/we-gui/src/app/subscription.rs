@@ -1,6 +1,6 @@
 use iced::{window, Subscription};
 
-use super::{Message};
+use super::Message;
 
 pub(crate) fn subscription() -> Subscription<Message> {
     Subscription::batch(vec![

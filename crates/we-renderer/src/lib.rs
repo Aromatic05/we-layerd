@@ -7,9 +7,8 @@ use std::{
 
 use thiserror::Error;
 use we_renderer_sys::{
-    self as sys, we_fill_mode_v1, we_frame_kind_v1, we_input_event_type_v2,
-    we_render_config_v1, we_runtime_settings_v1, we_session_t, we_source_v1,
-    RendererLibrary as SysRendererLibrary,
+    self as sys, we_fill_mode_v1, we_frame_kind_v1, we_input_event_type_v2, we_render_config_v1,
+    we_runtime_settings_v1, we_session_t, we_source_v1, RendererLibrary as SysRendererLibrary,
 };
 
 #[derive(Debug, Clone)]
@@ -238,8 +237,8 @@ impl Session {
     }
 
     pub fn set_dmabuf_formats(&mut self, formats: &[(u32, u64)]) -> Result<(), Error> {
-        let count = u32::try_from(formats.len())
-            .map_err(|_| Error::TooManyDmabufFormats(formats.len()))?;
+        let count =
+            u32::try_from(formats.len()).map_err(|_| Error::TooManyDmabufFormats(formats.len()))?;
         let fourccs: Vec<u32> = formats.iter().map(|(fourcc, _)| *fourcc).collect();
         let modifiers: Vec<u64> = formats.iter().map(|(_, modifier)| *modifier).collect();
         let fourccs_ptr = if fourccs.is_empty() { std::ptr::null() } else { fourccs.as_ptr() };
@@ -247,12 +246,7 @@ impl Session {
             if modifiers.is_empty() { std::ptr::null() } else { modifiers.as_ptr() };
         self.check_status(
             unsafe {
-                self.library.session_set_dmabuf_formats(
-                    self.raw,
-                    fourccs_ptr,
-                    modifiers_ptr,
-                    count,
-                )
+                self.library.session_set_dmabuf_formats(self.raw, fourccs_ptr, modifiers_ptr, count)
             },
             "we_session_set_dmabuf_formats",
         )
@@ -266,12 +260,11 @@ impl Session {
     }
 
     pub fn set_user_properties_json(&mut self, properties_json: &str) -> Result<(), Error> {
-        let properties_json = CString::new(properties_json)
-            .map_err(|_| Error::InvalidSourceString)?;
+        let properties_json =
+            CString::new(properties_json).map_err(|_| Error::InvalidSourceString)?;
         self.check_status(
             unsafe {
-                self.library
-                    .session_set_user_properties_json(self.raw, properties_json.as_ptr())
+                self.library.session_set_user_properties_json(self.raw, properties_json.as_ptr())
             },
             "we_session_set_user_properties_json",
         )
@@ -279,12 +272,24 @@ impl Session {
 
     pub fn apply_runtime_settings(&mut self, settings: RuntimeSettings) -> Result<(), Error> {
         let mut fields = 0;
-        if settings.fps.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_FPS; }
-        if settings.speed.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_SPEED; }
-        if settings.volume.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_VOLUME; }
-        if settings.muted.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_MUTED; }
-        if settings.fill_mode.is_some() { fields |= sys::WE_RUNTIME_SETTINGS_FILL_MODE; }
-        if fields == 0 { return Ok(()); }
+        if settings.fps.is_some() {
+            fields |= sys::WE_RUNTIME_SETTINGS_FPS;
+        }
+        if settings.speed.is_some() {
+            fields |= sys::WE_RUNTIME_SETTINGS_SPEED;
+        }
+        if settings.volume.is_some() {
+            fields |= sys::WE_RUNTIME_SETTINGS_VOLUME;
+        }
+        if settings.muted.is_some() {
+            fields |= sys::WE_RUNTIME_SETTINGS_MUTED;
+        }
+        if settings.fill_mode.is_some() {
+            fields |= sys::WE_RUNTIME_SETTINGS_FILL_MODE;
+        }
+        if fields == 0 {
+            return Ok(());
+        }
 
         let raw = we_runtime_settings_v1 {
             size: std::mem::size_of::<we_runtime_settings_v1>() as u32,

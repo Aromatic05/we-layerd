@@ -1,7 +1,3 @@
-use iced::{
-    widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
-    Background, Border, Color, Element, Fill, Theme,
-};
 use crate::{
     app::Message,
     domain::{
@@ -10,6 +6,10 @@ use crate::{
         settings::{ScaleModeOption, UiSettings},
     },
     ui::theme::scrollbar,
+};
+use iced::{
+    widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
+    Background, Border, Color, Element, Fill, Theme,
 };
 
 pub fn build_settings_overlay<'a>(
@@ -26,10 +26,8 @@ pub fn build_settings_overlay<'a>(
         Localized::new(ScaleModeOption::Cover, language.text(Text::ScaleCover)),
         Localized::new(ScaleModeOption::Stretch, language.text(Text::ScaleStretch)),
     ];
-    let selected_scale = scale_options
-        .iter()
-        .find(|option| option.value == ui_settings.scale_mode)
-        .cloned();
+    let selected_scale =
+        scale_options.iter().find(|option| option.value == ui_settings.scale_mode).cloned();
     let shuffle_intervals = vec![
         Localized::new(60_000, language.text(Text::ShuffleEveryMinute)),
         Localized::new(300_000, language.text(Text::ShuffleEvery5Minutes)),
@@ -56,17 +54,14 @@ pub fn build_settings_overlay<'a>(
                     .style(outlined_button_style),
             )
             .id("settings.close"),
-        ].align_y(iced::Alignment::Center),
+        ]
+        .align_y(iced::Alignment::Center),
         section_title(language.text(Text::Language)),
         container(
-            pick_list(
-                Language::ALL.to_vec(),
-                Some(language),
-                Message::LanguageSelected,
-            )
-            .padding([14, 10])
-            .style(md_pick_list_style)
-            .menu_style(md_menu_style),
+            pick_list(Language::ALL.to_vec(), Some(language), Message::LanguageSelected,)
+                .padding([14, 10])
+                .style(md_pick_list_style)
+                .menu_style(md_menu_style),
         )
         .id("settings.language"),
         section_title(language.text(Text::WallpaperEngine)),
@@ -75,7 +70,8 @@ pub fn build_settings_overlay<'a>(
             text_input("/path/to/wallpaper_engine", &ui_settings.assets_path)
                 .id("settings.assets-path")
                 .on_input(Message::AssetsPathChanged)
-                .padding([14, 10]).style(md_text_input_style)
+                .padding([14, 10])
+                .style(md_text_input_style)
                 .on_submit(Message::AutoScan)
                 .width(Fill),
             container(
@@ -92,7 +88,8 @@ pub fn build_settings_overlay<'a>(
             text_input("/path/to/workshop/content/431960", &ui_settings.workshop_path)
                 .id("settings.workshop-path")
                 .on_input(Message::WorkshopPathChanged)
-                .padding([14, 10]).style(md_text_input_style)
+                .padding([14, 10])
+                .style(md_text_input_style)
                 .on_submit(Message::AutoScan)
                 .width(Fill),
             container(
@@ -109,13 +106,15 @@ pub fn build_settings_overlay<'a>(
         text_input(language.text(Text::AutomaticSearch), &ui_settings.renderer_library_path)
             .id("settings.renderer-library")
             .on_input(Message::RendererLibraryPathChanged)
-            .padding([14, 10]).style(md_text_input_style),
+            .padding([14, 10])
+            .style(md_text_input_style),
         text(library_path_display).size(12),
         text(language.text(Text::RendererCachePath)).size(14),
         text_input("~/.cache/we-layerd/renderer", &ui_settings.renderer_cache_path)
             .id("settings.renderer-cache")
             .on_input(Message::RendererCachePathChanged)
-            .padding([14, 10]).style(md_text_input_style),
+            .padding([14, 10])
+            .style(md_text_input_style),
         text(cache_path_display).size(12),
         section_title(language.text(Text::Presentation)),
         text(language.text(Text::FrameRateLimit)).size(14),
@@ -126,11 +125,9 @@ pub fn build_settings_overlay<'a>(
             .style(md_text_input_style),
         text(language.text(Text::ScaleMode)).size(14),
         container(
-            pick_list(
-                scale_options,
-                selected_scale,
-                |option| Message::ScaleModeSelected(option.value),
-            )
+            pick_list(scale_options, selected_scale, |option| Message::ScaleModeSelected(
+                option.value
+            ),)
             .padding([14, 10])
             .style(md_pick_list_style)
             .menu_style(md_menu_style),
@@ -147,11 +144,9 @@ pub fn build_settings_overlay<'a>(
         .id("settings.shuffle.enabled"),
         text(language.text(Text::ShuffleInterval)).size(14),
         container(
-            pick_list(
-                shuffle_intervals,
-                selected_shuffle_interval,
-                |option| Message::ShuffleIntervalSelected(option.value),
-            )
+            pick_list(shuffle_intervals, selected_shuffle_interval, |option| {
+                Message::ShuffleIntervalSelected(option.value)
+            },)
             .padding([14, 10])
             .style(md_pick_list_style)
             .menu_style(md_menu_style),
@@ -234,15 +229,24 @@ pub fn build_settings_overlay<'a>(
     ]
     .spacing(10);
 
-    container(scrollable(container(content).padding(iced::Padding { top: 0.0, right: 18.0, bottom: 0.0, left: 0.0 }))
+    container(
+        scrollable(container(content).padding(iced::Padding {
+            top: 0.0,
+            right: 18.0,
+            bottom: 0.0,
+            left: 0.0,
+        }))
         .height(Fill)
-        .direction(iced::widget::scrollable::Direction::Vertical(iced::widget::scrollable::Scrollbar::new().width(12).margin(6).scroller_width(6)))
-        .style(scrollbar::md_style))
-        .width(Fill)
-        .height(Fill)
-        .padding(18)
-        .style(settings_overlay_style)
-        .into()
+        .direction(iced::widget::scrollable::Direction::Vertical(
+            iced::widget::scrollable::Scrollbar::new().width(12).margin(6).scroller_width(6),
+        ))
+        .style(scrollbar::md_style),
+    )
+    .width(Fill)
+    .height(Fill)
+    .padding(18)
+    .style(settings_overlay_style)
+    .into()
 }
 
 fn format_path_for_display(path: &str, limit: usize) -> String {
@@ -264,12 +268,12 @@ fn format_path_for_display(path: &str, limit: usize) -> String {
 
 fn settings_overlay_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(if matches!(theme, Theme::Light) { Color::from_rgb8(247, 245, 250) } else { Color::from_rgb8(30, 31, 34) })),
-        border: Border {
-            radius: 0.0.into(),
-            width: 0.0,
-            color: Color::TRANSPARENT,
-        },
+        background: Some(Background::Color(if matches!(theme, Theme::Light) {
+            Color::from_rgb8(247, 245, 250)
+        } else {
+            Color::from_rgb8(30, 31, 34)
+        })),
+        border: Border { radius: 0.0.into(), width: 0.0, color: Color::TRANSPARENT },
         ..Default::default()
     }
 }
@@ -307,8 +311,15 @@ fn outlined_button_style(_theme: &Theme, _status: button::Status) -> button::Sty
     }
 }
 
-fn md_text_input_style(_theme: &Theme, status: iced::widget::text_input::Status) -> iced::widget::text_input::Style {
-    let border = if matches!(status, iced::widget::text_input::Status::Focused { .. }) { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(143, 147, 156) };
+fn md_text_input_style(
+    _theme: &Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    let border = if matches!(status, iced::widget::text_input::Status::Focused { .. }) {
+        Color::from_rgb8(174, 198, 255)
+    } else {
+        Color::from_rgb8(143, 147, 156)
+    };
     iced::widget::text_input::Style {
         background: Background::Color(Color::from_rgb8(43, 44, 48)),
         border: Border { radius: 8.0.into(), width: 1.0, color: border },
@@ -319,23 +330,50 @@ fn md_text_input_style(_theme: &Theme, status: iced::widget::text_input::Status)
     }
 }
 
-fn md_checkbox_style(_theme: &Theme, status: iced::widget::checkbox::Status) -> iced::widget::checkbox::Style {
-    let checked = matches!(status, iced::widget::checkbox::Status::Active { is_checked: true } | iced::widget::checkbox::Status::Hovered { is_checked: true } | iced::widget::checkbox::Status::Disabled { is_checked: true });
+fn md_checkbox_style(
+    _theme: &Theme,
+    status: iced::widget::checkbox::Status,
+) -> iced::widget::checkbox::Style {
+    let checked = matches!(
+        status,
+        iced::widget::checkbox::Status::Active { is_checked: true }
+            | iced::widget::checkbox::Status::Hovered { is_checked: true }
+            | iced::widget::checkbox::Status::Disabled { is_checked: true }
+    );
     iced::widget::checkbox::Style {
-        background: Background::Color(if checked { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(43, 44, 48) }),
+        background: Background::Color(if checked {
+            Color::from_rgb8(174, 198, 255)
+        } else {
+            Color::from_rgb8(43, 44, 48)
+        }),
         icon_color: Color::from_rgb8(26, 39, 64),
-        border: Border { radius: 2.0.into(), width: if checked { 0.0 } else { 2.0 }, color: Color::from_rgb8(196, 199, 204) },
+        border: Border {
+            radius: 2.0.into(),
+            width: if checked { 0.0 } else { 2.0 },
+            color: Color::from_rgb8(196, 199, 204),
+        },
         text_color: Some(Color::from_rgb8(230, 225, 229)),
     }
 }
 
-fn md_pick_list_style(_theme: &Theme, status: iced::widget::pick_list::Status) -> iced::widget::pick_list::Style {
+fn md_pick_list_style(
+    _theme: &Theme,
+    status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
     iced::widget::pick_list::Style {
         text_color: Color::from_rgb8(230, 225, 229),
         placeholder_color: Color::from_rgb8(196, 199, 204),
         handle_color: Color::from_rgb8(196, 199, 204),
         background: Background::Color(Color::from_rgb8(43, 44, 48)),
-        border: Border { radius: 8.0.into(), width: 1.0, color: if matches!(status, iced::widget::pick_list::Status::Opened { .. }) { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(143, 147, 156) } },
+        border: Border {
+            radius: 8.0.into(),
+            width: 1.0,
+            color: if matches!(status, iced::widget::pick_list::Status::Opened { .. }) {
+                Color::from_rgb8(174, 198, 255)
+            } else {
+                Color::from_rgb8(143, 147, 156)
+            },
+        },
     }
 }
 
@@ -346,6 +384,10 @@ fn md_menu_style(_theme: &Theme) -> iced::overlay::menu::Style {
         text_color: Color::from_rgb8(230, 225, 229),
         selected_text_color: Color::from_rgb8(26, 39, 64),
         selected_background: Background::Color(Color::from_rgb8(174, 198, 255)),
-        shadow: iced::Shadow { color: Color::from_rgba8(0, 0, 0, 0.35), blur_radius: 12.0, offset: iced::Vector::new(0.0, 4.0) },
+        shadow: iced::Shadow {
+            color: Color::from_rgba8(0, 0, 0, 0.35),
+            blur_radius: 12.0,
+            offset: iced::Vector::new(0.0, 4.0),
+        },
     }
 }

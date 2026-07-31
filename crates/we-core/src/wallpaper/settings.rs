@@ -28,7 +28,10 @@ pub struct WallpaperSettings {
 pub enum RenderResolution {
     #[default]
     Automatic,
-    Fixed { width: u32, height: u32 },
+    Fixed {
+        width: u32,
+        height: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -99,9 +102,15 @@ impl Default for WallpaperSettings {
     }
 }
 
-fn default_fps() -> u32 { 60 }
-fn default_speed() -> f32 { 1.0 }
-fn default_volume() -> f32 { 1.0 }
+fn default_fps() -> u32 {
+    60
+}
+fn default_speed() -> f32 {
+    1.0
+}
+fn default_volume() -> f32 {
+    1.0
+}
 
 #[cfg(test)]
 mod tests {

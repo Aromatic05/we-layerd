@@ -73,16 +73,12 @@ impl Language {
             (Self::SimplifiedChinese, RuntimeStatus::DaemonNotFound) => {
                 "在 PATH 中找不到 we-layerd".to_string()
             }
-            (Self::English, RuntimeStatus::SwitchedDaemon) => {
-                "switched running daemon".to_string()
-            }
+            (Self::English, RuntimeStatus::SwitchedDaemon) => "switched running daemon".to_string(),
             (Self::SimplifiedChinese, RuntimeStatus::SwitchedDaemon) => {
                 "已切换正在运行的守护进程".to_string()
             }
             (Self::English, RuntimeStatus::StartedDaemon) => "started daemon".to_string(),
-            (Self::SimplifiedChinese, RuntimeStatus::StartedDaemon) => {
-                "已启动守护进程".to_string()
-            }
+            (Self::SimplifiedChinese, RuntimeStatus::StartedDaemon) => "已启动守护进程".to_string(),
             (Self::English, RuntimeStatus::StartFailed(detail)) => {
                 format!("failed to start daemon: {detail}")
             }
@@ -90,12 +86,8 @@ impl Language {
                 format!("启动守护进程失败：{detail}")
             }
             (Self::English, RuntimeStatus::StoppedDaemon) => "stopped daemon".to_string(),
-            (Self::SimplifiedChinese, RuntimeStatus::StoppedDaemon) => {
-                "已停止守护进程".to_string()
-            }
-            (Self::English, RuntimeStatus::StopFailed) => {
-                "daemon stop request failed".to_string()
-            }
+            (Self::SimplifiedChinese, RuntimeStatus::StoppedDaemon) => "已停止守护进程".to_string(),
+            (Self::English, RuntimeStatus::StopFailed) => "daemon stop request failed".to_string(),
             (Self::SimplifiedChinese, RuntimeStatus::StopFailed) => {
                 "停止守护进程的请求失败".to_string()
             }
@@ -288,14 +280,8 @@ mod tests {
         );
 
         let status = RuntimeStatus::ConfigSaveFailed("disk full".to_string());
-        assert_eq!(
-            Language::English.runtime_status(&status),
-            "failed to save config: disk full"
-        );
-        assert_eq!(
-            Language::SimplifiedChinese.runtime_status(&status),
-            "保存配置失败：disk full"
-        );
+        assert_eq!(Language::English.runtime_status(&status), "failed to save config: disk full");
+        assert_eq!(Language::SimplifiedChinese.runtime_status(&status), "保存配置失败：disk full");
 
         let status = RuntimeStatus::InvalidWallpaperEngineDirectory;
         assert_eq!(

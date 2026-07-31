@@ -250,7 +250,6 @@ impl OutputState {
             viewport_height,
         )
     }
-
 }
 
 #[cfg(test)]

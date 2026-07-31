@@ -25,7 +25,10 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Outputs => {
-            println!("{}", serde_json::to_string(&backend::wayland_common::outputs::list_output_names()?)?);
+            println!(
+                "{}",
+                serde_json::to_string(&backend::wayland_common::outputs::list_output_names()?)?
+            );
             Ok(())
         }
         Command::Ctl { action } => match action {

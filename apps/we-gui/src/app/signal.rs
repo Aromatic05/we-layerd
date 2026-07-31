@@ -7,10 +7,7 @@ struct ShutdownSignal {
 
 impl ShutdownSignal {
     const fn new() -> Self {
-        Self {
-            pending: AtomicBool::new(false),
-            interrupted: AtomicBool::new(false),
-        }
+        Self { pending: AtomicBool::new(false), interrupted: AtomicBool::new(false) }
     }
 
     fn request(&self) {

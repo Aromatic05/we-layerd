@@ -210,7 +210,8 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
     cfg.renderer.options_json = settings.options_json.clone();
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
-    cfg.renderer.assets_path = Path::new(&settings.assets_path).join("assets").display().to_string();
+    cfg.renderer.assets_path =
+        Path::new(&settings.assets_path).join("assets").display().to_string();
     cfg
 }
 
@@ -263,7 +264,11 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
 
     Ok(LaunchSettings {
-        assets_path: Path::new(&cfg.renderer.assets_path).parent().unwrap_or_else(|| Path::new("")).display().to_string(),
+        assets_path: Path::new(&cfg.renderer.assets_path)
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .display()
+            .to_string(),
         workshop_path: derive_workshop_root(&cfg.renderer.source),
         renderer_library_path: cfg.renderer.library_path,
         renderer_cache_path: cfg.renderer.cache_path,
@@ -335,9 +340,7 @@ pub fn save_force_scene_audio_loop(path: &Path, enabled: bool) -> Result<()> {
     let Some(root) = document.as_table_mut() else {
         bail!("config root in {} must be a TOML table", path.display());
     };
-    let general = root
-        .entry("general")
-        .or_insert_with(|| toml::Value::Table(Default::default()));
+    let general = root.entry("general").or_insert_with(|| toml::Value::Table(Default::default()));
     let Some(general) = general.as_table_mut() else {
         bail!("general config in {} must be a TOML table", path.display());
     };
@@ -350,19 +353,15 @@ pub fn save_force_scene_audio_loop(path: &Path, enabled: bool) -> Result<()> {
     let serialized = toml::to_string_pretty(&document).context("failed to serialize config")?;
     let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("config.toml");
     let sequence = CONFIG_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let temporary = path.with_file_name(format!(
-        ".{file_name}.{}.{}.tmp",
-        std::process::id(),
-        sequence
-    ));
+    let temporary =
+        path.with_file_name(format!(".{file_name}.{}.{}.tmp", std::process::id(), sequence));
     let mut temporary_file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)
         .with_context(|| format!("failed to create {}", temporary.display()))?;
-    if let Err(error) = temporary_file
-        .write_all(serialized.as_bytes())
-        .and_then(|_| temporary_file.sync_all())
+    if let Err(error) =
+        temporary_file.write_all(serialized.as_bytes()).and_then(|_| temporary_file.sync_all())
     {
         drop(temporary_file);
         let _ = fs::remove_file(&temporary);
@@ -390,10 +389,12 @@ mod tests {
     };
 
     use super::{
-        build_config, build_config_for_wallpaper, load_launch_settings,
-        merge_scene_source_options, save_force_scene_audio_loop, LaunchSettings, ScaleMode,
+        build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
+        save_force_scene_audio_loop, LaunchSettings, ScaleMode,
     };
-    use crate::wallpaper::settings::{RenderResolution, Rotation, WallpaperFillMode, WallpaperSettings};
+    use crate::wallpaper::settings::{
+        RenderResolution, Rotation, WallpaperFillMode, WallpaperSettings,
+    };
 
     fn unique_temp_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -440,16 +441,12 @@ mod tests {
                 fill_mode: WallpaperFillMode::Fit,
                 rotation_degrees: Rotation::Deg90,
                 user_properties,
-                ..WallpaperSettings::default()
             },
         );
 
-        let cfg = build_config_for_wallpaper(
-            &settings,
-            "alpha",
-            Path::new("/tmp/alpha/project.json"),
-        )
-        .expect("wallpaper config");
+        let cfg =
+            build_config_for_wallpaper(&settings, "alpha", Path::new("/tmp/alpha/project.json"))
+                .expect("wallpaper config");
         assert_eq!(cfg.renderer.fps, 144);
         assert_eq!(cfg.renderer.speed, 1.5);
         assert_eq!(cfg.renderer.volume, 0.4);
@@ -493,12 +490,9 @@ mod tests {
         };
         settings.wallpapers.insert("alpha".to_string(), WallpaperSettings::default());
 
-        let cfg = build_config_for_wallpaper(
-            &settings,
-            "alpha",
-            Path::new("/tmp/alpha/project.json"),
-        )
-        .expect("wallpaper config");
+        let cfg =
+            build_config_for_wallpaper(&settings, "alpha", Path::new("/tmp/alpha/project.json"))
+                .expect("wallpaper config");
         let options = serde_json::from_str::<serde_json::Value>(
             cfg.renderer.options_json.as_deref().expect("source options"),
         )
@@ -527,11 +521,8 @@ mod tests {
     #[test]
     fn force_loop_preference_patch_preserves_unknown_config_sections() {
         let path = unique_temp_path("audio-preference");
-        fs::write(
-            &path,
-            "[general]\ninteractive = true\n\n[gnome]\ncustom = \"keep\"\n",
-        )
-        .expect("write config");
+        fs::write(&path, "[general]\ninteractive = true\n\n[gnome]\ncustom = \"keep\"\n")
+            .expect("write config");
 
         save_force_scene_audio_loop(&path, true).expect("save audio preference");
         let document = fs::read_to_string(&path).expect("read config");

@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use wayland_client::{
-    protocol::{wl_output::{self, WlOutput}, wl_registry},
+    protocol::{
+        wl_output::{self, WlOutput},
+        wl_registry,
+    },
     Connection, Dispatch, QueueHandle,
 };
 
@@ -26,7 +29,9 @@ impl Dispatch<WlOutput, u32> for OutputProbe {
     }
 }
 
-impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListContents> for OutputProbe {
+impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListContents>
+    for OutputProbe
+{
     fn event(
         _state: &mut Self,
         _proxy: &wl_registry::WlRegistry,
@@ -44,9 +49,14 @@ pub(crate) fn list_output_names() -> Result<Vec<String>> {
     let qh = queue.handle();
     let mut probe = OutputProbe::default();
 
-    for global in globals.contents().clone_list().into_iter().filter(|global| global.interface == "wl_output") {
+    for global in
+        globals.contents().clone_list().into_iter().filter(|global| global.interface == "wl_output")
+    {
         if global.version < 4 {
-            return Err(anyhow!("wl_output global {} does not support stable output names", global.name));
+            return Err(anyhow!(
+                "wl_output global {} does not support stable output names",
+                global.name
+            ));
         }
         globals.registry().bind::<WlOutput, _, _>(global.name, 4, &qh, global.name);
     }

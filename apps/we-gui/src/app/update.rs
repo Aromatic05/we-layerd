@@ -14,7 +14,10 @@ use crate::{
     ui::sidebar::detail as wallpaper_detail,
 };
 
-use super::{detail_update::{persist_current_config, set_resolution_inputs}, App, Message};
+use super::{
+    detail_update::{persist_current_config, set_resolution_inputs},
+    App, Message,
+};
 
 pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
@@ -29,7 +32,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 Task::batch(app.entries.iter().filter_map(|entry| {
                     let path = entry.preview.as_ref()?.clone();
                     (path.extension().and_then(|ext| ext.to_str()) == Some("gif")).then(|| {
-                        Task::perform(wallpaper_service::decode_gif(path.clone()), move |result| Message::GifLoaded(path, result))
+                        Task::perform(wallpaper_service::decode_gif(path.clone()), move |result| {
+                            Message::GifLoaded(path, result)
+                        })
                     })
                 }))
             }
@@ -44,7 +49,10 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::GifLoaded(path, result) => {
             if let Ok(frames) = result {
                 if !frames.is_empty() {
-                    app.animated_previews.insert(path, AnimatedPreview { frames, current: 0, elapsed: Duration::ZERO });
+                    app.animated_previews.insert(
+                        path,
+                        AnimatedPreview { frames, current: 0, elapsed: Duration::ZERO },
+                    );
                 }
             }
             Task::none()
@@ -59,7 +67,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             if app.ui_settings.shuffle_enabled && app.playback_running && !app.playback_paused {
                 app.shuffle_elapsed += Duration::from_millis(16);
-                let interval = Duration::from_millis(u64::from(app.ui_settings.shuffle_interval_ms));
+                let interval =
+                    Duration::from_millis(u64::from(app.ui_settings.shuffle_interval_ms));
                 if app.shuffle_elapsed >= interval {
                     return shuffle_to_next(app);
                 }
@@ -72,11 +81,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::StopPressed => {
             app.shuffle_elapsed = Duration::ZERO;
             let stopped = app.shutdown_runtime();
-            app.runtime_status = if stopped {
-                RuntimeStatus::StoppedDaemon
-            } else {
-                RuntimeStatus::StopFailed
-            };
+            app.runtime_status =
+                if stopped { RuntimeStatus::StoppedDaemon } else { RuntimeStatus::StopFailed };
             if !stopped {
                 eprintln!("failed to stop daemon via IPC or owned child process");
             }
@@ -134,20 +140,14 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::PickAssetsPath => {
             let title = app.language.text(crate::domain::i18n::Text::SelectAssetsDirectory);
             Task::perform(
-                async move {
-                    rfd::FileDialog::new()
-                        .set_title(title)
-                        .pick_folder()
-                },
+                async move { rfd::FileDialog::new().set_title(title).pick_folder() },
                 Message::AssetsPathPicked,
             )
         }
         Message::PickWorkshopPath => {
             let title = app.language.text(crate::domain::i18n::Text::SelectWorkshopDirectory);
             Task::perform(
-                async move {
-                    rfd::FileDialog::new().set_title(title).pick_folder()
-                },
+                async move { rfd::FileDialog::new().set_title(title).pick_folder() },
                 Message::WorkshopPathPicked,
             )
         }
@@ -184,9 +184,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ForceSceneAudioLoopToggled(value) => {
-            if let Err(error) =
-                config::persist_force_scene_audio_loop(&app.config_path, value)
-            {
+            if let Err(error) = config::persist_force_scene_audio_loop(&app.config_path, value) {
                 app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
                 eprintln!("failed to save config: {error}");
             } else {
@@ -319,9 +317,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             };
             Task::none()
         }
-        Message::StatusTick => {
-            Task::perform(runtime::fetch_status(), Message::StatusLoaded)
-        }
+        Message::StatusTick => Task::perform(runtime::fetch_status(), Message::StatusLoaded),
         Message::OutputsLoaded(result) => {
             if let Ok(outputs) = result {
                 app.selected_outputs = outputs.iter().cloned().collect();
@@ -403,7 +399,9 @@ fn exit_application(app: &mut App) -> Task<Message> {
 }
 
 fn status_value<'a>(status: &'a str, key: &str) -> Option<&'a str> {
-    status.lines().find_map(|line| line.strip_prefix(&format!("{key} = ")))
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key} = ")))
         .map(|value| value.trim_matches('"'))
 }
 
@@ -510,7 +508,9 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
     }
 
     let spawn = match start {
-        PlaybackStart::SwitchOrStart => runtime::start(&app.config_path).map_err(|error| error.to_string()),
+        PlaybackStart::SwitchOrStart => {
+            runtime::start(&app.config_path).map_err(|error| error.to_string())
+        }
         PlaybackStart::Restart => runtime::restart(&app.config_path, &mut app.runtime_child),
     };
 
@@ -575,7 +575,8 @@ fn shuffle_candidate_indices_for(
                 WallpaperType::Web => include_web,
                 WallpaperType::Unknown => false,
             };
-            let source = entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy();
+            let source =
+                entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy();
             included && running_source != Some(source.as_ref())
         })
         .map(|(index, _)| index)
@@ -585,14 +586,7 @@ fn shuffle_candidate_indices_for(
 fn selected_wallpaper_source(app: &App) -> Option<String> {
     let selected_id = app.selected_id.as_deref()?;
     let entry = app.entries.iter().find(|entry| entry.id == selected_id)?;
-    Some(
-        entry
-            .project_json
-            .parent()
-            .unwrap_or(&entry.project_json)
-            .to_string_lossy()
-            .into_owned(),
-    )
+    Some(entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
@@ -628,13 +622,7 @@ mod tests {
         ];
 
         assert_eq!(
-            shuffle_candidate_indices_for(
-                &entries,
-                Some("/wallpapers/running"),
-                true,
-                true,
-                true,
-            ),
+            shuffle_candidate_indices_for(&entries, Some("/wallpapers/running"), true, true, true,),
             vec![0, 2],
         );
     }

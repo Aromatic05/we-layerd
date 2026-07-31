@@ -116,13 +116,19 @@ fn detect_preview_image(wallpaper_dir: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::detect_preview_image;
 
     #[test]
     fn gif_preview_takes_priority_over_static_preview() {
-        let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("clock must be after epoch").as_nanos();
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be after epoch")
+            .as_nanos();
         let dir = std::env::temp_dir().join(format!("we-layerd-preview-{suffix}"));
         fs::create_dir_all(&dir).expect("temporary wallpaper directory must be created");
         fs::write(dir.join("preview.jpg"), []).expect("static preview fixture must be created");

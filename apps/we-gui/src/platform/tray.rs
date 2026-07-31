@@ -101,7 +101,9 @@ impl TrayItems {
 }
 
 #[cfg(target_os = "linux")]
-fn new_linux(language: Language) -> Result<TrayController, Box<dyn std::error::Error + Send + Sync>> {
+fn new_linux(
+    language: Language,
+) -> Result<TrayController, Box<dyn std::error::Error + Send + Sync>> {
     let (tx, rx) = mpsc::channel::<TrayAction>();
     let (command_tx, command_rx) = mpsc::channel::<TrayCommand>();
     std::thread::spawn(move || {
@@ -176,7 +178,9 @@ fn new_linux(language: Language) -> Result<TrayController, Box<dyn std::error::E
 }
 
 #[cfg(not(target_os = "linux"))]
-fn new_other(language: Language) -> Result<TrayController, Box<dyn std::error::Error + Send + Sync>> {
+fn new_other(
+    language: Language,
+) -> Result<TrayController, Box<dyn std::error::Error + Send + Sync>> {
     let menu = Menu::new();
     let items = TrayItems::new(language);
     items.append_to(&menu)?;

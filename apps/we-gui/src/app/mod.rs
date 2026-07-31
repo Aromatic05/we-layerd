@@ -1,8 +1,8 @@
-mod state;
-mod init;
 mod detail_update;
-mod signal;
+mod init;
 mod settings;
+mod signal;
+mod state;
 mod subscription;
 mod update;
 mod view;
@@ -25,7 +25,12 @@ mod tests {
     use std::collections::HashMap;
 
     #[cfg(unix)]
-    use std::{fs, os::unix::fs::PermissionsExt, sync::Mutex, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        sync::Mutex,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use iced::{widget::pane_grid, Theme};
 
@@ -96,44 +101,53 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("we-gui-language-{suffix}"));
         let preferences_path = temp.join("gui.toml");
         let mut app = App {
-            entries: Vec::new(), selected_id: None,
+            entries: Vec::new(),
+            selected_id: None,
             selected_schema: UserPropertySchema { entries: Vec::new() },
-            resolution_width: String::new(), resolution_height: String::new(),
-            config_path: temp.join("config.toml"), runtime_child: None,
-            viewport_width: 1280.0, layerd_available: true,
-            launch_settings: LaunchSettings::default(), ui_settings: test_ui_settings(),
-            show_settings: true, sidebar: None, detail_tab: DetailTab::Actions,
-            playback_paused: false, playback_running: false,
-            search_query: String::new(), type_filter: None,
-            panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(Pane::Library)),
-            animated_previews: HashMap::new(), tray: None,
-            main_window_id: None, theme: Theme::Dark, runtime_shutdown: true,
-            outputs: Vec::new(), selected_outputs: Default::default(), running_source: None,
-            language: Language::English, preferences_path: Some(preferences_path.clone()),
+            resolution_width: String::new(),
+            resolution_height: String::new(),
+            config_path: temp.join("config.toml"),
+            runtime_child: None,
+            viewport_width: 1280.0,
+            layerd_available: true,
+            launch_settings: LaunchSettings::default(),
+            ui_settings: test_ui_settings(),
+            show_settings: true,
+            sidebar: None,
+            detail_tab: DetailTab::Actions,
+            playback_paused: false,
+            playback_running: false,
+            search_query: String::new(),
+            type_filter: None,
+            panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(
+                Pane::Library,
+            )),
+            animated_previews: HashMap::new(),
+            tray: None,
+            main_window_id: None,
+            theme: Theme::Dark,
+            runtime_shutdown: true,
+            outputs: Vec::new(),
+            selected_outputs: Default::default(),
+            running_source: None,
+            language: Language::English,
+            preferences_path: Some(preferences_path.clone()),
             runtime_status: RuntimeStatus::DaemonNotRunning,
             preferences_generation: 0,
             shuffle_elapsed: std::time::Duration::ZERO,
         };
 
-        let _task = update::update(
-            &mut app,
-            Message::LanguageSelected(Language::SimplifiedChinese),
-        );
+        let _task =
+            update::update(&mut app, Message::LanguageSelected(Language::SimplifiedChinese));
 
         assert_eq!(app.language, Language::SimplifiedChinese);
         assert_eq!(app.preferences_generation, 1);
         assert!(!app.config_path.exists());
 
-        let _newest_task = update::update(
-            &mut app,
-            Message::LanguageSelected(Language::English),
-        );
+        let _newest_task = update::update(&mut app, Message::LanguageSelected(Language::English));
         let _retry_task = update::update(
             &mut app,
-            Message::PreferencesSaved {
-                generation: 1,
-                result: Err("stale failure".to_string()),
-            },
+            Message::PreferencesSaved { generation: 1, result: Err("stale failure".to_string()) },
         );
         assert_eq!(app.language, Language::English);
         assert_eq!(app.preferences_generation, 2);
@@ -141,10 +155,7 @@ mod tests {
 
         let _completed_task = update::update(
             &mut app,
-            Message::PreferencesSaved {
-                generation: 2,
-                result: Err("disk full".to_string()),
-            },
+            Message::PreferencesSaved { generation: 2, result: Err("disk full".to_string()) },
         );
         assert_eq!(
             app.runtime_status,
@@ -173,20 +184,37 @@ mod tests {
         std::env::set_var("WE_GUI_TEST_LOG", &log);
 
         let app = App {
-            entries: Vec::new(), selected_id: None,
+            entries: Vec::new(),
+            selected_id: None,
             selected_schema: UserPropertySchema { entries: Vec::new() },
-            resolution_width: String::new(), resolution_height: String::new(),
-            config_path: temp.join("config.toml"), runtime_child: None,
-            viewport_width: 1280.0, layerd_available: true,
-            launch_settings: LaunchSettings::default(), ui_settings: test_ui_settings(),
-            show_settings: false, sidebar: None, detail_tab: DetailTab::Actions,
-            playback_paused: false, playback_running: true,
-            search_query: String::new(), type_filter: None,
-            panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(Pane::Library)),
-            animated_previews: HashMap::new(), tray: None,
-            main_window_id: None, theme: Theme::Dark, runtime_shutdown: false,
-            outputs: Vec::new(), selected_outputs: Default::default(), running_source: None,
-            language: Language::English, preferences_path: None,
+            resolution_width: String::new(),
+            resolution_height: String::new(),
+            config_path: temp.join("config.toml"),
+            runtime_child: None,
+            viewport_width: 1280.0,
+            layerd_available: true,
+            launch_settings: LaunchSettings::default(),
+            ui_settings: test_ui_settings(),
+            show_settings: false,
+            sidebar: None,
+            detail_tab: DetailTab::Actions,
+            playback_paused: false,
+            playback_running: true,
+            search_query: String::new(),
+            type_filter: None,
+            panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(
+                Pane::Library,
+            )),
+            animated_previews: HashMap::new(),
+            tray: None,
+            main_window_id: None,
+            theme: Theme::Dark,
+            runtime_shutdown: false,
+            outputs: Vec::new(),
+            selected_outputs: Default::default(),
+            running_source: None,
+            language: Language::English,
+            preferences_path: None,
             runtime_status: RuntimeStatus::DaemonNotRunning,
             preferences_generation: 0,
             shuffle_elapsed: std::time::Duration::ZERO,
@@ -232,8 +260,8 @@ mod tests {
         std::env::set_var("WE_GUI_TEST_LOG", &log);
 
         let mut owned_child = None;
-        let mut replacement = crate::services::runtime::restart(&config, &mut owned_child)
-            .expect("restart daemon");
+        let mut replacement =
+            crate::services::runtime::restart(&config, &mut owned_child).expect("restart daemon");
         std::thread::sleep(std::time::Duration::from_millis(50));
         let _ = replacement.kill();
         let _ = replacement.wait();

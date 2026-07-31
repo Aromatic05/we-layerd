@@ -118,8 +118,8 @@ pub(crate) fn save(path: &Path, preferences: GuiPreferences) -> Result<(), Strin
         preferences.shuffle_include_scene,
         preferences.shuffle_include_web,
     );
-    let (temporary, mut file) = create_temporary_file(parent, file_name)
-        .map_err(|error| error.to_string())?;
+    let (temporary, mut file) =
+        create_temporary_file(parent, file_name).map_err(|error| error.to_string())?;
 
     let write_result = (|| -> std::io::Result<()> {
         file.write_all(contents.as_bytes())?;
@@ -150,11 +150,8 @@ fn preference_bool(document: &toml::Value, key: &str, default: bool) -> bool {
 fn create_temporary_file(parent: &Path, file_name: &str) -> std::io::Result<(PathBuf, fs::File)> {
     for _ in 0..128 {
         let sequence = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(
-            ".{file_name}.{}.{}.tmp",
-            std::process::id(),
-            sequence
-        ));
+        let temporary =
+            parent.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), sequence));
         match OpenOptions::new().write(true).create_new(true).open(&temporary) {
             Ok(file) => return Ok((temporary, file)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -170,16 +167,16 @@ fn create_temporary_file(parent: &Path, file_name: &str) -> std::io::Result<(Pat
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::{load, save, GuiPreferences};
     use crate::domain::i18n::Language;
 
     fn temporary_preferences_path(name: &str) -> std::path::PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
         std::env::temp_dir().join(format!("we-gui-preferences-{name}-{suffix}/gui.toml"))
     }
 
@@ -238,7 +235,11 @@ mod tests {
         );
         assert!(fs::read_dir(path.parent().expect("preferences parent"))
             .expect("read preferences directory")
-            .all(|entry| !entry.expect("directory entry").file_name().to_string_lossy().ends_with(".tmp")));
+            .all(|entry| !entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")));
 
         fs::remove_dir_all(path.parent().expect("preferences parent"))
             .expect("remove preferences directory");
@@ -268,8 +269,7 @@ mod tests {
         let path = temporary_preferences_path("minute-migration");
         fs::create_dir_all(path.parent().expect("preferences parent"))
             .expect("create preferences directory");
-        fs::write(&path, "shuffle_interval_minutes = 15\n")
-            .expect("write minute preferences");
+        fs::write(&path, "shuffle_interval_minutes = 15\n").expect("write minute preferences");
 
         assert_eq!(load(&path).shuffle_interval_ms, 900_000);
 

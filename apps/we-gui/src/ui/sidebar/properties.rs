@@ -46,9 +46,12 @@ pub(crate) fn view<'a>(
     for property in &schema.entries {
         properties = properties.push(
             container(
-                row![text(&property.label).size(14).width(Fill), control(property, settings, language)]
-                    .align_y(Alignment::Center)
-                    .spacing(12),
+                row![
+                    text(&property.label).size(14).width(Fill),
+                    control(property, settings, language)
+                ]
+                .align_y(Alignment::Center)
+                .spacing(12),
             )
             .id(format!("detail.property.{}", property.key))
             .padding(12)
@@ -78,7 +81,10 @@ fn control<'a>(
                 .label(language.text(Text::Enabled))
                 .on_toggle({
                     let key = property.key.clone();
-                    move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::Bool(value) }
+                    move |value| DetailMessage::PropertyChanged {
+                        key: key.clone(),
+                        value: Value::Bool(value),
+                    }
                 })
                 .style(detail::md_checkbox_style),
         )
@@ -89,22 +95,39 @@ fn control<'a>(
             let maximum = property.maximum.unwrap_or(1.0) as f32;
             let value = current.as_f64().unwrap_or(minimum as f64) as f32;
             container(
-                slider(minimum..=maximum.max(minimum), value.clamp(minimum, maximum.max(minimum)), {
-                    let key = property.key.clone();
-                    move |value| DetailMessage::PropertyChanged { key: key.clone(), value: serde_json::json!(value) }
-                })
+                slider(
+                    minimum..=maximum.max(minimum),
+                    value.clamp(minimum, maximum.max(minimum)),
+                    {
+                        let key = property.key.clone();
+                        move |value| DetailMessage::PropertyChanged {
+                            key: key.clone(),
+                            value: serde_json::json!(value),
+                        }
+                    },
+                )
                 .style(detail::md_slider_style),
             )
             .id(format!("detail.property.{}.slider", property.key))
             .into()
         }
         UserPropertyKind::Combo => {
-            let choices = property.options.iter().map(|option| PropertyOption { label: option.label.clone(), value: option.value.clone() }).collect::<Vec<_>>();
+            let choices = property
+                .options
+                .iter()
+                .map(|option| PropertyOption {
+                    label: option.label.clone(),
+                    value: option.value.clone(),
+                })
+                .collect::<Vec<_>>();
             let selected = choices.iter().find(|choice| choice.value == *current).cloned();
             container(
                 pick_list(choices, selected, {
                     let key = property.key.clone();
-                    move |choice| DetailMessage::PropertyChanged { key: key.clone(), value: choice.value }
+                    move |choice| DetailMessage::PropertyChanged {
+                        key: key.clone(),
+                        value: choice.value,
+                    }
                 })
                 .padding([14, 10])
                 .width(Fill)
@@ -114,29 +137,40 @@ fn control<'a>(
             .id(format!("detail.property.{}.choice", property.key))
             .into()
         }
-        UserPropertyKind::Color | UserPropertyKind::Text => text_input(language.text(Text::Value), &value_text(current))
-            .id(format!("detail.property.{}.value", property.key))
-            .on_input({
-                let key = property.key.clone();
-                move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::String(value) }
-            })
-            .padding([14, 10])
-            .width(Fill)
-            .style(detail::md_text_input_style)
-            .into(),
+        UserPropertyKind::Color | UserPropertyKind::Text => {
+            text_input(language.text(Text::Value), &value_text(current))
+                .id(format!("detail.property.{}.value", property.key))
+                .on_input({
+                    let key = property.key.clone();
+                    move |value| DetailMessage::PropertyChanged {
+                        key: key.clone(),
+                        value: Value::String(value),
+                    }
+                })
+                .padding([14, 10])
+                .width(Fill)
+                .style(detail::md_text_input_style)
+                .into()
+        }
         UserPropertyKind::File | UserPropertyKind::Directory => row![
             text_input(language.text(Text::Path), &value_text(current))
                 .id(format!("detail.property.{}.path", property.key))
                 .on_input({
                     let key = property.key.clone();
-                    move |value| DetailMessage::PropertyChanged { key: key.clone(), value: Value::String(value) }
+                    move |value| DetailMessage::PropertyChanged {
+                        key: key.clone(),
+                        value: Value::String(value),
+                    }
                 })
                 .padding([14, 10])
                 .width(Fill)
                 .style(detail::md_text_input_style),
             container(
                 button(text(language.text(Text::Browse)).size(13))
-                    .on_press(DetailMessage::PickPath { key: property.key.clone(), directory: matches!(property.kind, UserPropertyKind::Directory) })
+                    .on_press(DetailMessage::PickPath {
+                        key: property.key.clone(),
+                        directory: matches!(property.kind, UserPropertyKind::Directory)
+                    })
                     .style(detail::outlined_button_style),
             )
             .id(format!("detail.property.{}.browse", property.key)),
@@ -148,12 +182,17 @@ fn control<'a>(
             .padding(8)
             .style(detail::section_style)
             .into(),
-        UserPropertyKind::Unsupported(_) => text(language.text(Text::UnsupportedProperty)).size(13).into(),
+        UserPropertyKind::Unsupported(_) => {
+            text(language.text(Text::UnsupportedProperty)).size(13).into()
+        }
     }
 }
 
 fn value_text(value: &Value) -> String {
-    match value { Value::String(value) => value.clone(), _ => value.to_string() }
+    match value {
+        Value::String(value) => value.clone(),
+        _ => value.to_string(),
+    }
 }
 
 fn render_html(value: &str) -> String {

@@ -9,10 +9,7 @@ use crate::{
 
 use super::{App, Message};
 
-pub(crate) fn update(
-    app: &mut App,
-    message: wallpaper_detail::DetailMessage,
-) -> Task<Message> {
+pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) -> Task<Message> {
     use wallpaper_detail::{DetailMessage, ResolutionMode};
 
     if matches!(message, DetailMessage::Apply) {
@@ -38,7 +35,9 @@ pub(crate) fn update(
             return Task::none();
         }
         DetailMessage::Stop => return super::update::update(app, Message::StopPressed),
-        DetailMessage::ToggleOutput(output) => return super::update::update(app, Message::ToggleOutput(output)),
+        DetailMessage::ToggleOutput(output) => {
+            return super::update::update(app, Message::ToggleOutput(output))
+        }
         _ => {}
     }
     if let DetailMessage::PickPath { key, directory } = message {
@@ -58,7 +57,13 @@ pub(crate) fn update(
     };
     let profile = app.launch_settings.wallpapers.entry(selected_id).or_default();
     match message {
-        DetailMessage::Apply | DetailMessage::TogglePlayback | DetailMessage::Stop | DetailMessage::ToggleOutput(_) | DetailMessage::SelectTab(_) => unreachable!("detail action handled before profile mutation"),
+        DetailMessage::Apply
+        | DetailMessage::TogglePlayback
+        | DetailMessage::Stop
+        | DetailMessage::ToggleOutput(_)
+        | DetailMessage::SelectTab(_) => {
+            unreachable!("detail action handled before profile mutation")
+        }
         DetailMessage::FpsChanged(value) => {
             if let Ok(fps) = value.parse::<u32>() {
                 profile.fps = fps.clamp(1, 360);
@@ -97,7 +102,9 @@ pub(crate) fn update(
                 profile.user_properties.insert(key, serde_json::Value::String(path));
             }
         }
-        DetailMessage::PickPath { .. } => unreachable!("path picker handled before profile mutation"),
+        DetailMessage::PickPath { .. } => {
+            unreachable!("path picker handled before profile mutation")
+        }
         DetailMessage::ResetProperties => profile.user_properties.clear(),
     }
     if let Err(error) = persist_current_config(app) {
@@ -111,7 +118,8 @@ fn sync_fixed_resolution(profile: &mut WallpaperSettings, width: &str, height: &
     let (Ok(width), Ok(height)) = (width.parse::<u32>(), height.parse::<u32>()) else {
         return;
     };
-    profile.render_resolution = RenderResolution::Fixed { width: width.max(1), height: height.max(1) };
+    profile.render_resolution =
+        RenderResolution::Fixed { width: width.max(1), height: height.max(1) };
 }
 
 pub(crate) fn set_resolution_inputs(app: &mut App, profile: &WallpaperSettings) {

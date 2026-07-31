@@ -27,9 +27,7 @@ impl RendererSession {
     }
 
     pub(crate) fn set_dmabuf_formats(&mut self, formats: &[(u32, u64)]) -> Result<()> {
-        self.session
-            .set_dmabuf_formats(formats)
-            .context("failed to set renderer DMA-BUF formats")
+        self.session.set_dmabuf_formats(formats).context("failed to set renderer DMA-BUF formats")
     }
 
     pub(crate) fn configure(&mut self, config: RenderConfig) -> Result<()> {

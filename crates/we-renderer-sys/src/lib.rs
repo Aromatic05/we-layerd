@@ -211,7 +211,8 @@ impl RendererLibrary {
         let we_session_resize_output =
             unsafe { *library.get::<WeSessionResizeOutput>(b"we_session_resize_output\0")? };
         let we_session_set_user_properties_json = unsafe {
-            *library.get::<WeSessionSetUserPropertiesJson>(b"we_session_set_user_properties_json\0")?
+            *library
+                .get::<WeSessionSetUserPropertiesJson>(b"we_session_set_user_properties_json\0")?
         };
         let we_session_apply_runtime_settings = unsafe {
             *library.get::<WeSessionApplyRuntimeSettings>(b"we_session_apply_runtime_settings\0")?
@@ -301,7 +302,12 @@ impl RendererLibrary {
     }
 
     /// # Safety
-    pub unsafe fn session_resize_output(&self, session: *mut we_session_t, width: u32, height: u32) -> i32 {
+    pub unsafe fn session_resize_output(
+        &self,
+        session: *mut we_session_t,
+        width: u32,
+        height: u32,
+    ) -> i32 {
         (self.we_session_resize_output)(session, width, height)
     }
 

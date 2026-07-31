@@ -1,6 +1,8 @@
 use iced::{
     alignment::Vertical,
-    widget::{button, column, container, image, responsive, row, scrollable, stack, svg, text, text_input},
+    widget::{
+        button, column, container, image, responsive, row, scrollable, stack, svg, text, text_input,
+    },
     Background, Border, Color, ContentFit, Element, Fill, Theme,
 };
 use we_core::wallpaper::{WallpaperEntry, WallpaperType};
@@ -37,27 +39,52 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         )
     });
     let filters = row![
-        filter_chip(language.text(Text::FilterAll), "library.filter.all", app.type_filter.is_none(), None),
-        filter_chip(language.text(Text::FilterWeb), "library.filter.web", app.type_filter == Some(WallpaperType::Web), Some(WallpaperType::Web)),
-        filter_chip(language.text(Text::FilterScene), "library.filter.scene", app.type_filter == Some(WallpaperType::Scene), Some(WallpaperType::Scene)),
-        filter_chip(language.text(Text::FilterVideo), "library.filter.video", app.type_filter == Some(WallpaperType::Video), Some(WallpaperType::Video)),
+        filter_chip(
+            language.text(Text::FilterAll),
+            "library.filter.all",
+            app.type_filter.is_none(),
+            None
+        ),
+        filter_chip(
+            language.text(Text::FilterWeb),
+            "library.filter.web",
+            app.type_filter == Some(WallpaperType::Web),
+            Some(WallpaperType::Web)
+        ),
+        filter_chip(
+            language.text(Text::FilterScene),
+            "library.filter.scene",
+            app.type_filter == Some(WallpaperType::Scene),
+            Some(WallpaperType::Scene)
+        ),
+        filter_chip(
+            language.text(Text::FilterVideo),
+            "library.filter.video",
+            app.type_filter == Some(WallpaperType::Video),
+            Some(WallpaperType::Video)
+        ),
     ]
     .spacing(8);
     let toolbar = row![
-        column![text(language.text(Text::Wallpapers)).size(28), text(language.item_count(app.entries.len())).size(13)]
-            .spacing(2)
-            .width(Fill),
+        column![
+            text(language.text(Text::Wallpapers)).size(28),
+            text(language.item_count(app.entries.len())).size(13)
+        ]
+        .spacing(2)
+        .width(Fill),
         container(
-            button(row![
-                svg(svg::Handle::from_memory(include_bytes!("../../assets/icons/shuffle.svg")))
-                    .width(20)
-                    .height(20),
-                text(language.text(Text::ShuffleWallpapers)).size(16),
-            ]
-            .spacing(8)
-            .align_y(Vertical::Center))
-                .on_press(Message::ShufflePressed)
-                .style(top_bar_button_style),
+            button(
+                row![
+                    svg(svg::Handle::from_memory(include_bytes!("../../assets/icons/shuffle.svg")))
+                        .width(20)
+                        .height(20),
+                    text(language.text(Text::ShuffleWallpapers)).size(16),
+                ]
+                .spacing(8)
+                .align_y(Vertical::Center)
+            )
+            .on_press(Message::ShufflePressed)
+            .style(top_bar_button_style),
         )
         .id("library.shuffle"),
         container(
@@ -142,11 +169,7 @@ fn make_wallpaper_card<'a>(
                 image::Handle::from_rgba(frame.width, frame.height, frame.pixels.clone())
             })
             .unwrap_or_else(|| image::Handle::from_path(path));
-        image(handle)
-            .width(card_width)
-            .height(card_height)
-            .content_fit(ContentFit::Cover)
-            .into()
+        image(handle).width(card_width).height(card_height).content_fit(ContentFit::Cover).into()
     } else {
         container(text(""))
             .width(card_width)
@@ -180,23 +203,29 @@ fn make_wallpaper_card<'a>(
         .align_x(iced::alignment::Horizontal::Right)
         .align_y(Vertical::Bottom)
         .padding(8);
-    let border_color = if selected { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(70, 72, 78) };
-    let frame = container(stack![media, overlay])
-        .width(card_width)
-        .height(card_height)
-        .style(move |_theme: &Theme| container::Style {
-            border: Border { radius: 16.0.into(), width: if selected { 2.0 } else { 1.0 }, color: border_color },
+    let border_color =
+        if selected { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(70, 72, 78) };
+    let frame = container(stack![media, overlay]).width(card_width).height(card_height).style(
+        move |_theme: &Theme| container::Style {
+            border: Border {
+                radius: 16.0.into(),
+                width: if selected { 2.0 } else { 1.0 },
+                color: border_color,
+            },
             shadow: if selected {
-                iced::Shadow { color: Color::from_rgba8(0, 0, 0, 0.35), blur_radius: 8.0, offset: iced::Vector::new(0.0, 2.0) }
+                iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.35),
+                    blur_radius: 8.0,
+                    offset: iced::Vector::new(0.0, 2.0),
+                }
             } else {
                 iced::Shadow::default()
             },
             ..Default::default()
-        });
+        },
+    );
     container(
-        button(frame)
-            .on_press(Message::SelectWallpaper(index))
-            .style(image_card_button_style),
+        button(frame).on_press(Message::SelectWallpaper(index)).style(image_card_button_style),
     )
     .id(format!("library.wallpaper.{}", entry.id))
     .into()
@@ -212,15 +241,28 @@ fn wallpaper_type_name(ty: WallpaperType, language: Language) -> &'static str {
 }
 
 fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
-    button::Style { background: None, text_color: Color::WHITE, border: Border::default(), shadow: iced::Shadow::default(), ..Default::default() }
+    button::Style {
+        background: None,
+        text_color: Color::WHITE,
+        border: Border::default(),
+        shadow: iced::Shadow::default(),
+        ..Default::default()
+    }
 }
 
 fn library_style(_theme: &Theme) -> container::Style {
-    container::Style { background: Some(Background::Color(Color::from_rgb8(24, 25, 28))), ..Default::default() }
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(24, 25, 28))),
+        ..Default::default()
+    }
 }
 
 fn search_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let border = if matches!(status, text_input::Status::Focused { .. }) { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(140, 144, 153) };
+    let border = if matches!(status, text_input::Status::Focused { .. }) {
+        Color::from_rgb8(174, 198, 255)
+    } else {
+        Color::from_rgb8(140, 144, 153)
+    };
     text_input::Style {
         background: Background::Color(Color::from_rgb8(43, 44, 48)),
         border: Border { radius: 28.0.into(), width: 1.0, color: border },
@@ -242,20 +284,43 @@ fn filter_chip<'a>(
             .on_press(Message::TypeFilterSelected(value))
             .padding([8, 14])
             .style(move |_theme, status| {
-            let background = if selected { Color::from_rgb8(70, 91, 129) } else if matches!(status, button::Status::Hovered) { Color::from_rgb8(54, 56, 62) } else { Color::TRANSPARENT };
-            button::Style {
-                background: Some(Background::Color(background)),
-                text_color: if selected { Color::from_rgb8(222, 231, 255) } else { Color::from_rgb8(201, 203, 209) },
-                border: Border { radius: 20.0.into(), width: if selected { 0.0 } else { 1.0 }, color: Color::from_rgb8(143, 147, 156) },
-                ..Default::default()
-            }
-        }),
+                let background = if selected {
+                    Color::from_rgb8(70, 91, 129)
+                } else if matches!(status, button::Status::Hovered) {
+                    Color::from_rgb8(54, 56, 62)
+                } else {
+                    Color::TRANSPARENT
+                };
+                button::Style {
+                    background: Some(Background::Color(background)),
+                    text_color: if selected {
+                        Color::from_rgb8(222, 231, 255)
+                    } else {
+                        Color::from_rgb8(201, 203, 209)
+                    },
+                    border: Border {
+                        radius: 20.0.into(),
+                        width: if selected { 0.0 } else { 1.0 },
+                        color: Color::from_rgb8(143, 147, 156),
+                    },
+                    ..Default::default()
+                }
+            }),
     )
     .id(id)
     .into()
 }
 
 fn top_bar_button_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let background = if matches!(status, button::Status::Hovered) { Color::from_rgb8(56, 58, 63) } else { Color::TRANSPARENT };
-    button::Style { background: Some(Background::Color(background)), text_color: Color::from_rgb8(220, 225, 235), border: Border { radius: 20.0.into(), ..Default::default() }, ..Default::default() }
+    let background = if matches!(status, button::Status::Hovered) {
+        Color::from_rgb8(56, 58, 63)
+    } else {
+        Color::TRANSPARENT
+    };
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color: Color::from_rgb8(220, 225, 235),
+        border: Border { radius: 20.0.into(), ..Default::default() },
+        ..Default::default()
+    }
 }
