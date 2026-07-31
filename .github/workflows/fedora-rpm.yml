@@ -1,0 +1,79 @@
+name: Fedora RPM
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_BUILD_JOBS: "2"
+  CARGO_INCREMENTAL: "0"
+  CMAKE_BUILD_PARALLEL_LEVEL: "2"
+  MAKEFLAGS: "-j2"
+
+concurrency:
+  group: fedora-rpm-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rpm:
+    name: Fedora 44 x86_64 RPM
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    timeout-minutes: 60
+
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf install -y \
+            binutils cargo ca-certificates cef-devel cmake coreutils curl \
+            desktop-file-utils findutils fontconfig-devel freetype-devel \
+            gcc-c++ git grep gzip \
+            gstreamer1-devel gstreamer1-plugins-bad-free-devel \
+            gstreamer1-plugins-base-devel gtk3-devel libatomic libdrm-devel \
+            libva-devel libxdo-devel libxkbcommon-devel lz4-devel \
+            mesa-libGL-devel pango-devel patchelf pkgconf-pkg-config \
+            rpm-build rust tar vulkan-headers vulkan-loader-devel \
+            wayland-devel wayland-protocols-devel xz
+
+      - name: Check out source and submodules
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Report build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version --verbose
+          cargo --version
+          rpmbuild --version
+
+      - name: Build RPM and SRPM
+        shell: bash
+        run: package/fedora/build.sh
+
+      - name: Verify packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          compgen -G 'package/fedora/out/RPMS/x86_64/*.rpm' >/dev/null
+          compgen -G 'package/fedora/out/SRPMS/*.src.rpm' >/dev/null
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: we-layerd-fedora44-x86_64-${{ github.sha }}
+          path: |
+            package/fedora/out/RPMS/x86_64/*.rpm
+            package/fedora/out/SRPMS/*.src.rpm
+          if-no-files-found: error
