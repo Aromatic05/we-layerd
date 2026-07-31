@@ -1,9 +1,9 @@
 name: Setup release build
-description: Restore stable release caches and install the pinned Rust toolchain.
+description: Restore verified source caches, install the pinned Rust toolchain, and prepare clean build paths.
 
 inputs:
   cache-namespace:
-    description: Distribution-specific namespace for build outputs.
+    description: Distribution-specific namespace for ephemeral build outputs.
     required: true
   source-cache-key:
     description: Hash of Cargo.lock.
@@ -11,10 +11,6 @@ inputs:
   download-cache-key:
     description: Hash of pinned external dependency versions.
     required: true
-  restore-build-caches:
-    description: Restore Rust target and native install caches.
-    required: false
-    default: "true"
 
 outputs:
   cargo-target-dir:
@@ -23,55 +19,38 @@ outputs:
     value: ${{ steps.paths.outputs.native-build-root }}
   native-install-root:
     value: ${{ steps.paths.outputs.native-install-root }}
-  rust-cache-key:
-    value: ${{ steps.paths.outputs.rust-cache-key }}
-  rust-cache-hit:
-    value: ${{ steps.rust-build-cache.outputs.cache-hit }}
-  native-cache-key:
-    value: ${{ steps.paths.outputs.native-cache-key }}
-  native-cache-hit:
-    value: ${{ steps.native-install-cache.outputs.cache-hit }}
 
 runs:
   using: composite
   steps:
-    - name: Resolve container-visible cache paths
+    - name: Resolve container-visible build and cache paths
       id: paths
       shell: bash
       env:
         CACHE_NAMESPACE: ${{ inputs.cache-namespace }}
-        SOURCE_CACHE_KEY: ${{ inputs.source-cache-key }}
-        DOWNLOAD_CACHE_KEY: ${{ inputs.download-cache-key }}
       run: |
         set -euo pipefail
 
-        # GITHUB_WORKSPACE is container-aware. Do not use the host-expanded
-        # `${{ github.workspace }}` value here: container jobs mount the same
-        # directory at /__w, and a host path would make the compiler and cache
-        # action read different trees.
-        # actions/checkout configures safe.directory on the runner host, but
-        # shell steps of a container job run as root inside the job container.
-        # Register the container-visible mount before reading the gitlink SHA.
         git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
         workspace_parent="$(dirname -- "${GITHUB_WORKSPACE}")"
         cache_root="${workspace_parent}/.we-layerd-cache"
+        build_root="${workspace_parent}/.we-layerd-build/${CACHE_NAMESPACE}"
         cargo_home="${cache_root}/common/cargo"
         rustup_home="${cache_root}/common/rustup"
         download_cache="${cache_root}/common/downloads"
-        cargo_target="${cache_root}/${CACHE_NAMESPACE}/cargo-target"
-        native_build="${cache_root}/${CACHE_NAMESPACE}/native-build"
-        native_install="${cache_root}/${CACHE_NAMESPACE}/native-install"
+        cargo_target="${build_root}/cargo-target"
+        native_build="${build_root}/native-build"
+        native_install="${build_root}/native-install"
 
-        renderer_sha="$(git rev-parse HEAD:third_party/wallpaper-engine-renderer)"
-        native_config_hash="$(
-          sha256sum build.rs package/common/build-native.sh \
-            | sha256sum \
-            | cut -d' ' -f1
-        )"
-
-        rust_prefix="rust-target-v5-${CACHE_NAMESPACE}-${RUNNER_ARCH}-${RUST_TOOLCHAIN}-${SOURCE_CACHE_KEY}"
-        native_key="native-install-v5-${CACHE_NAMESPACE}-${RUNNER_ARCH}-${renderer_sha}-${DOWNLOAD_CACHE_KEY}-${native_config_hash}"
+        rm -rf "${build_root}"
+        mkdir -p \
+          "${cargo_home}" \
+          "${rustup_home}" \
+          "${download_cache}" \
+          "${cargo_target}" \
+          "${native_build}" \
+          "${native_install}"
 
         {
           printf 'CARGO_HOME=%s\n' "${cargo_home}"
@@ -80,6 +59,7 @@ runs:
           printf 'CARGO_TARGET_DIR=%s\n' "${cargo_target}"
           printf 'WE_LAYERD_NATIVE_BUILD_ROOT=%s\n' "${native_build}"
           printf 'WE_LAYERD_NATIVE_INSTALL_ROOT=%s\n' "${native_install}"
+          printf 'WE_LAYERD_REUSE_NATIVE_INSTALL=0\n'
         } >> "${GITHUB_ENV}"
 
         {
@@ -89,58 +69,44 @@ runs:
           printf 'cargo-target-dir=%s\n' "${cargo_target}"
           printf 'native-build-root=%s\n' "${native_build}"
           printf 'native-install-root=%s\n' "${native_install}"
-          printf 'rust-cache-key=%s-%s\n' "${rust_prefix}" "${GITHUB_RUN_ID}"
-          printf 'rust-restore-prefix-lock=%s-\n' "${rust_prefix}"
-          printf 'rust-restore-prefix=rust-target-v5-%s-%s-%s-\n' \
-            "${CACHE_NAMESPACE}" "${RUNNER_ARCH}" "${RUST_TOOLCHAIN}"
-          printf 'native-cache-key=%s\n' "${native_key}"
-          printf 'toolchain-cache-key=release-rust-v5-%s-%s-%s\n' \
-            "${RUNNER_ARCH}" "${RUST_TOOLCHAIN}" "${SOURCE_CACHE_KEY}"
-          printf 'download-cache-key=release-downloads-v5-%s\n' "${DOWNLOAD_CACHE_KEY}"
         } >> "${GITHUB_OUTPUT}"
 
-    - name: Restore Rust toolchain and Cargo source cache
+    - name: Restore pinned Rust toolchain
       uses: actions/cache@v4
       with:
         path: |
-          ${{ steps.paths.outputs.cargo-home }}
+          ${{ steps.paths.outputs.cargo-home }}/bin
           ${{ steps.paths.outputs.rustup-home }}
-        key: ${{ steps.paths.outputs.toolchain-cache-key }}
-        restore-keys: |
-          release-rust-v5-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN }}-
+        key: release-rustup-v6-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN }}
 
-    - name: Restore pinned packaging downloads
+    - name: Restore Cargo source cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ steps.paths.outputs.cargo-home }}/registry/index
+          ${{ steps.paths.outputs.cargo-home }}/registry/cache
+          ${{ steps.paths.outputs.cargo-home }}/git/db
+        key: release-cargo-sources-v6-${{ runner.arch }}-${{ inputs.source-cache-key }}
+        restore-keys: |
+          release-cargo-sources-v6-${{ runner.arch }}-
+
+    - name: Restore checksum-verified packaging downloads
       uses: actions/cache@v4
       with:
         path: ${{ steps.paths.outputs.download-cache }}
-        key: ${{ steps.paths.outputs.download-cache-key }}
+        key: release-downloads-v6-${{ inputs.download-cache-key }}
         restore-keys: |
-          release-downloads-v5-
+          release-downloads-v6-
 
-    - name: Restore reusable Rust build outputs
-      id: rust-build-cache
-      if: inputs.restore-build-caches == 'true'
-      uses: actions/cache/restore@v4
+    - name: Enable content-addressed compiler cache
+      uses: mozilla-actions/sccache-action@v0.0.10
       with:
-        path: ${{ steps.paths.outputs.cargo-target-dir }}
-        key: ${{ steps.paths.outputs.rust-cache-key }}
-        restore-keys: |
-          ${{ steps.paths.outputs.rust-restore-prefix-lock }}
-          ${{ steps.paths.outputs.rust-restore-prefix }}
-
-    - name: Restore completed native renderer install
-      id: native-install-cache
-      if: inputs.restore-build-caches == 'true'
-      uses: actions/cache/restore@v4
-      with:
-        path: ${{ steps.paths.outputs.native-install-root }}
-        key: ${{ steps.paths.outputs.native-cache-key }}
+        version: "v0.16.0"
 
     - name: Install pinned Rust toolchain
       shell: bash
       run: |
         set -euo pipefail
-        mkdir -p "${CARGO_HOME}" "${RUSTUP_HOME}"
         printf '%s\n' "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
         export PATH="${CARGO_HOME}/bin:${PATH}"
 
@@ -164,21 +130,3 @@ runs:
         printf 'fn main() {}\n' > "${probe_dir}/main.rs"
         rustc "${probe_dir}/main.rs" -o "${probe_dir}/main"
         readelf -p .comment "${probe_dir}/main" | grep -F 'Linker: LLD'
-
-    - name: Enable shared Rust and C/C++ compiler cache
-      if: inputs.restore-build-caches == 'true'
-      uses: mozilla-actions/sccache-action@v0.0.10
-      with:
-        version: "v0.16.0"
-
-    - name: Mark restored native install reusable
-      if: inputs.restore-build-caches == 'true'
-      shell: bash
-      env:
-        NATIVE_CACHE_HIT: ${{ steps.native-install-cache.outputs.cache-hit }}
-      run: |
-        if [[ "${NATIVE_CACHE_HIT}" == true ]]; then
-          printf 'WE_LAYERD_REUSE_NATIVE_INSTALL=1\n' >> "${GITHUB_ENV}"
-        else
-          printf 'WE_LAYERD_REUSE_NATIVE_INSTALL=0\n' >> "${GITHUB_ENV}"
-        fi
