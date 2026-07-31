@@ -104,7 +104,7 @@ pub fn stop(child: &mut Option<Child>) -> bool {
         let _ = child.wait();
         stopped = true;
     }
-    stopped
+    stopped || !daemon_is_running()
 }
 
 fn daemon_is_running() -> bool {

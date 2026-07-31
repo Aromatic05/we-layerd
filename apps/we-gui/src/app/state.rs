@@ -70,6 +70,6 @@ pub(crate) enum Message {
     AssetsPathPicked(Option<PathBuf>), WorkshopPathPicked(Option<PathBuf>), FpsLimitChanged(String), InteractiveToggled(bool), ForceSceneAudioLoopToggled(bool), ShowFpsToggled(bool),
     ScaleModeSelected(ScaleModeOption), PreferDmabufToggled(bool), AllowShmFallbackToggled(bool), LanguageSelected(Language), PreferencesSaved { generation: u64, result: Result<(), String> }, Detail(DetailMessage), StatusLoaded(Result<DaemonStatus, String>), StatusTick,
     ShufflePressed, ShufflePlaybackPressed, ShuffleEnabledToggled(bool), ShuffleIntervalSelected(u32), ShuffleIntervalChanged(String), ShuffleIncludeVideoToggled(bool), ShuffleIncludeSceneToggled(bool), ShuffleIncludeWebToggled(bool),
-    WindowResized(Size), WindowCloseRequested(window::Id), WindowOpened(window::Id), WindowClosed(window::Id), TrayTick, ThemeTick, TrayAction(tray::TrayAction),
+    WindowResized(Size), WindowCloseRequested(window::Id), WindowOpened(window::Id), WindowClosed(window::Id), TrayTick, ThemeTick, ExitRequested, TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>), ToggleOutput(String),
 }

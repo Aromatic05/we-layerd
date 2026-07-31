@@ -351,6 +351,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::TrayTick => {
+            if super::signal::take_shutdown_request() {
+                return Task::done(Message::ExitRequested);
+            }
             if let Some(tray) = app.tray.as_mut() {
                 if let Some(action) = tray.poll_action() {
                     return Task::done(Message::TrayAction(action));
@@ -362,6 +365,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             app.theme = super::init::detect_system_theme();
             Task::none()
         }
+        Message::ExitRequested => exit_application(app),
         Message::TrayAction(action) => match action {
             tray::TrayAction::ShowWindow => {
                 if let Some(id) = app.main_window_id {
@@ -386,14 +390,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 }
                 Task::none()
             }
-            tray::TrayAction::Quit => {
-                if !app.shutdown_runtime() {
-                    eprintln!("failed to stop daemon while exiting we-gui");
-                }
-                iced::exit()
-            }
+            tray::TrayAction::Quit => Task::done(Message::ExitRequested),
         },
     }
+}
+
+fn exit_application(app: &mut App) -> Task<Message> {
+    if !app.shutdown_runtime() {
+        eprintln!("failed to stop daemon while exiting we-gui");
+    }
+    iced::exit()
 }
 
 fn status_value<'a>(status: &'a str, key: &str) -> Option<&'a str> {

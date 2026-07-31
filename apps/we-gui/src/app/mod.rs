@@ -1,21 +1,23 @@
 mod state;
 mod init;
 mod detail_update;
+mod signal;
 mod settings;
 mod subscription;
 mod update;
 mod view;
 pub(crate) use state::{App, Message};
 pub fn run() -> iced::Result {
-    ctrlc::set_handler(|| {
-        let _ = crate::services::runtime::send_control("stop");
-        std::process::exit(130);
-    }).expect("install GUI shutdown signal handler");
+    signal::install().expect("install GUI shutdown signal handler");
     iced::daemon(init::initialize, update::update, view::daemon_view)
         .title("we-gui")
         .theme(|app: &App, _window| app.theme.clone())
         .subscription(|_app| subscription::subscription())
         .run()
+}
+
+pub fn was_interrupted() -> bool {
+    signal::was_interrupted()
 }
 
 #[cfg(test)]
