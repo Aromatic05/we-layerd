@@ -11,6 +11,7 @@ use crate::{
         ui_state::{AnimatedPreview, GifFrame, Pane, Sidebar},
     },
     platform::tray,
+    services::runtime::DaemonStatus,
     ui::sidebar::detail::DetailMessage,
 };
 
@@ -67,7 +68,7 @@ pub(crate) enum Message {
     SelectWallpaper(usize), PlayPressed, StopPressed, SettingsPressed, SearchChanged(String), TypeFilterSelected(Option<WallpaperType>), PaneResized(pane_grid::ResizeEvent),
     AssetsPathChanged(String), WorkshopPathChanged(String), RendererLibraryPathChanged(String), RendererCachePathChanged(String), PickAssetsPath, PickWorkshopPath,
     AssetsPathPicked(Option<PathBuf>), WorkshopPathPicked(Option<PathBuf>), FpsLimitChanged(String), InteractiveToggled(bool), ForceSceneAudioLoopToggled(bool), ShowFpsToggled(bool),
-    ScaleModeSelected(ScaleModeOption), PreferDmabufToggled(bool), AllowShmFallbackToggled(bool), LanguageSelected(Language), PreferencesSaved { generation: u64, result: Result<(), String> }, Detail(DetailMessage), StatusLoaded(Result<Option<String>, String>), StatusTick,
+    ScaleModeSelected(ScaleModeOption), PreferDmabufToggled(bool), AllowShmFallbackToggled(bool), LanguageSelected(Language), PreferencesSaved { generation: u64, result: Result<(), String> }, Detail(DetailMessage), StatusLoaded(Result<DaemonStatus, String>), StatusTick,
     ShufflePressed, ShufflePlaybackPressed, ShuffleEnabledToggled(bool), ShuffleIntervalSelected(u32), ShuffleIntervalChanged(String), ShuffleIncludeVideoToggled(bool), ShuffleIncludeSceneToggled(bool), ShuffleIncludeWebToggled(bool),
     WindowResized(Size), WindowCloseRequested(window::Id), WindowOpened(window::Id), WindowClosed(window::Id), TrayTick, ThemeTick, TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>), ToggleOutput(String),

@@ -294,7 +294,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::StatusLoaded(result) => {
             app.runtime_status = match result {
-                Ok(Some(text)) => {
+                Ok(runtime::DaemonStatus::Running(text)) => {
                     app.playback_running = status_value(&text, "phase") == Some("running");
                     app.playback_paused = status_value(&text, "phase") == Some("paused");
                     if app.playback_running || app.playback_paused {
@@ -304,7 +304,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     }
                     RuntimeStatus::Raw(text)
                 }
-                Ok(None) => {
+                Ok(runtime::DaemonStatus::NotRunning) => {
+                    app.clear_playback_state();
+                    RuntimeStatus::DaemonNotRunning
+                }
+                Ok(runtime::DaemonStatus::EmptyResponse) => {
                     app.clear_playback_state();
                     RuntimeStatus::EmptyResponse
                 }

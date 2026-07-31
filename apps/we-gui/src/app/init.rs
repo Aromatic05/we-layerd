@@ -65,7 +65,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             config_path,
             runtime_child: None,
             viewport_width: 1280.0,
-            layerd_available: crate::services::runtime::command_exists_in_path("we-layerd"),
+            layerd_available: crate::services::runtime::layerd_is_available(),
             launch_settings,
             ui_settings,
             show_settings: false,
