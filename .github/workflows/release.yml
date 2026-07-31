@@ -183,7 +183,6 @@ jobs:
             cargo build --frozen --offline --release -p we-layerd
 
       - name: Stage package inputs
-        if: needs.validate.outputs.is_release == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -199,12 +198,10 @@ jobs:
             prebuilt/lib/we-cef-helper
 
       - name: Build DEB package
-        if: needs.validate.outputs.is_release == 'true'
         shell: bash
         run: WE_LAYERD_PREBUILT_ROOT="${GITHUB_WORKSPACE}/prebuilt" package/ubuntu/build.sh
 
       - name: Collect DEB package
-        if: needs.validate.outputs.is_release == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -214,7 +211,6 @@ jobs:
           test -n "$(find release-assets -maxdepth 1 -type f -name '*.deb' -print -quit)"
 
       - name: Upload Ubuntu artifact
-        if: needs.validate.outputs.is_release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: we-layerd-${{ needs.validate.outputs.version }}-ubuntu-amd64
@@ -322,7 +318,6 @@ jobs:
             cargo build --frozen --offline --release -p we-layerd
 
       - name: Stage package inputs
-        if: needs.validate.outputs.is_release == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -338,12 +333,10 @@ jobs:
             prebuilt/lib/we-cef-helper
 
       - name: Build AppImage
-        if: needs.validate.outputs.is_release == 'true'
         shell: bash
         run: WE_LAYERD_PREBUILT_ROOT="${GITHUB_WORKSPACE}/prebuilt" package/appimage/build.sh
 
       - name: Collect AppImage
-        if: needs.validate.outputs.is_release == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -353,7 +346,6 @@ jobs:
           cp -v "${artifact}" release-assets/
 
       - name: Upload AppImage artifact
-        if: needs.validate.outputs.is_release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: we-layerd-${{ needs.validate.outputs.version }}-appimage-x86_64
@@ -474,7 +466,6 @@ jobs:
           compgen -G 'package/fedora/out/SRPMS/*.src.rpm' >/dev/null
 
       - name: Collect Fedora packages
-        if: needs.validate.outputs.is_release == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -485,7 +476,6 @@ jobs:
             -exec cp -v {} release-assets/ \;
 
       - name: Upload Fedora artifacts
-        if: needs.validate.outputs.is_release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: we-layerd-${{ needs.validate.outputs.version }}-fedora44-x86_64
