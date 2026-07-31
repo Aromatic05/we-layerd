@@ -1,8 +1,14 @@
 name: Fedora RPM package build
 
-# Packaging validation only. Rendering and GPU paths require real hardware.
+# Package construction only. Rendering and GPU paths require real hardware.
 
 on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Artifact name exposed to the caller
+        required: true
+        type: string
   pull_request:
   push:
     branches:
@@ -133,7 +139,7 @@ jobs:
       - name: Upload packages
         uses: actions/upload-artifact@v7
         with:
-          name: we-layerd-fedora44-x86_64-${{ github.sha }}
+          name: ${{ inputs.artifact_name || format('we-layerd-fedora44-x86_64-{0}', github.sha) }}
           path: |
             package/fedora/out/RPMS/x86_64/*.rpm
             package/fedora/out/SRPMS/*.src.rpm

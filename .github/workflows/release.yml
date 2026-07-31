@@ -502,6 +502,14 @@ jobs:
           path: release-assets/*.AppImage
           if-no-files-found: error
 
+  fedora:
+    name: Package Fedora 44 RPM and SRPM
+    if: needs.validate.outputs.is_release == 'true'
+    needs: validate
+    uses: ./.github/workflows/fedora-rpm.yml
+    with:
+      artifact_name: we-layerd-${{ needs.validate.outputs.version }}-fedora44-x86_64
+
   release:
     name: Publish GitHub Release
     if: needs.validate.outputs.is_release == 'true'
@@ -509,6 +517,7 @@ jobs:
       - validate
       - ubuntu
       - appimage
+      - fedora
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -526,6 +535,12 @@ jobs:
           name: we-layerd-${{ needs.validate.outputs.version }}-appimage-x86_64
           path: downloaded-artifacts/appimage
 
+      - name: Download Fedora packages
+        uses: actions/download-artifact@v4
+        with:
+          name: we-layerd-${{ needs.validate.outputs.version }}-fedora44-x86_64
+          path: downloaded-artifacts/fedora
+
       - name: Collect release assets
         shell: bash
         run: |
@@ -542,6 +557,8 @@ jobs:
 
           test -n "$(find release-assets -maxdepth 1 -type f -name '*.deb' -print -quit)"
           test -n "$(find release-assets -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$(find release-assets -maxdepth 1 -type f -name '*.x86_64.rpm' -print -quit)"
+          test -n "$(find release-assets -maxdepth 1 -type f -name '*.src.rpm' -print -quit)"
           sha256sum release-assets/* > release-assets/SHA256SUMS
 
       - name: Create or update GitHub Release
