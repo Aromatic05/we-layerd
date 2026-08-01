@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use we_core::wallpaper::settings::WallpaperFillMode;
+use we_core::{config::HooksConfig, wallpaper::settings::WallpaperFillMode};
 
 use crate::backend::{gnome::protocol, traits::BackendKind};
 
@@ -14,6 +14,8 @@ pub struct Config {
     pub gnome: GnomeConfig,
     #[serde(default)]
     pub renderer: RendererConfig,
+    #[serde(default, skip_serializing_if = "HooksConfig::is_empty")]
+    pub hooks: HooksConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,6 +259,10 @@ mod tests {
             fill_mode = "fit"
             rotation_degrees = 90
 
+            [hooks.wallpaper_applied]
+            command = "theme-sync"
+            args = ["--force"]
+
             [gnome]
             extension_dbus_name = "io.github.weLayerd.Gnome"
         "#;
@@ -274,6 +280,9 @@ mod tests {
         assert_eq!(cfg.renderer.render_height, Some(1080));
         assert_eq!(cfg.renderer.fill_mode, we_core::wallpaper::settings::WallpaperFillMode::Fit);
         assert_eq!(cfg.renderer.rotation_degrees, 90);
+        let hook = cfg.hooks.wallpaper_applied.expect("wallpaper hook");
+        assert_eq!(hook.command, "theme-sync");
+        assert_eq!(hook.args, ["--force"]);
     }
 
     #[test]

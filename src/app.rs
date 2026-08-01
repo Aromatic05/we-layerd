@@ -21,6 +21,7 @@ use crate::{
         wayland_common::{connection, registry},
     },
     config::Config,
+    hooks::{self, WallpaperAppliedContext, WallpaperAppliedTrigger},
     ipc::{self, ControlCommand, RuntimeLoopExit},
     runtime::{control::RuntimePhase, status::RuntimeStatusSnapshot},
 };
@@ -300,11 +301,22 @@ fn run_runtime_loop(
     }
 
     let mut backend_impl = backend::create_backend(backend);
+    let mut hook_trigger = WallpaperAppliedTrigger::default();
+    let mut status_sink = |snapshot: RuntimeStatusSnapshot| {
+        let wallpaper_applied = hook_trigger.observe(&snapshot);
+        update_runtime_snapshot(runtime_state, snapshot);
+        if wallpaper_applied {
+            hooks::spawn_wallpaper_applied(
+                cfg.hooks.wallpaper_applied.as_ref(),
+                WallpaperAppliedContext { source: &cfg.renderer.source, backend, generation },
+            );
+        }
+    };
     backend_impl.run(BackendContext {
         cfg: &cfg,
         shutdown_requested,
         control_rx,
-        status_sink: &mut |snapshot| update_runtime_snapshot(runtime_state, snapshot),
+        status_sink: &mut status_sink,
     })
 }
 

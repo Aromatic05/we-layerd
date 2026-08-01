@@ -2,6 +2,7 @@ mod app;
 mod backend;
 mod cli;
 mod config;
+mod hooks;
 mod ipc;
 mod logging;
 mod runtime;

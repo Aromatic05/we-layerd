@@ -63,6 +63,28 @@ muted = false
 - v4 feedback 运行中变化时会重新传入 renderer，并重新绑定输出或退回 SHM
 - `prefer_dmabuf` 决定是否优先 DMA-BUF，`allow_shm_fallback` 决定无兼容组合时是否允许退回 SHM
 
+## 壁纸应用 Hook
+
+可以配置一个通用命令 Hook，用于接入 DMS/Matugen 等主题生成器，而不让 `we-layerd`
+直接依赖某个桌面 Shell：
+
+```toml
+[hooks.wallpaper_applied]
+command = "~/.local/bin/we-theme-sync"
+args = []
+```
+
+每次成功启动、切换壁纸或 reload 后，首帧提交成功时会异步启动一次该命令。Hook
+启动失败或退出码非零只会写入日志，不会中止壁纸运行。`command` 会被直接执行，
+不会经过 Shell；管道、重定向等 Shell 语法应写进单独的可执行脚本。
+
+Hook 会继承守护进程环境，并额外收到：
+
+- `WE_LAYERD_EVENT=wallpaper_applied`
+- `WE_LAYERD_SOURCE`：当前 workshop 壁纸目录，已经展开 `~`
+- `WE_LAYERD_BACKEND`：当前后端名称
+- `WE_LAYERD_GENERATION`：当前运行 generation
+
 ## 动态库查找顺序
 
 如果 `renderer.library_path` 为空，或者指向的文件不存在，`we-layerd` 会按以下顺序继续查找：
@@ -78,6 +100,7 @@ muted = false
 - 将 `renderer.source` 写成选中的 workshop 壁纸目录
 - 从 Wallpaper Engine 安装目录推导 `renderer.assets_path`
 - 合并 scene 用户属性和可选的音频循环覆盖，同时保留其它 `renderer.options_json` 字段
+- 生成所选壁纸配置时保留 `hooks` 配置
 - 遇到无效 JSON、非对象的 scene/audio 容器或不支持的 options 版本时会拒绝保存，不会覆盖原配置
 - 不再生成 Wine、Proton、X11 capture、video-native 或 `openWallpaper` 参数
 

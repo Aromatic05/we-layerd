@@ -19,8 +19,29 @@ pub struct AppConfig {
     pub general: GeneralConfig,
     #[serde(default)]
     pub renderer: RendererConfig,
+    #[serde(default, skip_serializing_if = "HooksConfig::is_empty")]
+    pub hooks: HooksConfig,
     #[serde(default)]
     pub wallpapers: BTreeMap<String, WallpaperSettings>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HooksConfig {
+    #[serde(default)]
+    pub wallpaper_applied: Option<HookCommand>,
+}
+
+impl HooksConfig {
+    pub fn is_empty(&self) -> bool {
+        self.wallpaper_applied.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HookCommand {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +124,7 @@ pub struct LaunchSettings {
     pub scale_mode: ScaleMode,
     pub force_scene_audio_loop: bool,
     pub options_json: Option<String>,
+    pub hooks: HooksConfig,
     pub wallpapers: BTreeMap<String, WallpaperSettings>,
 }
 
@@ -192,6 +214,7 @@ impl Default for LaunchSettings {
             scale_mode: ScaleMode::Cover,
             force_scene_audio_loop: false,
             options_json: None,
+            hooks: HooksConfig::default(),
             wallpapers: BTreeMap::new(),
         }
     }
@@ -209,6 +232,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.allow_shm_fallback = settings.allow_shm_fallback;
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
     cfg.renderer.options_json = settings.options_json.clone();
+    cfg.hooks = settings.hooks.clone();
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path =
         Path::new(&settings.assets_path).join("assets").display().to_string();
@@ -280,6 +304,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         scale_mode: cfg.general.scale_mode,
         force_scene_audio_loop: cfg.general.force_scene_audio_loop,
         options_json: cfg.renderer.options_json,
+        hooks: cfg.hooks,
         wallpapers: cfg.wallpapers,
     })
 }
@@ -390,7 +415,7 @@ mod tests {
 
     use super::{
         build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
-        save_force_scene_audio_loop, LaunchSettings, ScaleMode,
+        save_force_scene_audio_loop, HookCommand, HooksConfig, LaunchSettings, ScaleMode,
     };
     use crate::wallpaper::settings::{
         RenderResolution, Rotation, WallpaperFillMode, WallpaperSettings,
@@ -406,12 +431,19 @@ mod tests {
 
     #[test]
     fn build_config_writes_renderer_native_source_and_assets() {
+        let hooks = HooksConfig {
+            wallpaper_applied: Some(HookCommand {
+                command: "theme-sync".to_string(),
+                args: vec!["--force".to_string()],
+            }),
+        };
         let settings = LaunchSettings {
             assets_path: "/steam/steamapps/common/wallpaper_engine".to_string(),
             fps_limit: 144,
             interactive: false,
             scale_mode: ScaleMode::Fit,
             options_json: Some("{\"demo\":true}".to_string()),
+            hooks: hooks.clone(),
             ..LaunchSettings::default()
         };
 
@@ -423,6 +455,7 @@ mod tests {
         assert_eq!(cfg.renderer.options_json.as_deref(), Some("{\"demo\":true}"));
         assert!(!cfg.general.interactive);
         assert_eq!(cfg.general.scale_mode, ScaleMode::Fit);
+        assert_eq!(cfg.hooks, hooks);
     }
 
     #[test]
