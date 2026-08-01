@@ -21,3 +21,8 @@ options_json = '''
   "example": true
 }
 '''
+
+# Runs asynchronously after the first frame of each successful startup, switch, or reload.
+# [hooks.wallpaper_applied]
+# command = "~/.local/bin/we-theme-sync"
+# args = []

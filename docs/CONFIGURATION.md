@@ -73,6 +73,29 @@ Current DMA-BUF scope:
 - v4 feedback changes are forwarded while the renderer is running, allowing output rebinding or SHM fallback
 - `prefer_dmabuf` selects policy; `allow_shm_fallback` controls behavior when no compatible pair exists
 
+## Wallpaper applied hook
+
+Use an optional command hook to integrate theme generators such as DMS/Matugen without making
+`we-layerd` depend on a specific desktop shell:
+
+```toml
+[hooks.wallpaper_applied]
+command = "~/.local/bin/we-theme-sync"
+args = []
+```
+
+The command starts asynchronously once the first frame has been submitted for each successful
+startup, wallpaper switch, or reload. Hook startup or exit failures are logged and do not stop the
+wallpaper runtime. `command` is executed directly, not through a shell; put pipelines, redirection,
+or other shell syntax in an executable script instead.
+
+The hook inherits the daemon environment and receives:
+
+- `WE_LAYERD_EVENT=wallpaper_applied`
+- `WE_LAYERD_SOURCE`: the active workshop item directory with `~` expanded
+- `WE_LAYERD_BACKEND`: the active backend name
+- `WE_LAYERD_GENERATION`: the runtime generation number
+
 ## Library search order
 
 If `renderer.library_path` is empty or does not resolve to an existing file, `we-layerd` falls back to these locations:
@@ -88,6 +111,7 @@ If `renderer.library_path` is empty or does not resolve to an existing file, `we
 - it writes `renderer.source` as the selected workshop item directory
 - it derives `renderer.assets_path` from the Wallpaper Engine install path
 - it preserves `renderer.options_json` when re-saving an existing config
+- it preserves `hooks` when generating the selected wallpaper config
 - it merges scene user properties and the optional audio-loop override without discarding other `renderer.options_json` fields
 - it refuses invalid JSON, non-object scene/audio containers, and unsupported options versions instead of overwriting them
 - it no longer generates Wine, Proton, X11 capture, video-native, or `openWallpaper` arguments
