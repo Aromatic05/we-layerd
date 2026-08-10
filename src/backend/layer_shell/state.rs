@@ -256,7 +256,7 @@ impl LayerShellState {
             }
             Err(error) => {
                 self.diagnostics.renderer_diagnostics = None;
-                self.diagnostics.renderer_diagnostics_error = Some(error.to_string());
+                self.diagnostics.renderer_diagnostics_error = Some(error.to_string().into());
             }
         }
     }

@@ -41,7 +41,7 @@ pub(crate) struct RuntimeDiagnostics {
     pub(crate) nvidia_prime_offload_detected: bool,
     pub(crate) options_json: OptionsJsonDiagnostics,
     pub(crate) renderer_diagnostics: Option<Arc<RendererDiagnostics>>,
-    pub(crate) renderer_diagnostics_error: Option<String>,
+    pub(crate) renderer_diagnostics_error: Option<Arc<str>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -155,7 +155,7 @@ impl RuntimeStatusSnapshot {
             format!(
                 "renderer_diagnostics_error = {}",
                 toml::Value::String(
-                    self.runtime.renderer_diagnostics_error.clone().unwrap_or_default()
+                    self.runtime.renderer_diagnostics_error.as_deref().unwrap_or("").to_string()
                 )
             ),
             String::new(),

@@ -124,10 +124,19 @@ pub fn supports_final_output_msaa(wallpaper_type: WallpaperType) -> bool {
     wallpaper_type == WallpaperType::Scene
 }
 
+pub fn inherited_final_output_msaa(global_samples: u32, wallpaper_type: WallpaperType) -> u32 {
+    if supports_final_output_msaa(wallpaper_type) {
+        global_samples.max(1)
+    } else {
+        1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        supports_final_output_msaa, RenderResolution, WallpaperFillMode, WallpaperSettings,
+        inherited_final_output_msaa, supports_final_output_msaa, RenderResolution,
+        WallpaperFillMode, WallpaperSettings,
     };
     use crate::wallpaper::WallpaperType;
 
@@ -147,5 +156,8 @@ mod tests {
         assert!(!supports_final_output_msaa(WallpaperType::Video));
         assert!(!supports_final_output_msaa(WallpaperType::Web));
         assert!(!supports_final_output_msaa(WallpaperType::Unknown));
+        assert_eq!(inherited_final_output_msaa(8, WallpaperType::Scene), 8);
+        assert_eq!(inherited_final_output_msaa(8, WallpaperType::Video), 1);
+        assert_eq!(inherited_final_output_msaa(8, WallpaperType::Web), 1);
     }
 }

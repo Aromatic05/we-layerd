@@ -348,16 +348,15 @@ pub(crate) fn apply_selection_to_config(
     selection: &PlaylistSelection,
 ) -> Result<()> {
     config.renderer.source = selection.source.clone();
-    let wallpaper = config
-        .wallpapers
-        .get(&selection.wallpaper_id)
-        .cloned()
-        .unwrap_or_else(WallpaperSettings::default);
+    let wallpaper_profile = config.wallpapers.get(&selection.wallpaper_id).cloned();
+    let wallpaper = wallpaper_profile.clone().unwrap_or_else(WallpaperSettings::default);
     config.renderer.fps = wallpaper.fps.clamp(1, 360);
     config.renderer.speed = wallpaper.speed;
     config.renderer.volume = wallpaper.volume;
     config.renderer.muted = wallpaper.muted;
-    config.renderer.msaa_samples = wallpaper.msaa_samples.max(1);
+    if let Some(profile) = wallpaper_profile {
+        config.renderer.msaa_samples = profile.msaa_samples.max(1);
+    }
     config.renderer.fill_mode = wallpaper.fill_mode;
     config.renderer.rotation_degrees = wallpaper.rotation_degrees.degrees();
     match wallpaper.render_resolution {
@@ -445,6 +444,22 @@ mod tests {
             .advance(AdvanceDirection::Next, started, |item| item.wallpaper_id != "missing")
             .expect("a later playable item exists");
         assert_eq!(selection.wallpaper_id, "c");
+    }
+
+    #[test]
+    fn profileless_playlist_selection_preserves_global_msaa() {
+        let mut runtime_config = crate::config::Config::default();
+        runtime_config.renderer.msaa_samples = 8;
+        let selection = super::PlaylistSelection {
+            index: 0,
+            wallpaper_id: "scene".to_string(),
+            source: "/wallpapers/scene".to_string(),
+        };
+
+        super::apply_selection_to_config(&mut runtime_config, &selection)
+            .expect("apply playlist selection");
+
+        assert_eq!(runtime_config.renderer.msaa_samples, 8);
     }
 
     #[test]
