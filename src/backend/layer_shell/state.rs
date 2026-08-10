@@ -251,7 +251,7 @@ impl LayerShellState {
         };
         match session.diagnostics() {
             Ok(diagnostics) => {
-                self.diagnostics.renderer_diagnostics = Some(diagnostics);
+                self.diagnostics.renderer_diagnostics = Some(std::sync::Arc::new(diagnostics));
                 self.diagnostics.renderer_diagnostics_error = None;
             }
             Err(error) => {

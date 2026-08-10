@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::config::ScaleMode;
 use we_renderer::{DiagnosticSeverity, RendererDiagnostics};
 
@@ -38,7 +40,7 @@ pub(crate) struct RuntimeDiagnostics {
     pub(crate) allow_shm_fallback: bool,
     pub(crate) nvidia_prime_offload_detected: bool,
     pub(crate) options_json: OptionsJsonDiagnostics,
-    pub(crate) renderer_diagnostics: Option<RendererDiagnostics>,
+    pub(crate) renderer_diagnostics: Option<Arc<RendererDiagnostics>>,
     pub(crate) renderer_diagnostics_error: Option<String>,
 }
 
@@ -146,7 +148,7 @@ impl RuntimeStatusSnapshot {
                     self.runtime
                         .renderer_diagnostics
                         .as_ref()
-                        .and_then(|diagnostics| serde_json::to_string(diagnostics).ok())
+                        .and_then(|diagnostics| serde_json::to_string(diagnostics.as_ref()).ok())
                         .unwrap_or_default()
                 )
             ),
@@ -228,14 +230,14 @@ mod tests {
     fn renderer_diagnostics_are_valid_toml_and_preserve_json_payload() {
         let mut snapshot = RuntimeStatusSnapshot::default();
         snapshot.runtime = RuntimeDiagnostics {
-            renderer_diagnostics: Some(RendererDiagnostics {
+            renderer_diagnostics: Some(Arc::new(RendererDiagnostics {
                 version: 1,
                 entries: vec![DiagnosticEntry {
                     severity: DiagnosticSeverity::Warning,
                     source: "abi.render-config.msaa".to_string(),
                     message: "scene only".to_string(),
                 }],
-            }),
+            })),
             ..RuntimeDiagnostics::default()
         };
 
