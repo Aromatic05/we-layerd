@@ -1,11 +1,14 @@
 use std::{path::Path, time::Duration};
 
 use iced::{window, Task};
-use rand::Rng;
-use we_core::wallpaper::{properties::UserPropertySchema, WallpaperType};
+use we_core::wallpaper::properties::UserPropertySchema;
 
 use crate::{
     domain::{
+        playlist_editor::{
+            self, add_wallpaper, create_playlist, delete_playlist, move_entry, remove_entry,
+            rename_playlist, set_default_duration_ms, set_entry_duration_ms, set_mode,
+        },
         runtime_status::RuntimeStatus,
         ui_state::{AnimatedPreview, Sidebar},
     },
@@ -29,14 +32,22 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Ok(entries) => {
                 app.entries = entries;
                 app.animated_previews.clear();
-                Task::batch(app.entries.iter().filter_map(|entry| {
-                    let path = entry.preview.as_ref()?.clone();
-                    (path.extension().and_then(|ext| ext.to_str()) == Some("gif")).then(|| {
-                        Task::perform(wallpaper_service::decode_gif(path.clone()), move |result| {
-                            Message::GifLoaded(path, result)
+                let mut tasks = app
+                    .entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let path = entry.preview.as_ref()?.clone();
+                        (path.extension().and_then(|ext| ext.to_str()) == Some("gif")).then(|| {
+                            Task::perform(
+                                wallpaper_service::decode_gif(path.clone()),
+                                move |result| Message::GifLoaded(path, result),
+                            )
                         })
                     })
-                }))
+                    .collect::<Vec<_>>();
+                let migration = migrate_legacy_shuffle_if_needed(app);
+                tasks.push(migration);
+                Task::batch(tasks)
             }
             Err(_err) => Task::none(),
         },
@@ -65,21 +76,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     preview.current = (preview.current + 1) % preview.frames.len();
                 }
             }
-            if app.ui_settings.shuffle_enabled && app.playback_running && !app.playback_paused {
-                app.shuffle_elapsed += Duration::from_millis(16);
-                let interval =
-                    Duration::from_millis(u64::from(app.ui_settings.shuffle_interval_ms));
-                if app.shuffle_elapsed >= interval {
-                    return shuffle_to_next(app);
-                }
-            }
             Task::none()
         }
         Message::Detail(message) => super::detail_update::update(app, message),
         Message::PlayPressed => play_selected(app, PlaybackStart::SwitchOrStart),
-        Message::ShufflePlaybackPressed => play_selected(app, PlaybackStart::Restart),
         Message::StopPressed => {
-            app.shuffle_elapsed = Duration::ZERO;
             let stopped = app.shutdown_runtime();
             app.runtime_status =
                 if stopped { RuntimeStatus::StoppedDaemon } else { RuntimeStatus::StopFailed };
@@ -230,66 +231,206 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::ShufflePressed => shuffle_to_next(app),
-        Message::ShuffleEnabledToggled(value) => {
-            app.ui_settings.shuffle_enabled = value;
-            app.shuffle_elapsed = Duration::ZERO;
-            queue_preferences_save(app)
-        }
-        Message::ShuffleIntervalSelected(value) => {
-            if crate::domain::settings::is_shuffle_interval_ms(value) {
-                app.ui_settings.shuffle_interval_ms = value;
-                app.ui_settings.shuffle_interval_input = value.to_string();
-                app.shuffle_elapsed = Duration::ZERO;
-                return queue_preferences_save(app);
+        Message::PlaylistsPressed => {
+            app.sidebar = match app.sidebar {
+                Some(Sidebar::Playlist) => None,
+                _ => Some(Sidebar::Playlist),
+            };
+            if app.sidebar == Some(Sidebar::Playlist) {
+                ensure_playlist_selection(app);
             }
             Task::none()
         }
-        Message::ShuffleIntervalChanged(value) => {
-            app.ui_settings.shuffle_interval_input = value.clone();
-            let Ok(interval_ms) = value.parse::<u32>() else {
+        Message::PlaylistSelect(name) => {
+            if app.launch_settings.playlists.definitions.contains_key(&name) {
+                app.playlist_selected = Some(name);
+                sync_playlist_editor_inputs(app);
+            }
+            Task::none()
+        }
+        Message::PlaylistNewNameChanged(value) => {
+            app.playlist_new_name_input = value;
+            Task::none()
+        }
+        Message::PlaylistCreate => {
+            let name = app.playlist_new_name_input.trim().to_string();
+            match create_playlist(&mut app.launch_settings.playlists, &name) {
+                Ok(()) => {
+                    app.playlist_selected = Some(name);
+                    app.playlist_new_name_input.clear();
+                    sync_playlist_editor_inputs(app);
+                    persist_playlist_changes(app);
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::PlaylistNameChanged(value) => {
+            app.playlist_name_input = value;
+            Task::none()
+        }
+        Message::PlaylistRename => {
+            let Some(current) = app.playlist_selected.clone() else {
                 return Task::none();
             };
-            if !crate::domain::settings::is_shuffle_interval_ms(interval_ms) {
+            let was_running = app.runtime_playlist_active.as_deref() == Some(current.as_str());
+            let next = app.playlist_name_input.trim().to_string();
+            match rename_playlist(&mut app.launch_settings.playlists, &current, &next) {
+                Ok(()) => {
+                    app.playlist_selected = Some(next);
+                    sync_playlist_editor_inputs(app);
+                    persist_playlist_changes_and_reload_if(app, was_running);
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::PlaylistDelete => {
+            let Some(name) = app.playlist_selected.clone() else {
+                return Task::none();
+            };
+            let was_running = app.runtime_playlist_active.as_deref() == Some(name.as_str());
+            match delete_playlist(&mut app.launch_settings.playlists, &name) {
+                Ok(()) => {
+                    app.playlist_selected =
+                        app.launch_settings.playlists.definitions.keys().next().cloned();
+                    sync_playlist_editor_inputs(app);
+                    if persist_playlist_changes_and_reload_if(app, was_running) && was_running {
+                        app.runtime_playlist_active = None;
+                        app.runtime_playlist_index = None;
+                    }
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::PlaylistModeSelected(mode) => {
+            let Some(name) = app.playlist_selected.clone() else {
+                return Task::none();
+            };
+            match set_mode(&mut app.launch_settings.playlists, &name, mode) {
+                Ok(()) => {
+                    persist_playlist_changes_and_reload(app, Some(&name));
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::PlaylistDefaultDurationChanged(value) => {
+            app.playlist_default_duration_input = value;
+            Task::none()
+        }
+        Message::PlaylistDefaultDurationApply => {
+            let Some(name) = app.playlist_selected.clone() else {
+                return Task::none();
+            };
+            let Ok(duration_ms) = app.playlist_default_duration_input.parse::<u64>() else {
+                set_playlist_error(
+                    app,
+                    "default duration must be an integer in milliseconds".to_string(),
+                );
+                return Task::none();
+            };
+            match set_default_duration_ms(&mut app.launch_settings.playlists, &name, duration_ms) {
+                Ok(()) => {
+                    persist_playlist_changes_and_reload(app, Some(&name));
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::PlaylistEntryDurationChanged { index, value } => {
+            if index >= app.playlist_entry_duration_inputs.len() {
                 return Task::none();
             }
-            app.ui_settings.shuffle_interval_ms = interval_ms;
-            app.shuffle_elapsed = Duration::ZERO;
-            queue_preferences_save(app)
+            app.playlist_entry_duration_inputs[index] = value;
+            Task::none()
         }
-        Message::ShuffleIncludeVideoToggled(value) => {
-            if !value
-                && !app.ui_settings.shuffle_include_scene
-                && !app.ui_settings.shuffle_include_web
-            {
+        Message::PlaylistEntryDurationApply(index) => {
+            let Some(name) = app.playlist_selected.clone() else {
                 return Task::none();
-            }
-            app.ui_settings.shuffle_include_video = value;
-            app.shuffle_elapsed = Duration::ZERO;
-            queue_preferences_save(app)
-        }
-        Message::ShuffleIncludeSceneToggled(value) => {
-            if !value
-                && !app.ui_settings.shuffle_include_video
-                && !app.ui_settings.shuffle_include_web
-            {
+            };
+            let Some(value) = app.playlist_entry_duration_inputs.get(index) else {
                 return Task::none();
-            }
-            app.ui_settings.shuffle_include_scene = value;
-            app.shuffle_elapsed = Duration::ZERO;
-            queue_preferences_save(app)
-        }
-        Message::ShuffleIncludeWebToggled(value) => {
-            if !value
-                && !app.ui_settings.shuffle_include_video
-                && !app.ui_settings.shuffle_include_scene
-            {
+            };
+            let Ok(duration_ms) = value.parse::<u64>() else {
+                set_playlist_error(
+                    app,
+                    "entry duration must be an integer in milliseconds".to_string(),
+                );
                 return Task::none();
+            };
+            match set_entry_duration_ms(
+                &mut app.launch_settings.playlists,
+                &name,
+                index,
+                Some(duration_ms),
+            ) {
+                Ok(()) => {
+                    persist_playlist_changes_and_reload(app, Some(&name));
+                }
+                Err(error) => set_playlist_error(app, error),
             }
-            app.ui_settings.shuffle_include_web = value;
-            app.shuffle_elapsed = Duration::ZERO;
-            queue_preferences_save(app)
+            Task::none()
         }
+        Message::PlaylistEntryDurationClear(index) => {
+            let Some(name) = app.playlist_selected.clone() else {
+                return Task::none();
+            };
+            match set_entry_duration_ms(&mut app.launch_settings.playlists, &name, index, None) {
+                Ok(()) => {
+                    sync_playlist_editor_inputs(app);
+                    persist_playlist_changes_and_reload(app, Some(&name));
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::PlaylistEntryMove { index, direction } => {
+            let Some(name) = app.playlist_selected.clone() else {
+                return Task::none();
+            };
+            match move_entry(&mut app.launch_settings.playlists, &name, index, direction) {
+                Ok(_) => {
+                    sync_playlist_editor_inputs(app);
+                    persist_playlist_changes_and_reload(app, Some(&name));
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::PlaylistEntryRemove(index) => {
+            let Some(name) = app.playlist_selected.clone() else {
+                return Task::none();
+            };
+            match remove_entry(&mut app.launch_settings.playlists, &name, index) {
+                Ok(()) => {
+                    sync_playlist_editor_inputs(app);
+                    persist_playlist_changes_and_reload(app, Some(&name));
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::AddWallpaperToSelectedPlaylist(index) => {
+            let (Some(name), Some(entry)) =
+                (app.playlist_selected.clone(), app.entries.get(index).cloned())
+            else {
+                return Task::none();
+            };
+            match add_wallpaper(&mut app.launch_settings.playlists, &name, &entry) {
+                Ok(()) => {
+                    sync_playlist_editor_inputs(app);
+                    persist_playlist_changes_and_reload(app, Some(&name));
+                }
+                Err(error) => set_playlist_error(app, error),
+            }
+            Task::none()
+        }
+        Message::PlaylistPlay => play_selected_playlist(app),
+        Message::PlaylistNext => playlist_runtime_action(app, "next"),
+        Message::PlaylistPrevious => playlist_runtime_action(app, "previous"),
+        Message::PlaylistStop => playlist_runtime_action(app, "stop"),
         Message::StatusLoaded(result) => {
             app.runtime_status = match result {
                 Ok(runtime::DaemonStatus::Running(text)) => {
@@ -297,6 +438,13 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.playback_paused = status_value(&text, "phase") == Some("paused");
                     if app.playback_running || app.playback_paused {
                         app.running_source = status_value(&text, "source").map(str::to_string);
+                        app.runtime_playlist_active =
+                            status_section_value(&text, "playlist_runtime", "active")
+                                .filter(|value| *value != "false")
+                                .map(str::to_string);
+                        app.runtime_playlist_index =
+                            status_section_value(&text, "playlist_runtime", "index")
+                                .and_then(|value| value.parse::<usize>().ok());
                     } else {
                         app.clear_playback_state();
                     }
@@ -371,7 +519,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 task.map(Message::WindowOpened)
             }
             tray::TrayAction::PlaySwitch => Task::done(Message::PlayPressed),
-            tray::TrayAction::ShuffleOnce => Task::done(Message::ShufflePressed),
+            tray::TrayAction::NextPlaylistItem => Task::done(Message::PlaylistNext),
             tray::TrayAction::Stop => Task::done(Message::StopPressed),
             tray::TrayAction::Pause => {
                 if runtime::send_control("pause") {
@@ -405,6 +553,24 @@ fn status_value<'a>(status: &'a str, key: &str) -> Option<&'a str> {
         .map(|value| value.trim_matches('"'))
 }
 
+fn status_section_value<'a>(status: &'a str, section: &str, key: &str) -> Option<&'a str> {
+    let header = format!("[{section}]");
+    let mut in_section = false;
+    for line in status.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_section = trimmed == header;
+            continue;
+        }
+        if in_section {
+            if let Some(value) = trimmed.strip_prefix(&format!("{key} = ")) {
+                return Some(value.trim_matches('"'));
+            }
+        }
+    }
+    None
+}
+
 fn queue_preferences_save(app: &mut App) -> Task<Message> {
     app.preferences_generation = app.preferences_generation.wrapping_add(1);
     if app.preferences_path.is_some() {
@@ -424,11 +590,12 @@ fn persist_gui_preferences(app: &App) -> Task<Message> {
     let generation = app.preferences_generation;
     let preferences = preferences::GuiPreferences {
         language: app.language,
-        shuffle_enabled: app.ui_settings.shuffle_enabled,
-        shuffle_interval_ms: app.ui_settings.shuffle_interval_ms,
-        shuffle_include_video: app.ui_settings.shuffle_include_video,
-        shuffle_include_scene: app.ui_settings.shuffle_include_scene,
-        shuffle_include_web: app.ui_settings.shuffle_include_web,
+        shuffle_enabled: app.legacy_shuffle.enabled,
+        shuffle_interval_ms: app.legacy_shuffle.interval_ms,
+        shuffle_include_video: app.legacy_shuffle.include_video,
+        shuffle_include_scene: app.legacy_shuffle.include_scene,
+        shuffle_include_web: app.legacy_shuffle.include_web,
+        playlist_migration_completed: app.playlist_migration_completed,
     };
     Task::perform(async move { preferences::save(&path, preferences) }, move |result| {
         Message::PreferencesSaved { generation, result }
@@ -445,7 +612,6 @@ fn select_wallpaper(app: &mut App, index: usize, show_details: bool) -> bool {
         .unwrap_or(UserPropertySchema { entries: Vec::new() });
     let profile = app.launch_settings.wallpapers.entry(entry.id.clone()).or_default().clone();
     set_resolution_inputs(app, &profile);
-    app.shuffle_elapsed = Duration::ZERO;
     if let Err(error) = config::persist_selected(&app.config_path, &app.launch_settings, &entry) {
         app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
         eprintln!("failed to save config: {error}");
@@ -457,19 +623,190 @@ fn select_wallpaper(app: &mut App, index: usize, show_details: bool) -> bool {
     true
 }
 
-fn shuffle_to_next(app: &mut App) -> Task<Message> {
-    let candidates = shuffle_candidate_indices(app);
-    if candidates.is_empty() {
-        app.shuffle_elapsed = Duration::ZERO;
-        app.runtime_status = RuntimeStatus::NoShuffleWallpapers;
+fn migrate_legacy_shuffle_if_needed(app: &mut App) -> Task<Message> {
+    if app.playlist_migration_completed {
         return Task::none();
     }
 
-    let index = candidates[rand::rng().random_range(0..candidates.len())];
-    if !select_wallpaper(app, index, false) {
+    if !app.launch_settings.playlists.definitions.is_empty() || !app.legacy_shuffle.enabled {
+        app.playlist_migration_completed = true;
+        return queue_preferences_save(app);
+    }
+
+    let previous = app.launch_settings.playlists.clone();
+    match playlist_editor::migrate_legacy_shuffle(
+        &mut app.launch_settings.playlists,
+        &app.entries,
+        app.legacy_shuffle,
+    ) {
+        Ok(true) => {
+            app.playlist_selected = app.launch_settings.playlists.active.clone();
+            sync_playlist_editor_inputs(app);
+            if persist_playlist_changes(app) {
+                app.playlist_migration_completed = true;
+                queue_preferences_save(app)
+            } else {
+                app.launch_settings.playlists = previous;
+                sync_playlist_editor_inputs(app);
+                Task::none()
+            }
+        }
+        Ok(false) => {
+            app.playlist_migration_completed = true;
+            queue_preferences_save(app)
+        }
+        Err(_) => Task::none(),
+    }
+}
+
+fn persist_playlist_changes(app: &mut App) -> bool {
+    match config::persist_playlists(&app.config_path, &app.launch_settings.playlists) {
+        Ok(()) => true,
+        Err(error) => {
+            app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+            eprintln!("failed to save playlists: {error}");
+            false
+        }
+    }
+}
+
+fn persist_playlist_changes_and_reload(app: &mut App, edited_name: Option<&str>) -> bool {
+    let reload_running =
+        edited_name.is_some_and(|name| app.runtime_playlist_active.as_deref() == Some(name));
+    persist_playlist_changes_and_reload_if(app, reload_running)
+}
+
+fn persist_playlist_changes_and_reload_if(app: &mut App, reload_running: bool) -> bool {
+    if !persist_playlist_changes(app) {
+        return false;
+    }
+    if reload_running && !runtime::try_switch(&app.config_path) {
+        set_playlist_error(
+            app,
+            "playlist was saved but the running daemon could not reload it".to_string(),
+        );
+        return false;
+    }
+    true
+}
+
+fn set_playlist_error(app: &mut App, error: String) {
+    app.runtime_status = RuntimeStatus::PlaylistError(error);
+}
+
+fn ensure_playlist_selection(app: &mut App) {
+    let selected_is_valid = app
+        .playlist_selected
+        .as_deref()
+        .is_some_and(|name| app.launch_settings.playlists.definitions.contains_key(name));
+    if !selected_is_valid {
+        app.playlist_selected = app
+            .launch_settings
+            .playlists
+            .active
+            .clone()
+            .filter(|name| app.launch_settings.playlists.definitions.contains_key(name))
+            .or_else(|| app.launch_settings.playlists.definitions.keys().next().cloned());
+    }
+    sync_playlist_editor_inputs(app);
+}
+
+fn sync_playlist_editor_inputs(app: &mut App) {
+    let Some(name) = app.playlist_selected.clone() else {
+        app.playlist_name_input.clear();
+        app.playlist_default_duration_input.clear();
+        app.playlist_entry_duration_inputs.clear();
+        return;
+    };
+    let Some(playlist) = app.launch_settings.playlists.definitions.get(&name) else {
+        app.playlist_selected = None;
+        app.playlist_name_input.clear();
+        app.playlist_default_duration_input.clear();
+        app.playlist_entry_duration_inputs.clear();
+        return;
+    };
+    app.playlist_name_input = name;
+    app.playlist_default_duration_input = playlist.default_duration_ms.to_string();
+    app.playlist_entry_duration_inputs = playlist
+        .items
+        .iter()
+        .map(|item| item.duration_ms.map(|value| value.to_string()).unwrap_or_default())
+        .collect();
+}
+
+fn play_selected_playlist(app: &mut App) -> Task<Message> {
+    let Some(name) = app.playlist_selected.clone() else {
+        set_playlist_error(app, "select a playlist first".to_string());
+        return Task::none();
+    };
+    let Some(playlist) = app.launch_settings.playlists.definitions.get(&name) else {
+        set_playlist_error(app, format!("playlist '{name}' does not exist"));
+        return Task::none();
+    };
+    if playlist.items.is_empty() {
+        set_playlist_error(app, format!("playlist '{name}' is empty"));
         return Task::none();
     }
-    Task::done(Message::ShufflePlaybackPressed)
+    if !app.layerd_available {
+        app.runtime_status = RuntimeStatus::DaemonNotFound;
+        return Task::none();
+    }
+
+    app.launch_settings.playlists.active = Some(name.clone());
+    if !persist_playlist_changes(app) {
+        return Task::none();
+    }
+    app.runtime_shutdown = false;
+    if let Err(error) = runtime::reap(&mut app.runtime_child) {
+        eprintln!("failed to query daemon child status: {error}");
+    }
+
+    let controlled = runtime::play_playlist(&name)
+        || (runtime::try_switch(&app.config_path) && runtime::play_playlist(&name));
+    if controlled {
+        app.playback_running = true;
+        app.playback_paused = false;
+        app.runtime_playlist_active = Some(name);
+        return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
+    }
+
+    match runtime::start(&app.config_path) {
+        Ok(child) => {
+            app.runtime_child = Some(child);
+            app.playback_running = true;
+            app.playback_paused = false;
+            app.runtime_playlist_active = Some(name);
+            app.runtime_status = RuntimeStatus::StartedDaemon;
+            Task::perform(runtime::fetch_status(), Message::StatusLoaded)
+        }
+        Err(error) => {
+            app.runtime_status = RuntimeStatus::StartFailed(error.to_string());
+            Task::none()
+        }
+    }
+}
+
+fn playlist_runtime_action(app: &mut App, action: &str) -> Task<Message> {
+    if action == "stop" {
+        let daemon_stopped_playlist = runtime::send_playlist_action(action);
+        app.launch_settings.playlists.active = None;
+        app.runtime_playlist_active = None;
+        app.runtime_playlist_index = None;
+        if !persist_playlist_changes(app) {
+            return Task::none();
+        }
+        return if daemon_stopped_playlist {
+            Task::perform(runtime::fetch_status(), Message::StatusLoaded)
+        } else {
+            Task::none()
+        };
+    }
+
+    if !runtime::send_playlist_action(action) {
+        set_playlist_error(app, format!("failed to send playlist {action} command"));
+        return Task::none();
+    }
+    Task::perform(runtime::fetch_status(), Message::StatusLoaded)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -484,6 +821,13 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
         app.runtime_status = RuntimeStatus::DaemonNotFound;
         return Task::none();
     }
+
+    if app.runtime_playlist_active.is_some() {
+        let _ = runtime::send_playlist_action("stop");
+    }
+    app.launch_settings.playlists.active = None;
+    app.runtime_playlist_active = None;
+    app.runtime_playlist_index = None;
 
     if let Err(error) = persist_current_config(app) {
         app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
@@ -545,42 +889,6 @@ fn mark_selected_wallpaper_running(app: &mut App) {
     app.playback_running = true;
     app.playback_paused = false;
     app.running_source = selected_wallpaper_source(app);
-    app.shuffle_elapsed = Duration::ZERO;
-}
-
-fn shuffle_candidate_indices(app: &App) -> Vec<usize> {
-    shuffle_candidate_indices_for(
-        &app.entries,
-        app.running_source.as_deref(),
-        app.ui_settings.shuffle_include_video,
-        app.ui_settings.shuffle_include_scene,
-        app.ui_settings.shuffle_include_web,
-    )
-}
-
-fn shuffle_candidate_indices_for(
-    entries: &[we_core::wallpaper::WallpaperEntry],
-    running_source: Option<&str>,
-    include_video: bool,
-    include_scene: bool,
-    include_web: bool,
-) -> Vec<usize> {
-    entries
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| {
-            let included = match entry.ty {
-                WallpaperType::Video => include_video,
-                WallpaperType::Scene => include_scene,
-                WallpaperType::Web => include_web,
-                WallpaperType::Unknown => false,
-            };
-            let source =
-                entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy();
-            included && running_source != Some(source.as_ref())
-        })
-        .map(|(index, _)| index)
-        .collect()
 }
 
 fn selected_wallpaper_source(app: &App) -> Option<String> {
@@ -591,11 +899,7 @@ fn selected_wallpaper_source(app: &App) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use we_core::wallpaper::{WallpaperEntry, WallpaperType};
-
-    use super::{effective_playback_start, shuffle_candidate_indices_for, PlaybackStart};
+    use super::{effective_playback_start, status_section_value, PlaybackStart};
 
     #[test]
     fn appimage_restarts_an_unowned_daemon_before_first_playback() {
@@ -614,27 +918,17 @@ mod tests {
     }
 
     #[test]
-    fn shuffle_excludes_running_source_not_an_unplayed_selection() {
-        let entries = vec![
-            wallpaper("selected", "/wallpapers/selected/project.json", WallpaperType::Video),
-            wallpaper("running", "/wallpapers/running/project.json", WallpaperType::Scene),
-            wallpaper("other", "/wallpapers/other/project.json", WallpaperType::Web),
-        ];
+    fn playlist_runtime_status_reads_the_runtime_section_not_config_metadata() {
+        let status = r#"
+[playlists]
+active = "Configured"
 
-        assert_eq!(
-            shuffle_candidate_indices_for(&entries, Some("/wallpapers/running"), true, true, true,),
-            vec![0, 2],
-        );
-    }
-
-    fn wallpaper(id: &str, project_json: &str, ty: WallpaperType) -> WallpaperEntry {
-        WallpaperEntry {
-            id: id.to_string(),
-            project_json: PathBuf::from(project_json),
-            title: id.to_string(),
-            ty,
-            preview: None,
-            source_file: None,
-        }
+[playlist_runtime]
+active = "Running"
+index = 2
+wallpaper_id = "42"
+"#;
+        assert_eq!(status_section_value(status, "playlist_runtime", "active"), Some("Running"));
+        assert_eq!(status_section_value(status, "playlist_runtime", "index"), Some("2"));
     }
 }

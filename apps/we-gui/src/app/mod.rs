@@ -38,6 +38,7 @@ mod tests {
     use crate::{
         domain::{
             i18n::Language,
+            playlist_editor::LegacyShuffleMigration,
             runtime_status::RuntimeStatus,
             settings::{ScaleModeOption, UiSettings},
             ui_state::Pane,
@@ -65,12 +66,16 @@ mod tests {
             fps_limit: "144".to_string(),
             show_fps: true,
             scale_mode: ScaleModeOption::Stretch,
-            shuffle_enabled: false,
-            shuffle_interval_ms: 1_800_000,
-            shuffle_interval_input: "1800000".to_string(),
-            shuffle_include_video: true,
-            shuffle_include_scene: true,
-            shuffle_include_web: true,
+        }
+    }
+
+    fn legacy_shuffle() -> LegacyShuffleMigration {
+        LegacyShuffleMigration {
+            enabled: false,
+            interval_ms: 1_800_000,
+            include_video: true,
+            include_scene: true,
+            include_web: true,
         }
     }
 
@@ -134,7 +139,15 @@ mod tests {
             preferences_path: Some(preferences_path.clone()),
             runtime_status: RuntimeStatus::DaemonNotRunning,
             preferences_generation: 0,
-            shuffle_elapsed: std::time::Duration::ZERO,
+            playlist_selected: None,
+            playlist_new_name_input: String::new(),
+            playlist_name_input: String::new(),
+            playlist_default_duration_input: String::new(),
+            playlist_entry_duration_inputs: Vec::new(),
+            runtime_playlist_active: None,
+            runtime_playlist_index: None,
+            legacy_shuffle: legacy_shuffle(),
+            playlist_migration_completed: true,
         };
 
         let _task =
@@ -217,7 +230,15 @@ mod tests {
             preferences_path: None,
             runtime_status: RuntimeStatus::DaemonNotRunning,
             preferences_generation: 0,
-            shuffle_elapsed: std::time::Duration::ZERO,
+            playlist_selected: None,
+            playlist_new_name_input: String::new(),
+            playlist_name_input: String::new(),
+            playlist_default_duration_input: String::new(),
+            playlist_entry_duration_inputs: Vec::new(),
+            runtime_playlist_active: None,
+            runtime_playlist_index: None,
+            legacy_shuffle: legacy_shuffle(),
+            playlist_migration_completed: true,
         };
         drop(app);
 
@@ -237,7 +258,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn shuffle_restart_stops_old_daemon_before_starting_new_one() {
+    fn runtime_restart_stops_old_daemon_before_starting_new_one() {
         let _lock = ENV_LOCK.lock().expect("environment lock");
         let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
         let temp = std::env::temp_dir().join(format!("we-gui-restart-{suffix}"));

@@ -9,7 +9,7 @@ use crate::{
         i18n::Text,
         ui_state::{Pane, Sidebar},
     },
-    ui::sidebar::{detail, settings},
+    ui::sidebar::{detail, playlist, settings},
 };
 
 use super::{App, Message};
@@ -62,6 +62,7 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
         Sidebar::Settings => {
             settings::build_settings_overlay(&app.ui_settings, app.language, &app.runtime_status)
         }
+        Sidebar::Playlist => playlist::view(app),
         Sidebar::Detail => match app
             .selected_id
             .as_deref()

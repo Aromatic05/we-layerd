@@ -122,11 +122,11 @@ impl Language {
             (Self::SimplifiedChinese, RuntimeStatus::PreferencesSaveFailed(detail)) => {
                 format!("保存界面偏好设置失败：{detail}")
             }
-            (Self::English, RuntimeStatus::NoShuffleWallpapers) => {
-                "no wallpapers match the random playback sources".to_string()
+            (Self::English, RuntimeStatus::PlaylistError(detail)) => {
+                format!("playlist error: {detail}")
             }
-            (Self::SimplifiedChinese, RuntimeStatus::NoShuffleWallpapers) => {
-                "没有符合随机播放来源设置的壁纸".to_string()
+            (Self::SimplifiedChinese, RuntimeStatus::PlaylistError(detail)) => {
+                format!("播放列表错误：{detail}")
             }
         }
     }
@@ -148,6 +148,34 @@ pub(crate) enum Text {
     NoMatchingWallpapers,
     OpenSettings,
     ShuffleWallpapers,
+    Playlists,
+    PlaylistsSubtitle,
+    NewPlaylist,
+    CreatePlaylist,
+    PlaylistName,
+    RenamePlaylist,
+    DeletePlaylist,
+    PlaylistMode,
+    PlaylistSequential,
+    PlaylistRepeat,
+    PlaylistShuffle,
+    PlaylistManual,
+    PlaylistDefaultDuration,
+    PlaylistEntries,
+    PlaylistEmpty,
+    AddToPlaylist,
+    Apply,
+    PlayPlaylist,
+    PreviousItem,
+    NextItem,
+    StopPlaylist,
+    EntryDuration,
+    UseDefaultDuration,
+    MoveUp,
+    MoveDown,
+    Remove,
+    ActivePlaylist,
+    CurrentPlaylistEntry,
     FilterAll,
     FilterWeb,
     FilterScene,
@@ -229,7 +257,7 @@ pub(crate) enum Text {
     SelectPropertyPath,
     TrayShowWindow,
     TrayPlaySwitch,
-    TrayShuffleOnce,
+    TrayNextPlaylistItem,
     TrayStop,
     TrayPause,
     TrayResume,

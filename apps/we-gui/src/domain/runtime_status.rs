@@ -13,5 +13,5 @@ pub(crate) enum RuntimeStatus {
     InvalidWallpaperEngineDirectory,
     ConfigSaveFailed(String),
     PreferencesSaveFailed(String),
-    NoShuffleWallpapers,
+    PlaylistError(String),
 }

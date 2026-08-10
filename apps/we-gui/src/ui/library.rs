@@ -1,7 +1,7 @@
 use iced::{
     alignment::Vertical,
     widget::{
-        button, column, container, image, responsive, row, scrollable, stack, svg, text, text_input,
+        button, column, container, image, responsive, row, scrollable, stack, text, text_input,
     },
     Background, Border, Color, ContentFit, Element, Fill, Theme,
 };
@@ -35,6 +35,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             app.selected_id.as_ref(),
             size.width,
             &app.animated_previews,
+            app.playlist_selected.as_deref(),
             language,
         )
     });
@@ -73,20 +74,11 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         .spacing(2)
         .width(Fill),
         container(
-            button(
-                row![
-                    svg(svg::Handle::from_memory(include_bytes!("../../assets/icons/shuffle.svg")))
-                        .width(20)
-                        .height(20),
-                    text(language.text(Text::ShuffleWallpapers)).size(16),
-                ]
-                .spacing(8)
-                .align_y(Vertical::Center)
-            )
-            .on_press(Message::ShufflePressed)
-            .style(top_bar_button_style),
+            button(text(format!("☷  {}", language.text(Text::Playlists))).size(16))
+                .on_press(Message::PlaylistsPressed)
+                .style(top_bar_button_style),
         )
-        .id("library.shuffle"),
+        .id("library.playlists"),
         container(
             button(text(format!("⚙  {}", language.text(Text::OpenSettings))).size(16))
                 .on_press(Message::SettingsPressed)
@@ -125,6 +117,7 @@ fn build_wallpaper_grid<'a>(
     selected_id: Option<&String>,
     width: f32,
     animated_previews: &'a std::collections::HashMap<std::path::PathBuf, AnimatedPreview>,
+    playlist_selected: Option<&'a str>,
     language: Language,
 ) -> Element<'a, Message> {
     let spacing = 12.0;
@@ -144,6 +137,7 @@ fn build_wallpaper_grid<'a>(
                 card_width,
                 selected,
                 animated_previews,
+                playlist_selected,
                 language,
             ));
         }
@@ -158,6 +152,7 @@ fn make_wallpaper_card<'a>(
     card_width: f32,
     selected: bool,
     animated_previews: &'a std::collections::HashMap<std::path::PathBuf, AnimatedPreview>,
+    playlist_selected: Option<&'a str>,
     language: Language,
 ) -> Element<'a, Message> {
     let card_height = (card_width * 9.0 / 16.0).round();
@@ -224,11 +219,21 @@ fn make_wallpaper_card<'a>(
             ..Default::default()
         },
     );
-    container(
-        button(frame).on_press(Message::SelectWallpaper(index)).style(image_card_button_style),
-    )
-    .id(format!("library.wallpaper.{}", entry.id))
-    .into()
+    let card =
+        button(frame).on_press(Message::SelectWallpaper(index)).style(image_card_button_style);
+    let mut content = column![card].spacing(6).width(card_width);
+    if let Some(playlist_name) = playlist_selected {
+        content = content.push(
+            button(
+                text(format!("+ {} · {}", language.text(Text::AddToPlaylist), playlist_name))
+                    .size(12),
+            )
+            .on_press(Message::AddWallpaperToSelectedPlaylist(index))
+            .width(Fill)
+            .style(top_bar_button_style),
+        );
+    }
+    container(content).id(format!("library.wallpaper.{}", entry.id)).into()
 }
 
 fn wallpaper_type_name(ty: WallpaperType, language: Language) -> &'static str {

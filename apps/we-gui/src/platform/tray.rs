@@ -11,7 +11,7 @@ use crate::domain::i18n::{Language, Text};
 pub enum TrayAction {
     ShowWindow,
     PlaySwitch,
-    ShuffleOnce,
+    NextPlaylistItem,
     Stop,
     Pause,
     Resume,
@@ -59,7 +59,7 @@ enum TrayCommand {
 struct TrayItems {
     show: MenuItem,
     play: MenuItem,
-    shuffle: MenuItem,
+    next_playlist: MenuItem,
     stop: MenuItem,
     pause: MenuItem,
     resume: MenuItem,
@@ -71,7 +71,7 @@ impl TrayItems {
         Self {
             show: MenuItem::new(language.text(Text::TrayShowWindow), true, None),
             play: MenuItem::new(language.text(Text::TrayPlaySwitch), true, None),
-            shuffle: MenuItem::new(language.text(Text::TrayShuffleOnce), true, None),
+            next_playlist: MenuItem::new(language.text(Text::TrayNextPlaylistItem), true, None),
             stop: MenuItem::new(language.text(Text::TrayStop), true, None),
             pause: MenuItem::new(language.text(Text::TrayPause), true, None),
             resume: MenuItem::new(language.text(Text::TrayResume), true, None),
@@ -82,7 +82,7 @@ impl TrayItems {
     fn append_to(&self, menu: &Menu) -> Result<(), tray_icon::menu::Error> {
         menu.append(&self.show)?;
         menu.append(&self.play)?;
-        menu.append(&self.shuffle)?;
+        menu.append(&self.next_playlist)?;
         menu.append(&self.stop)?;
         menu.append(&self.pause)?;
         menu.append(&self.resume)?;
@@ -92,7 +92,7 @@ impl TrayItems {
     fn set_language(&self, language: Language) {
         self.show.set_text(language.text(Text::TrayShowWindow));
         self.play.set_text(language.text(Text::TrayPlaySwitch));
-        self.shuffle.set_text(language.text(Text::TrayShuffleOnce));
+        self.next_playlist.set_text(language.text(Text::TrayNextPlaylistItem));
         self.stop.set_text(language.text(Text::TrayStop));
         self.pause.set_text(language.text(Text::TrayPause));
         self.resume.set_text(language.text(Text::TrayResume));
@@ -120,7 +120,7 @@ fn new_linux(
 
         let show_id = items.show.id().0.clone();
         let play_id = items.play.id().0.clone();
-        let shuffle_id = items.shuffle.id().0.clone();
+        let next_playlist_id = items.next_playlist.id().0.clone();
         let stop_id = items.stop.id().0.clone();
         let pause_id = items.pause.id().0.clone();
         let resume_id = items.resume.id().0.clone();
@@ -132,8 +132,8 @@ fn new_linux(
                 Some(TrayAction::ShowWindow)
             } else if id == play_id {
                 Some(TrayAction::PlaySwitch)
-            } else if id == shuffle_id {
-                Some(TrayAction::ShuffleOnce)
+            } else if id == next_playlist_id {
+                Some(TrayAction::NextPlaylistItem)
             } else if id == stop_id {
                 Some(TrayAction::Stop)
             } else if id == pause_id {
@@ -197,7 +197,7 @@ fn new_other(
     std::thread::spawn({
         let show_id = items.show.id().0.clone();
         let play_id = items.play.id().0.clone();
-        let shuffle_id = items.shuffle.id().0.clone();
+        let next_playlist_id = items.next_playlist.id().0.clone();
         let stop_id = items.stop.id().0.clone();
         let pause_id = items.pause.id().0.clone();
         let resume_id = items.resume.id().0.clone();
@@ -211,8 +211,8 @@ fn new_other(
                 Some(TrayAction::ShowWindow)
             } else if id == play_id {
                 Some(TrayAction::PlaySwitch)
-            } else if id == shuffle_id {
-                Some(TrayAction::ShuffleOnce)
+            } else if id == next_playlist_id {
+                Some(TrayAction::NextPlaylistItem)
             } else if id == stop_id {
                 Some(TrayAction::Stop)
             } else if id == pause_id {

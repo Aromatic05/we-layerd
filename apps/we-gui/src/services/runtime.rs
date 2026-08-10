@@ -36,6 +36,22 @@ pub fn send_control(action: &str) -> bool {
     command_succeeds_quietly(&mut command)
 }
 
+pub fn play_playlist(name: &str) -> bool {
+    let Ok(mut command) = layerd_command() else {
+        return false;
+    };
+    command.arg("playlist").arg("play").arg(name);
+    command_succeeds_quietly(&mut command)
+}
+
+pub fn send_playlist_action(action: &str) -> bool {
+    let Ok(mut command) = layerd_command() else {
+        return false;
+    };
+    command.arg("playlist").arg(action);
+    command_succeeds_quietly(&mut command)
+}
+
 pub fn start(config_path: &Path) -> std::io::Result<Child> {
     layerd_command()?.arg("run").arg("--config").arg(config_path).spawn()
 }

@@ -2,18 +2,19 @@ use std::{
     collections::{BTreeSet, HashMap},
     path::PathBuf,
     process::Child,
-    time::Duration,
 };
 
 use iced::{widget::pane_grid, window, Size, Theme};
 use we_core::{
     config::LaunchSettings,
+    playlist::PlaylistMode,
     wallpaper::{properties::UserPropertySchema, WallpaperEntry, WallpaperType},
 };
 
 use crate::{
     domain::{
         i18n::Language,
+        playlist_editor::{LegacyShuffleMigration, MoveDirection},
         runtime_status::RuntimeStatus,
         settings::{ScaleModeOption, UiSettings},
         ui_state::{AnimatedPreview, GifFrame, Pane, Sidebar},
@@ -55,7 +56,15 @@ pub(crate) struct App {
     pub preferences_path: Option<PathBuf>,
     pub runtime_status: RuntimeStatus,
     pub preferences_generation: u64,
-    pub shuffle_elapsed: Duration,
+    pub playlist_selected: Option<String>,
+    pub playlist_new_name_input: String,
+    pub playlist_name_input: String,
+    pub playlist_default_duration_input: String,
+    pub playlist_entry_duration_inputs: Vec<String>,
+    pub runtime_playlist_active: Option<String>,
+    pub runtime_playlist_index: Option<usize>,
+    pub legacy_shuffle: LegacyShuffleMigration,
+    pub playlist_migration_completed: bool,
 }
 
 impl App {
@@ -84,7 +93,8 @@ impl App {
         self.playback_running = false;
         self.playback_paused = false;
         self.running_source = None;
-        self.shuffle_elapsed = Duration::ZERO;
+        self.runtime_playlist_active = None;
+        self.runtime_playlist_index = None;
     }
 }
 
@@ -127,14 +137,26 @@ pub(crate) enum Message {
     Detail(DetailMessage),
     StatusLoaded(Result<DaemonStatus, String>),
     StatusTick,
-    ShufflePressed,
-    ShufflePlaybackPressed,
-    ShuffleEnabledToggled(bool),
-    ShuffleIntervalSelected(u32),
-    ShuffleIntervalChanged(String),
-    ShuffleIncludeVideoToggled(bool),
-    ShuffleIncludeSceneToggled(bool),
-    ShuffleIncludeWebToggled(bool),
+    PlaylistsPressed,
+    PlaylistSelect(String),
+    PlaylistNewNameChanged(String),
+    PlaylistCreate,
+    PlaylistNameChanged(String),
+    PlaylistRename,
+    PlaylistDelete,
+    PlaylistModeSelected(PlaylistMode),
+    PlaylistDefaultDurationChanged(String),
+    PlaylistDefaultDurationApply,
+    PlaylistEntryDurationChanged { index: usize, value: String },
+    PlaylistEntryDurationApply(usize),
+    PlaylistEntryDurationClear(usize),
+    PlaylistEntryMove { index: usize, direction: MoveDirection },
+    PlaylistEntryRemove(usize),
+    AddWallpaperToSelectedPlaylist(usize),
+    PlaylistPlay,
+    PlaylistNext,
+    PlaylistPrevious,
+    PlaylistStop,
     WindowResized(Size),
     WindowCloseRequested(window::Id),
     WindowOpened(window::Id),

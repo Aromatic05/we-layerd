@@ -9,6 +9,7 @@ use we_core::{
 
 use crate::{
     domain::{
+        playlist_editor::LegacyShuffleMigration,
         runtime_status::RuntimeStatus,
         settings::{ScaleModeOption, UiSettings},
         ui_state::Pane,
@@ -49,13 +50,29 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         fps_limit: launch_settings.fps_limit.to_string(),
         show_fps: launch_settings.show_fps,
         scale_mode: ScaleModeOption::from(launch_settings.scale_mode),
-        shuffle_enabled: preferences.shuffle_enabled,
-        shuffle_interval_ms: preferences.shuffle_interval_ms,
-        shuffle_interval_input: preferences.shuffle_interval_ms.to_string(),
-        shuffle_include_video: preferences.shuffle_include_video,
-        shuffle_include_scene: preferences.shuffle_include_scene,
-        shuffle_include_web: preferences.shuffle_include_web,
     };
+    let playlist_selected = launch_settings
+        .playlists
+        .active
+        .clone()
+        .or_else(|| launch_settings.playlists.definitions.keys().next().cloned());
+    let playlist_name_input = playlist_selected.clone().unwrap_or_default();
+    let playlist_default_duration_input = playlist_selected
+        .as_deref()
+        .and_then(|name| launch_settings.playlists.definitions.get(name))
+        .map(|playlist| playlist.default_duration_ms.to_string())
+        .unwrap_or_default();
+    let playlist_entry_duration_inputs = playlist_selected
+        .as_deref()
+        .and_then(|name| launch_settings.playlists.definitions.get(name))
+        .map(|playlist| {
+            playlist
+                .items
+                .iter()
+                .map(|item| item.duration_ms.map(|value| value.to_string()).unwrap_or_default())
+                .collect()
+        })
+        .unwrap_or_default();
 
     (
         App {
@@ -95,7 +112,21 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             preferences_path,
             runtime_status: RuntimeStatus::DaemonNotRunning,
             preferences_generation: 0,
-            shuffle_elapsed: std::time::Duration::ZERO,
+            playlist_selected,
+            playlist_new_name_input: String::new(),
+            playlist_name_input,
+            playlist_default_duration_input,
+            playlist_entry_duration_inputs,
+            runtime_playlist_active: None,
+            runtime_playlist_index: None,
+            legacy_shuffle: LegacyShuffleMigration {
+                enabled: preferences.shuffle_enabled,
+                interval_ms: preferences.shuffle_interval_ms,
+                include_video: preferences.shuffle_include_video,
+                include_scene: preferences.shuffle_include_scene,
+                include_web: preferences.shuffle_include_web,
+            },
+            playlist_migration_completed: preferences.playlist_migration_completed,
         },
         Task::batch(vec![
             Task::done(Message::AutoScan),

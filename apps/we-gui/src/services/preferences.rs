@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::domain::{i18n::Language, settings::is_shuffle_interval_ms};
+use crate::domain::i18n::Language;
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -17,6 +17,7 @@ pub(crate) struct GuiPreferences {
     pub(crate) shuffle_include_video: bool,
     pub(crate) shuffle_include_scene: bool,
     pub(crate) shuffle_include_web: bool,
+    pub(crate) playlist_migration_completed: bool,
 }
 
 impl Default for GuiPreferences {
@@ -28,6 +29,7 @@ impl Default for GuiPreferences {
             shuffle_include_video: true,
             shuffle_include_scene: true,
             shuffle_include_web: true,
+            playlist_migration_completed: false,
         }
     }
 }
@@ -64,14 +66,14 @@ pub(crate) fn load(path: &Path) -> GuiPreferences {
         .get("shuffle_interval_ms")
         .and_then(toml::Value::as_integer)
         .and_then(|value| u32::try_from(value).ok())
-        .filter(|value| is_shuffle_interval_ms(*value))
+        .filter(|value| is_legacy_shuffle_interval_ms(*value))
         .or_else(|| {
             document
                 .get("shuffle_interval_minutes")
                 .and_then(toml::Value::as_integer)
                 .and_then(|value| u32::try_from(value).ok())
                 .and_then(|minutes| minutes.checked_mul(60_000))
-                .filter(|value| is_shuffle_interval_ms(*value))
+                .filter(|value| is_legacy_shuffle_interval_ms(*value))
         })
         .unwrap_or(defaults.shuffle_interval_ms);
 
@@ -94,6 +96,11 @@ pub(crate) fn load(path: &Path) -> GuiPreferences {
             "shuffle_include_web",
             defaults.shuffle_include_web,
         ),
+        playlist_migration_completed: preference_bool(
+            &document,
+            "playlist_migration_completed",
+            defaults.playlist_migration_completed,
+        ),
     }
 }
 
@@ -110,6 +117,7 @@ pub(crate) fn save(path: &Path, preferences: GuiPreferences) -> Result<(), Strin
             "shuffle_include_video = {}\n",
             "shuffle_include_scene = {}\n",
             "shuffle_include_web = {}\n",
+            "playlist_migration_completed = {}\n",
         ),
         preferences.language.tag(),
         preferences.shuffle_enabled,
@@ -117,6 +125,7 @@ pub(crate) fn save(path: &Path, preferences: GuiPreferences) -> Result<(), Strin
         preferences.shuffle_include_video,
         preferences.shuffle_include_scene,
         preferences.shuffle_include_web,
+        preferences.playlist_migration_completed,
     );
     let (temporary, mut file) =
         create_temporary_file(parent, file_name).map_err(|error| error.to_string())?;
@@ -145,6 +154,10 @@ pub(crate) fn save(path: &Path, preferences: GuiPreferences) -> Result<(), Strin
 
 fn preference_bool(document: &toml::Value, key: &str, default: bool) -> bool {
     document.get(key).and_then(toml::Value::as_bool).unwrap_or(default)
+}
+
+fn is_legacy_shuffle_interval_ms(value: u32) -> bool {
+    u64::from(value) >= we_core::playlist::MIN_PLAYLIST_DURATION_MS
 }
 
 fn create_temporary_file(parent: &Path, file_name: &str) -> std::io::Result<(PathBuf, fs::File)> {
@@ -211,6 +224,7 @@ mod tests {
                 shuffle_include_video: true,
                 shuffle_include_scene: false,
                 shuffle_include_web: true,
+                playlist_migration_completed: true,
             },
         )
         .expect("save preferences");
@@ -222,6 +236,7 @@ mod tests {
         assert!(loaded.shuffle_include_video);
         assert!(!loaded.shuffle_include_scene);
         assert!(loaded.shuffle_include_web);
+        assert!(loaded.playlist_migration_completed);
         assert_eq!(
             fs::read_to_string(&path).expect("read preferences"),
             concat!(
@@ -231,6 +246,7 @@ mod tests {
                 "shuffle_include_video = true\n",
                 "shuffle_include_scene = false\n",
                 "shuffle_include_web = true\n",
+                "playlist_migration_completed = true\n",
             )
         );
         assert!(fs::read_dir(path.parent().expect("preferences parent"))
@@ -259,6 +275,7 @@ mod tests {
         assert!(loaded.shuffle_include_video);
         assert!(loaded.shuffle_include_scene);
         assert!(loaded.shuffle_include_web);
+        assert!(!loaded.playlist_migration_completed);
 
         fs::remove_dir_all(path.parent().expect("preferences parent"))
             .expect("remove preferences directory");
