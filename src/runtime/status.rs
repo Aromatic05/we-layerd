@@ -1,4 +1,5 @@
 use crate::config::ScaleMode;
+use we_renderer::{DiagnosticSeverity, RendererDiagnostics};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PresentBackend {
@@ -37,6 +38,8 @@ pub(crate) struct RuntimeDiagnostics {
     pub(crate) allow_shm_fallback: bool,
     pub(crate) nvidia_prime_offload_detected: bool,
     pub(crate) options_json: OptionsJsonDiagnostics,
+    pub(crate) renderer_diagnostics: Option<RendererDiagnostics>,
+    pub(crate) renderer_diagnostics_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -121,6 +124,38 @@ impl RuntimeStatusSnapshot {
             format!("options_json_present = {}", self.runtime.options_json.present),
             format!("options_json_len = {}", self.runtime.options_json.len),
             format!("options_json_valid = {}", self.runtime.options_json.valid),
+            format!(
+                "renderer_diagnostic_count = {}",
+                self.runtime
+                    .renderer_diagnostics
+                    .as_ref()
+                    .map(|diagnostics| diagnostics.entries.len())
+                    .unwrap_or(0)
+            ),
+            format!(
+                "renderer_warning_count = {}",
+                renderer_diagnostic_count(&self.runtime, DiagnosticSeverity::Warning)
+            ),
+            format!(
+                "renderer_error_count = {}",
+                renderer_diagnostic_count(&self.runtime, DiagnosticSeverity::Error)
+            ),
+            format!(
+                "renderer_diagnostics_json = {}",
+                toml::Value::String(
+                    self.runtime
+                        .renderer_diagnostics
+                        .as_ref()
+                        .and_then(|diagnostics| serde_json::to_string(diagnostics).ok())
+                        .unwrap_or_default()
+                )
+            ),
+            format!(
+                "renderer_diagnostics_error = {}",
+                toml::Value::String(
+                    self.runtime.renderer_diagnostics_error.clone().unwrap_or_default()
+                )
+            ),
             String::new(),
             "[presentation]".to_string(),
             format!("configured = {}", self.presentation.configured),
@@ -163,6 +198,16 @@ impl RuntimeStatusSnapshot {
 
         lines.join("\n")
     }
+}
+
+fn renderer_diagnostic_count(runtime: &RuntimeDiagnostics, severity: DiagnosticSeverity) -> usize {
+    runtime
+        .renderer_diagnostics
+        .as_ref()
+        .map(|diagnostics| {
+            diagnostics.entries.iter().filter(|entry| entry.severity == severity).count()
+        })
+        .unwrap_or(0)
 }
 
 fn scale_mode_name(scale_mode: ScaleMode) -> &'static str {

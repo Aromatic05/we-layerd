@@ -357,6 +357,7 @@ pub(crate) fn apply_selection_to_config(
     config.renderer.speed = wallpaper.speed;
     config.renderer.volume = wallpaper.volume;
     config.renderer.muted = wallpaper.muted;
+    config.renderer.msaa_samples = wallpaper.msaa_samples.max(1);
     config.renderer.fill_mode = wallpaper.fill_mode;
     config.renderer.rotation_degrees = wallpaper.rotation_degrees.degrees();
     match wallpaper.render_resolution {

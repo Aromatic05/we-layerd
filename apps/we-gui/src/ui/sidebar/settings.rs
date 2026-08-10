@@ -159,6 +159,8 @@ pub fn build_settings_overlay<'a>(
                 .style(md_checkbox_style),
         )
         .id("settings.allow-shm-fallback"),
+        section_title(language.text(Text::RendererDiagnostics)),
+        renderer_diagnostics_view(runtime_status, language),
         section_title(language.text(Text::RuntimeStatus)),
         container(text(language.runtime_status(runtime_status)).size(14))
             .id("settings.runtime-status")
@@ -186,6 +188,77 @@ pub fn build_settings_overlay<'a>(
     .padding(18)
     .style(settings_overlay_style)
     .into()
+}
+
+fn renderer_diagnostics_view<'a>(
+    runtime_status: &'a RuntimeStatus,
+    language: Language,
+) -> Element<'a, Message> {
+    let diagnostics = renderer_diagnostics(runtime_status);
+    if diagnostics.is_empty() {
+        return container(text(language.text(Text::NoRendererDiagnostics)).size(13))
+            .padding(12)
+            .width(Fill)
+            .style(status_box_style)
+            .into();
+    }
+
+    let mut content = column!().spacing(8);
+    for diagnostic in diagnostics {
+        let severity = diagnostic.severity.to_ascii_uppercase();
+        content = content.push(
+            container(
+                column![
+                    text(format!("{severity} · {}", diagnostic.source)).size(12),
+                    text(diagnostic.message).size(13),
+                ]
+                .spacing(4),
+            )
+            .padding(10)
+            .width(Fill)
+            .style(status_box_style),
+        );
+    }
+    content.into()
+}
+
+#[derive(Debug)]
+struct RendererDiagnosticView {
+    severity: String,
+    source: String,
+    message: String,
+}
+
+fn renderer_diagnostics(runtime_status: &RuntimeStatus) -> Vec<RendererDiagnosticView> {
+    let RuntimeStatus::Raw(raw) = runtime_status else {
+        return Vec::new();
+    };
+    let Ok(document) = toml::from_str::<toml::Value>(raw) else {
+        return Vec::new();
+    };
+    let Some(json) = document
+        .get("runtime")
+        .and_then(|runtime| runtime.get("renderer_diagnostics_json"))
+        .and_then(toml::Value::as_str)
+    else {
+        return Vec::new();
+    };
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    payload
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            Some(RendererDiagnosticView {
+                severity: entry.get("severity")?.as_str()?.to_string(),
+                source: entry.get("source")?.as_str()?.to_string(),
+                message: entry.get("message")?.as_str()?.to_string(),
+            })
+        })
+        .collect()
 }
 
 fn format_path_for_display(path: &str, limit: usize) -> String {

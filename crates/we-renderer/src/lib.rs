@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use we_renderer_sys::{
     self as sys, we_fill_mode_v1, we_frame_kind_v1, we_input_event_type_v2, we_render_config_v1,
@@ -49,6 +50,27 @@ pub struct RuntimeSettings {
     pub volume: Option<f32>,
     pub muted: Option<bool>,
     pub fill_mode: Option<FillMode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RendererDiagnostics {
+    pub version: u32,
+    pub entries: Vec<DiagnosticEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiagnosticEntry {
+    pub severity: DiagnosticSeverity,
+    pub source: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticSeverity {
+    Info,
+    Warning,
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -136,6 +158,18 @@ pub enum Error {
     TooManyDmabufFormats(usize),
     #[error("failed to duplicate frame fd")]
     DuplicateFd(#[source] std::io::Error),
+    #[error("renderer diagnostics payload is too large: {0} bytes")]
+    DiagnosticsTooLarge(u32),
+    #[error("loaded renderer library does not expose diagnostics")]
+    DiagnosticsUnavailable,
+    #[error("renderer diagnostics payload did not contain the required trailing NUL")]
+    DiagnosticsMissingNul,
+    #[error("renderer diagnostics changed size repeatedly while being read")]
+    DiagnosticsUnstable,
+    #[error("invalid renderer diagnostics JSON: {0}")]
+    DiagnosticsJson(#[from] serde_json::Error),
+    #[error("unsupported renderer diagnostics version {0}")]
+    UnsupportedDiagnosticsVersion(u32),
 }
 
 impl RendererLibrary {
@@ -372,6 +406,46 @@ impl Session {
         )
     }
 
+    pub fn diagnostics(&self) -> Result<RendererDiagnostics, Error> {
+        const MAX_DIAGNOSTICS_BYTES: u32 = 16 * 1024 * 1024;
+
+        let mut required = 0_u32;
+        let Some(size_status) = (unsafe {
+            self.library.session_get_diagnostics_json(self.raw, std::ptr::null_mut(), &mut required)
+        }) else {
+            return Err(Error::DiagnosticsUnavailable);
+        };
+        self.check_status(size_status, "we_session_get_diagnostics_json(size)")?;
+
+        for _ in 0..3 {
+            if required == 0 || required > MAX_DIAGNOSTICS_BYTES {
+                return Err(Error::DiagnosticsTooLarge(required));
+            }
+            let mut bytes = vec![0_u8; required as usize];
+            let mut actual = required;
+            let Some(status) = (unsafe {
+                self.library.session_get_diagnostics_json(
+                    self.raw,
+                    bytes.as_mut_ptr().cast(),
+                    &mut actual,
+                )
+            }) else {
+                return Err(Error::DiagnosticsUnavailable);
+            };
+            if status == -2 {
+                required = actual;
+                continue;
+            }
+            self.check_status(status, "we_session_get_diagnostics_json")?;
+            if actual == 0 || actual > required || bytes.get(actual as usize - 1) != Some(&0) {
+                return Err(Error::DiagnosticsMissingNul);
+            }
+            return parse_diagnostics_json(&bytes[..actual as usize - 1]);
+        }
+
+        Err(Error::DiagnosticsUnstable)
+    }
+
     fn check_status(&self, status: i32, op: &'static str) -> Result<(), Error> {
         if status == 0 {
             Ok(())
@@ -379,6 +453,14 @@ impl Session {
             Err(Error::Status(status, op))
         }
     }
+}
+
+fn parse_diagnostics_json(bytes: &[u8]) -> Result<RendererDiagnostics, Error> {
+    let diagnostics: RendererDiagnostics = serde_json::from_slice(bytes)?;
+    if diagnostics.version != 1 {
+        return Err(Error::UnsupportedDiagnosticsVersion(diagnostics.version));
+    }
+    Ok(diagnostics)
 }
 
 fn fill_mode_to_sys(value: FillMode) -> we_fill_mode_v1 {
@@ -513,7 +595,10 @@ fn duplicate_fd(fd: i32) -> Result<OwnedFd, Error> {
 mod tests {
     use std::os::fd::AsRawFd;
 
-    use super::{frame_from_raw, to_raw_input_event, Frame, InputEvent};
+    use super::{
+        frame_from_raw, parse_diagnostics_json, to_raw_input_event, DiagnosticSeverity, Frame,
+        InputEvent,
+    };
     use we_renderer_sys::{we_dmabuf_plane_v1, we_frame_kind_v1, we_frame_v1};
 
     #[test]
@@ -606,5 +691,26 @@ mod tests {
 
         let err = frame_from_raw(&raw).expect_err("unknown kind should fail");
         assert!(err.to_string().contains("unsupported frame kind"));
+    }
+
+    #[test]
+    fn diagnostics_json_decodes_versioned_entries() {
+        let diagnostics = parse_diagnostics_json(
+            br#"{"version":1,"entries":[{"severity":"warning","source":"abi.render-config.msaa","message":"scene only"}]}"#,
+        )
+        .expect("valid diagnostics JSON");
+
+        assert_eq!(diagnostics.version, 1);
+        assert_eq!(diagnostics.entries.len(), 1);
+        assert_eq!(diagnostics.entries[0].severity, DiagnosticSeverity::Warning);
+        assert_eq!(diagnostics.entries[0].source, "abi.render-config.msaa");
+        assert_eq!(diagnostics.entries[0].message, "scene only");
+    }
+
+    #[test]
+    fn diagnostics_json_rejects_unknown_versions_and_invalid_payloads() {
+        assert!(parse_diagnostics_json(br#"{"version":2,"entries":[]}"#).is_err());
+        assert!(parse_diagnostics_json(b"not-json").is_err());
+        assert!(parse_diagnostics_json(&[0xff, 0xfe]).is_err());
     }
 }

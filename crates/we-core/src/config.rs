@@ -103,6 +103,8 @@ pub struct RendererConfig {
     pub volume: f32,
     #[serde(default)]
     pub muted: bool,
+    #[serde(default = "default_renderer_msaa_samples")]
+    pub msaa_samples: u32,
     #[serde(default)]
     pub options_json: Option<String>,
     #[serde(default)]
@@ -170,6 +172,10 @@ fn default_renderer_volume() -> f32 {
     1.0
 }
 
+fn default_renderer_msaa_samples() -> u32 {
+    1
+}
+
 impl Default for RendererConfig {
     fn default() -> Self {
         Self {
@@ -183,6 +189,7 @@ impl Default for RendererConfig {
             speed: default_renderer_speed(),
             volume: default_renderer_volume(),
             muted: false,
+            msaa_samples: default_renderer_msaa_samples(),
             options_json: None,
             render_width: None,
             render_height: None,
@@ -258,6 +265,7 @@ pub fn build_config_for_wallpaper(
     config.renderer.speed = wallpaper.speed;
     config.renderer.volume = wallpaper.volume;
     config.renderer.muted = wallpaper.muted;
+    config.renderer.msaa_samples = wallpaper.msaa_samples.max(1);
     config.renderer.fill_mode = wallpaper.fill_mode;
     config.renderer.rotation_degrees = wallpaper.rotation_degrees.degrees();
     match wallpaper.render_resolution {
@@ -499,6 +507,7 @@ mod tests {
                 speed: 1.5,
                 volume: 0.4,
                 muted: true,
+                msaa_samples: 8,
                 render_resolution: RenderResolution::Fixed { width: 2560, height: 1440 },
                 fill_mode: WallpaperFillMode::Fit,
                 rotation_degrees: Rotation::Deg90,
@@ -513,6 +522,7 @@ mod tests {
         assert_eq!(cfg.renderer.speed, 1.5);
         assert_eq!(cfg.renderer.volume, 0.4);
         assert!(cfg.renderer.muted);
+        assert_eq!(cfg.renderer.msaa_samples, 8);
         assert_eq!(cfg.renderer.render_width, Some(2560));
         assert_eq!(cfg.renderer.render_height, Some(1440));
         assert_eq!(cfg.renderer.fill_mode, WallpaperFillMode::Fit);

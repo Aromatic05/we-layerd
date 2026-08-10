@@ -14,8 +14,11 @@ use iced::{
 use serde_json::Value;
 use we_core::wallpaper::{
     properties::UserPropertySchema,
-    settings::{RenderResolution, Rotation, WallpaperFillMode, WallpaperSettings},
-    WallpaperEntry,
+    settings::{
+        supports_final_output_msaa, RenderResolution, Rotation, WallpaperFillMode,
+        WallpaperSettings,
+    },
+    WallpaperEntry, WallpaperType,
 };
 
 #[derive(Debug, Clone)]
@@ -29,6 +32,7 @@ pub enum DetailMessage {
     SpeedChanged(f32),
     VolumeChanged(f32),
     MutedChanged(bool),
+    MsaaChanged(u32),
     ResolutionModeChanged(ResolutionMode),
     ResolutionWidthChanged(String),
     ResolutionHeightChanged(String),
@@ -84,6 +88,7 @@ pub fn view<'a>(
     let body = match active_tab {
         DetailTab::Actions => actions_view(
             settings,
+            entry.ty,
             resolution_width,
             resolution_height,
             outputs,
@@ -158,6 +163,7 @@ pub fn view<'a>(
 
 fn actions_view<'a>(
     settings: &'a WallpaperSettings,
+    wallpaper_type: WallpaperType,
     resolution_width: &'a str,
     resolution_height: &'a str,
     outputs: &'a [String],
@@ -182,6 +188,17 @@ fn actions_view<'a>(
     ];
     let selected_fill =
         fill_options.iter().find(|option| option.value == settings.fill_mode).cloned();
+    let msaa_options = vec![
+        Localized::new(1_u32, language.text(Text::Msaa1x)),
+        Localized::new(2_u32, language.text(Text::Msaa2x)),
+        Localized::new(4_u32, language.text(Text::Msaa4x)),
+        Localized::new(8_u32, language.text(Text::Msaa8x)),
+    ];
+    let selected_msaa = msaa_options
+        .iter()
+        .find(|option| option.value == settings.msaa_samples)
+        .cloned()
+        .or_else(|| msaa_options.first().cloned());
     let playback = section(
         language.text(Text::Playback),
         column![
@@ -270,6 +287,28 @@ fn actions_view<'a>(
                 .menu_style(md_menu_style),
             )
             .id("detail.rotation"),
+            field_label(language.text(Text::FinalOutputMsaa)),
+            if supports_final_output_msaa(wallpaper_type) {
+                container(
+                    pick_list(msaa_options, selected_msaa, |option| {
+                        DetailMessage::MsaaChanged(option.value)
+                    })
+                    .padding([14, 10])
+                    .width(Fill)
+                    .style(md_pick_list_style)
+                    .menu_style(md_menu_style),
+                )
+                .id("detail.msaa")
+                .into()
+            } else {
+                container(
+                    text(language.text(Text::MsaaSceneOnly))
+                        .size(12)
+                        .color(Color::from_rgb8(170, 174, 184)),
+                )
+                .padding([10, 0])
+                .into()
+            },
         ]
         .spacing(10),
     );

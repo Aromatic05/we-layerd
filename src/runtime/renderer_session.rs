@@ -1,7 +1,7 @@
 use std::{os::fd::RawFd, path::Path};
 
 use anyhow::{Context, Result};
-use we_renderer::{Frame, RenderConfig, RendererLibrary, Session, Source};
+use we_renderer::{Frame, RenderConfig, RendererDiagnostics, RendererLibrary, Session, Source};
 
 pub(crate) struct RendererSession {
     pub(crate) session: Session,
@@ -60,5 +60,9 @@ impl RendererSession {
 
     pub(crate) fn acquire_frame(&mut self) -> Result<Option<Frame>> {
         self.session.acquire_frame().context("failed to acquire frame")
+    }
+
+    pub(crate) fn diagnostics(&self) -> Result<RendererDiagnostics> {
+        self.session.diagnostics().context("failed to read renderer diagnostics")
     }
 }
