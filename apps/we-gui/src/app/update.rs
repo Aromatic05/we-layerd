@@ -291,9 +291,24 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             let Some(name) = app.playlist_selected.clone() else {
                 return Task::none();
             };
-            let was_running = app.runtime_playlist_active.as_deref() == Some(name.as_str());
+            let was_running = match playlist_is_running(app, &name) {
+                Ok(value) => value,
+                Err(error) => {
+                    set_playlist_error(app, error);
+                    return Task::none();
+                }
+            };
             if was_running {
-                let _ = runtime::send_playlist_action("stop");
+                let stopped = runtime::send_playlist_action("stop");
+                let daemon_running = !stopped && runtime::daemon_is_running();
+                if !playlist_stop_can_be_persisted(stopped, daemon_running) {
+                    set_playlist_error(
+                        app,
+                        "the daemon is still running and did not accept the playlist stop command"
+                            .to_string(),
+                    );
+                    return Task::none();
+                }
                 app.runtime_playlist_active = None;
                 app.runtime_playlist_index = None;
             }
@@ -826,6 +841,27 @@ fn synchronize_migrated_playlist_with_running_daemon(app: &mut App) {
                 "legacy shuffle was migrated but the running daemon could not reload it: {error}"
             ),
         ),
+    }
+}
+
+fn playlist_is_running(app: &App, playlist_name: &str) -> Result<bool, String> {
+    if app.runtime_playlist_active.as_deref() == Some(playlist_name) {
+        return Ok(true);
+    }
+    if !app.layerd_available {
+        return Ok(false);
+    }
+
+    match runtime::fetch_status_sync()? {
+        runtime::DaemonStatus::NotRunning => Ok(false),
+        runtime::DaemonStatus::EmptyResponse => {
+            Err("cannot determine the running playlist from an empty daemon status".to_string())
+        }
+        runtime::DaemonStatus::Running(status) => {
+            Ok(status_section_value(&status, "playlist_runtime", "active")
+                .filter(|active| *active != "false")
+                == Some(playlist_name))
+        }
     }
 }
 
