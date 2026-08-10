@@ -96,6 +96,8 @@ pub struct RendererConfig {
     pub volume: f32,
     #[serde(default)]
     pub muted: bool,
+    #[serde(default = "default_renderer_msaa_samples")]
+    pub msaa_samples: u32,
     #[serde(default)]
     pub options_json: Option<String>,
     #[serde(default)]
@@ -152,6 +154,10 @@ fn default_renderer_volume() -> f32 {
     1.0
 }
 
+fn default_renderer_msaa_samples() -> u32 {
+    1
+}
+
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
@@ -184,6 +190,7 @@ impl Default for RendererConfig {
             speed: default_renderer_speed(),
             volume: default_renderer_volume(),
             muted: false,
+            msaa_samples: default_renderer_msaa_samples(),
             options_json: None,
             render_width: None,
             render_height: None,

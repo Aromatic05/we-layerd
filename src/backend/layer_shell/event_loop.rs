@@ -349,13 +349,14 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         enable_valid_layer: false,
         prefer_dmabuf,
         allow_shm_fallback: cfg.renderer.allow_shm_fallback,
-        msaa_samples: 0,
+        msaa_samples: cfg.renderer.msaa_samples.max(1),
         fill_mode: renderer_fill_mode(cfg.renderer.fill_mode),
         rotation_degrees: cfg.renderer.rotation_degrees,
     })?;
     session.play()?;
     let renderer_frame_fd = session.frame_ready_fd()?;
     state.session = Some(session);
+    state.refresh_renderer_diagnostics();
     status_sink(state.snapshot());
 
     info!(
@@ -459,6 +460,7 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         let now = std::time::Instant::now();
         if now.duration_since(last_log) >= Duration::from_secs(5) {
             last_log = now;
+            state.refresh_renderer_diagnostics();
             let status_text = match last_acquire_status {
                 0 => "ok",
                 1 => "no-frame",

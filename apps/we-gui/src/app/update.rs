@@ -1,7 +1,10 @@
 use std::{path::Path, time::Duration};
 
 use iced::{window, Task};
-use we_core::wallpaper::properties::UserPropertySchema;
+use we_core::wallpaper::{
+    properties::UserPropertySchema,
+    settings::{inherited_final_output_msaa, WallpaperSettings},
+};
 
 use crate::{
     domain::{
@@ -635,7 +638,16 @@ fn select_wallpaper(app: &mut App, index: usize, show_details: bool) -> bool {
     app.selected_id = Some(entry.id.clone());
     app.selected_schema = UserPropertySchema::from_project_file(&entry.project_json)
         .unwrap_or(UserPropertySchema { entries: Vec::new() });
-    let profile = app.launch_settings.wallpapers.entry(entry.id.clone()).or_default().clone();
+    let inherited_msaa = inherited_final_output_msaa(app.launch_settings.msaa_samples, entry.ty);
+    let profile = app
+        .launch_settings
+        .wallpapers
+        .entry(entry.id.clone())
+        .or_insert_with(|| WallpaperSettings {
+            msaa_samples: inherited_msaa,
+            ..WallpaperSettings::default()
+        })
+        .clone();
     set_resolution_inputs(app, &profile);
     if let Err(error) = config::persist_selected(&app.config_path, &app.launch_settings, &entry) {
         app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());

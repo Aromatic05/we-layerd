@@ -72,6 +72,7 @@ pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) ->
         DetailMessage::SpeedChanged(value) => profile.speed = value,
         DetailMessage::VolumeChanged(value) => profile.volume = value,
         DetailMessage::MutedChanged(value) => profile.muted = value,
+        DetailMessage::MsaaChanged(value) => profile.msaa_samples = value.max(1),
         DetailMessage::ResolutionModeChanged(ResolutionMode::Automatic) => {
             profile.render_resolution = RenderResolution::Automatic;
             app.resolution_width.clear();

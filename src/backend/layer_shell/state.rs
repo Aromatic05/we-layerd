@@ -243,6 +243,24 @@ impl LayerShellState {
         }
     }
 
+    pub(super) fn refresh_renderer_diagnostics(&mut self) {
+        let Some(session) = self.session.as_ref() else {
+            self.diagnostics.renderer_diagnostics = None;
+            self.diagnostics.renderer_diagnostics_error = None;
+            return;
+        };
+        match session.diagnostics() {
+            Ok(diagnostics) => {
+                self.diagnostics.renderer_diagnostics = Some(std::sync::Arc::new(diagnostics));
+                self.diagnostics.renderer_diagnostics_error = None;
+            }
+            Err(error) => {
+                self.diagnostics.renderer_diagnostics = None;
+                self.diagnostics.renderer_diagnostics_error = Some(error.to_string().into());
+            }
+        }
+    }
+
     pub(super) fn release_pending_send_fds(&mut self) {
         for entry in &mut self.buffers.in_flight {
             entry.pending_fds.clear();

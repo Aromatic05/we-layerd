@@ -103,6 +103,8 @@ pub struct RendererConfig {
     pub volume: f32,
     #[serde(default)]
     pub muted: bool,
+    #[serde(default = "default_renderer_msaa_samples")]
+    pub msaa_samples: u32,
     #[serde(default)]
     pub options_json: Option<String>,
     #[serde(default)]
@@ -125,6 +127,7 @@ pub struct LaunchSettings {
     pub allow_shm_fallback: bool,
     pub interactive: bool,
     pub fps_limit: u32,
+    pub msaa_samples: u32,
     pub show_fps: bool,
     pub scale_mode: ScaleMode,
     pub force_scene_audio_loop: bool,
@@ -170,6 +173,10 @@ fn default_renderer_volume() -> f32 {
     1.0
 }
 
+fn default_renderer_msaa_samples() -> u32 {
+    1
+}
+
 impl Default for RendererConfig {
     fn default() -> Self {
         Self {
@@ -183,6 +190,7 @@ impl Default for RendererConfig {
             speed: default_renderer_speed(),
             volume: default_renderer_volume(),
             muted: false,
+            msaa_samples: default_renderer_msaa_samples(),
             options_json: None,
             render_width: None,
             render_height: None,
@@ -216,6 +224,7 @@ impl Default for LaunchSettings {
             allow_shm_fallback: default_allow_shm_fallback(),
             interactive: true,
             fps_limit: 60,
+            msaa_samples: 1,
             show_fps: false,
             scale_mode: ScaleMode::Cover,
             force_scene_audio_loop: false,
@@ -238,6 +247,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.prefer_dmabuf = settings.prefer_dmabuf;
     cfg.renderer.allow_shm_fallback = settings.allow_shm_fallback;
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
+    cfg.renderer.msaa_samples = settings.msaa_samples.max(1);
     cfg.renderer.options_json = settings.options_json.clone();
     cfg.hooks = settings.hooks.clone();
     cfg.playlists = settings.playlists.clone();
@@ -253,11 +263,16 @@ pub fn build_config_for_wallpaper(
     project_json: &Path,
 ) -> Result<AppConfig> {
     let mut config = build_config(settings, project_json);
-    let wallpaper = settings.wallpapers.get(wallpaper_id).cloned().unwrap_or_default();
+    let wallpaper =
+        settings.wallpapers.get(wallpaper_id).cloned().unwrap_or_else(|| WallpaperSettings {
+            msaa_samples: settings.msaa_samples.max(1),
+            ..WallpaperSettings::default()
+        });
     config.renderer.fps = wallpaper.fps.clamp(1, 360);
     config.renderer.speed = wallpaper.speed;
     config.renderer.volume = wallpaper.volume;
     config.renderer.muted = wallpaper.muted;
+    config.renderer.msaa_samples = wallpaper.msaa_samples.max(1);
     config.renderer.fill_mode = wallpaper.fill_mode;
     config.renderer.rotation_degrees = wallpaper.rotation_degrees.degrees();
     match wallpaper.render_resolution {
@@ -309,6 +324,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         allow_shm_fallback: cfg.renderer.allow_shm_fallback,
         interactive: cfg.general.interactive,
         fps_limit: cfg.renderer.fps.max(1),
+        msaa_samples: cfg.renderer.msaa_samples.max(1),
         show_fps: cfg.general.show_fps,
         scale_mode: cfg.general.scale_mode,
         force_scene_audio_loop: cfg.general.force_scene_audio_loop,
@@ -499,6 +515,7 @@ mod tests {
                 speed: 1.5,
                 volume: 0.4,
                 muted: true,
+                msaa_samples: 8,
                 render_resolution: RenderResolution::Fixed { width: 2560, height: 1440 },
                 fill_mode: WallpaperFillMode::Fit,
                 rotation_degrees: Rotation::Deg90,
@@ -513,6 +530,7 @@ mod tests {
         assert_eq!(cfg.renderer.speed, 1.5);
         assert_eq!(cfg.renderer.volume, 0.4);
         assert!(cfg.renderer.muted);
+        assert_eq!(cfg.renderer.msaa_samples, 8);
         assert_eq!(cfg.renderer.render_width, Some(2560));
         assert_eq!(cfg.renderer.render_height, Some(1440));
         assert_eq!(cfg.renderer.fill_mode, WallpaperFillMode::Fit);
@@ -618,6 +636,7 @@ fps = 120
 speed = 1.0
 volume = 1.0
 muted = false
+msaa_samples = 4
 options_json = "{\"keep\":true}"
 "#;
 
@@ -628,6 +647,7 @@ options_json = "{\"keep\":true}"
         assert!(settings.show_fps);
         assert!(!settings.interactive);
         assert!(settings.force_scene_audio_loop);
+        assert_eq!(settings.msaa_samples, 4);
         assert_eq!(settings.scale_mode, ScaleMode::Stretch);
         assert_eq!(settings.renderer_library_path, "/opt/libwallpaper-engine-renderer.so");
         assert_eq!(settings.renderer_cache_path, "~/.cache/we-layerd/custom");

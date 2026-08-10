@@ -16,6 +16,7 @@ fps = 60
 speed = 1.0
 volume = 1.0
 muted = false
+msaa_samples = 1
 options_json = '''
 {
   "example": true

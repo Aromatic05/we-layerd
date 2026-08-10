@@ -152,6 +152,8 @@ type WeSessionResizeOutput = unsafe extern "C" fn(*mut we_session_t, u32, u32) -
 type WeSessionSetUserPropertiesJson = unsafe extern "C" fn(*mut we_session_t, *const c_char) -> i32;
 type WeSessionApplyRuntimeSettings =
     unsafe extern "C" fn(*mut we_session_t, *const we_runtime_settings_v1) -> i32;
+type WeSessionGetDiagnosticsJson =
+    unsafe extern "C" fn(*mut we_session_t, *mut c_char, *mut u32) -> i32;
 type WeSessionPlayback = unsafe extern "C" fn(*mut we_session_t) -> i32;
 type WeSessionGetFrameReadyFd = unsafe extern "C" fn(*mut we_session_t) -> i32;
 type WeSessionAcquireFrame = unsafe extern "C" fn(*mut we_session_t, *mut we_frame_v1) -> i32;
@@ -176,6 +178,7 @@ pub struct RendererLibrary {
     we_session_resize_output: WeSessionResizeOutput,
     we_session_set_user_properties_json: WeSessionSetUserPropertiesJson,
     we_session_apply_runtime_settings: WeSessionApplyRuntimeSettings,
+    we_session_get_diagnostics_json: Option<WeSessionGetDiagnosticsJson>,
     we_session_play: WeSessionPlayback,
     we_session_pause: WeSessionPlayback,
     we_session_stop: WeSessionPlayback,
@@ -217,6 +220,12 @@ impl RendererLibrary {
         let we_session_apply_runtime_settings = unsafe {
             *library.get::<WeSessionApplyRuntimeSettings>(b"we_session_apply_runtime_settings\0")?
         };
+        let we_session_get_diagnostics_json = unsafe {
+            library
+                .get::<WeSessionGetDiagnosticsJson>(b"we_session_get_diagnostics_json\0")
+                .ok()
+                .map(|symbol| *symbol)
+        };
         let we_session_play = unsafe { *library.get::<WeSessionPlayback>(b"we_session_play\0")? };
         let we_session_pause = unsafe { *library.get::<WeSessionPlayback>(b"we_session_pause\0")? };
         let we_session_stop = unsafe { *library.get::<WeSessionPlayback>(b"we_session_stop\0")? };
@@ -241,6 +250,7 @@ impl RendererLibrary {
             we_session_resize_output,
             we_session_set_user_properties_json,
             we_session_apply_runtime_settings,
+            we_session_get_diagnostics_json,
             we_session_play,
             we_session_pause,
             we_session_stop,
@@ -327,6 +337,19 @@ impl RendererLibrary {
         settings: *const we_runtime_settings_v1,
     ) -> i32 {
         (self.we_session_apply_runtime_settings)(session, settings)
+    }
+
+    /// # Safety
+    ///
+    /// `inout_size` must be valid for writes. When `buffer` is non-null it must point to at least
+    /// the number of bytes supplied in `*inout_size`.
+    pub unsafe fn session_get_diagnostics_json(
+        &self,
+        session: *mut we_session_t,
+        buffer: *mut c_char,
+        inout_size: *mut u32,
+    ) -> Option<i32> {
+        self.we_session_get_diagnostics_json.map(|function| function(session, buffer, inout_size))
     }
 
     /// # Safety

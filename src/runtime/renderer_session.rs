@@ -1,7 +1,7 @@
 use std::{os::fd::RawFd, path::Path};
 
 use anyhow::{Context, Result};
-use we_renderer::{Frame, RenderConfig, RendererLibrary, Session, Source};
+use we_renderer::{Frame, RenderConfig, RendererDiagnostics, RendererLibrary, Session, Source};
 
 pub(crate) struct RendererSession {
     pub(crate) session: Session,
@@ -31,7 +31,37 @@ impl RendererSession {
     }
 
     pub(crate) fn configure(&mut self, config: RenderConfig) -> Result<()> {
-        self.session.configure(config).context("failed to set render config")
+        match self.session.configure(config) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let diagnostic_detail = self
+                    .session
+                    .diagnostics()
+                    .ok()
+                    .map(|diagnostics| {
+                        diagnostics
+                            .entries
+                            .into_iter()
+                            .filter(|entry| {
+                                matches!(
+                                    entry.severity,
+                                    we_renderer::DiagnosticSeverity::Warning
+                                        | we_renderer::DiagnosticSeverity::Error
+                                )
+                            })
+                            .map(|entry| format!("{}: {}", entry.source, entry.message))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    })
+                    .filter(|detail| !detail.is_empty());
+                let context = diagnostic_detail
+                    .map(|detail| {
+                        format!("failed to set render config; renderer diagnostics: {detail}")
+                    })
+                    .unwrap_or_else(|| "failed to set render config".to_string());
+                Err(anyhow::Error::new(error).context(context))
+            }
+        }
     }
 
     pub(crate) fn resize_output(&mut self, width: u32, height: u32) -> Result<()> {
@@ -60,5 +90,9 @@ impl RendererSession {
 
     pub(crate) fn acquire_frame(&mut self) -> Result<Option<Frame>> {
         self.session.acquire_frame().context("failed to acquire frame")
+    }
+
+    pub(crate) fn diagnostics(&self) -> Result<RendererDiagnostics> {
+        self.session.diagnostics().context("failed to read renderer diagnostics")
     }
 }

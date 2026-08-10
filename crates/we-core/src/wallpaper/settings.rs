@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::WallpaperType;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WallpaperSettings {
     #[serde(default = "default_fps")]
@@ -13,6 +15,8 @@ pub struct WallpaperSettings {
     pub volume: f32,
     #[serde(default)]
     pub muted: bool,
+    #[serde(default = "default_msaa_samples")]
+    pub msaa_samples: u32,
     #[serde(default)]
     pub render_resolution: RenderResolution,
     #[serde(default)]
@@ -94,6 +98,7 @@ impl Default for WallpaperSettings {
             speed: default_speed(),
             volume: default_volume(),
             muted: false,
+            msaa_samples: default_msaa_samples(),
             render_resolution: RenderResolution::Automatic,
             fill_mode: WallpaperFillMode::Cover,
             rotation_degrees: Rotation::Deg0,
@@ -111,10 +116,29 @@ fn default_speed() -> f32 {
 fn default_volume() -> f32 {
     1.0
 }
+fn default_msaa_samples() -> u32 {
+    1
+}
+
+pub fn supports_final_output_msaa(wallpaper_type: WallpaperType) -> bool {
+    wallpaper_type == WallpaperType::Scene
+}
+
+pub fn inherited_final_output_msaa(global_samples: u32, wallpaper_type: WallpaperType) -> u32 {
+    if supports_final_output_msaa(wallpaper_type) {
+        global_samples.max(1)
+    } else {
+        1
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use super::{RenderResolution, WallpaperFillMode, WallpaperSettings};
+    use super::{
+        inherited_final_output_msaa, supports_final_output_msaa, RenderResolution,
+        WallpaperFillMode, WallpaperSettings,
+    };
+    use crate::wallpaper::WallpaperType;
 
     #[test]
     fn settings_default_to_dynamic_neutral_rendering() {
@@ -123,5 +147,17 @@ mod tests {
         assert_eq!(settings.fill_mode, WallpaperFillMode::Cover);
         assert_eq!(settings.rotation_degrees.degrees(), 0);
         assert_eq!(settings.fps, 60);
+        assert_eq!(settings.msaa_samples, 1);
+    }
+
+    #[test]
+    fn final_output_msaa_is_scene_only() {
+        assert!(supports_final_output_msaa(WallpaperType::Scene));
+        assert!(!supports_final_output_msaa(WallpaperType::Video));
+        assert!(!supports_final_output_msaa(WallpaperType::Web));
+        assert!(!supports_final_output_msaa(WallpaperType::Unknown));
+        assert_eq!(inherited_final_output_msaa(8, WallpaperType::Scene), 8);
+        assert_eq!(inherited_final_output_msaa(8, WallpaperType::Video), 1);
+        assert_eq!(inherited_final_output_msaa(8, WallpaperType::Web), 1);
     }
 }
