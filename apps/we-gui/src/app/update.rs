@@ -277,9 +277,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             let next = app.playlist_name_input.trim().to_string();
             match rename_playlist(&mut app.launch_settings.playlists, &current, &next) {
                 Ok(()) => {
-                    app.playlist_selected = Some(next);
+                    app.playlist_selected = Some(next.clone());
                     sync_playlist_editor_inputs(app);
-                    persist_playlist_changes_and_reload_if(app, was_running);
+                    if persist_playlist_changes_and_reload_if(app, was_running) && was_running {
+                        app.runtime_playlist_active = Some(next);
+                    }
                 }
                 Err(error) => set_playlist_error(app, error),
             }
