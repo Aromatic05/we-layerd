@@ -273,7 +273,13 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             let Some(current) = app.playlist_selected.clone() else {
                 return Task::none();
             };
-            let was_running = app.runtime_playlist_active.as_deref() == Some(current.as_str());
+            let was_running = match playlist_is_running(app, &current) {
+                Ok(value) => value,
+                Err(error) => {
+                    set_playlist_error(app, error);
+                    return Task::none();
+                }
+            };
             let next = app.playlist_name_input.trim().to_string();
             match rename_playlist(&mut app.launch_settings.playlists, &current, &next) {
                 Ok(()) => {
@@ -694,9 +700,30 @@ fn persist_playlist_changes(app: &mut App) -> bool {
 }
 
 fn persist_playlist_changes_and_reload(app: &mut App, edited_name: Option<&str>) -> bool {
-    let reload_running =
-        edited_name.is_some_and(|name| app.runtime_playlist_active.as_deref() == Some(name));
-    persist_playlist_changes_and_reload_if(app, reload_running)
+    if !persist_playlist_changes(app) {
+        return false;
+    }
+    let Some(name) = edited_name else {
+        return true;
+    };
+    let reload_running = match playlist_is_running(app, name) {
+        Ok(value) => value,
+        Err(error) => {
+            set_playlist_error(app, error);
+            return false;
+        }
+    };
+    if reload_running && !runtime::try_switch(&app.config_path) {
+        set_playlist_error(
+            app,
+            "playlist was saved but the running daemon could not reload it".to_string(),
+        );
+        return false;
+    }
+    if reload_running {
+        app.runtime_playlist_active = Some(name.to_string());
+    }
+    true
 }
 
 fn persist_playlist_changes_and_reload_if(app: &mut App, reload_running: bool) -> bool {
@@ -784,13 +811,28 @@ fn play_selected_playlist(app: &mut App) -> Task<Message> {
         eprintln!("failed to query daemon child status: {error}");
     }
 
-    let controlled = runtime::play_playlist(&name)
-        || (runtime::try_switch(&app.config_path) && runtime::play_playlist(&name));
-    if controlled {
-        app.playback_running = true;
-        app.playback_paused = false;
-        app.runtime_playlist_active = Some(name);
-        return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
+    if runtime::daemon_is_running() {
+        if runtime::try_switch(&app.config_path) && runtime::play_playlist(&name) {
+            app.playback_running = true;
+            app.playback_paused = false;
+            app.runtime_playlist_active = Some(name);
+            return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
+        }
+
+        return match runtime::restart(&app.config_path, &mut app.runtime_child) {
+            Ok(child) => {
+                app.runtime_child = Some(child);
+                app.playback_running = true;
+                app.playback_paused = false;
+                app.runtime_playlist_active = Some(name);
+                app.runtime_status = RuntimeStatus::StartedDaemon;
+                Task::perform(runtime::fetch_status(), Message::StatusLoaded)
+            }
+            Err(error) => {
+                app.runtime_status = RuntimeStatus::StartFailed(error);
+                Task::none()
+            }
+        };
     }
 
     match runtime::start(&app.config_path) {
@@ -845,9 +887,6 @@ fn synchronize_migrated_playlist_with_running_daemon(app: &mut App) {
 }
 
 fn playlist_is_running(app: &App, playlist_name: &str) -> Result<bool, String> {
-    if app.runtime_playlist_active.as_deref() == Some(playlist_name) {
-        return Ok(true);
-    }
     if !app.layerd_available {
         return Ok(false);
     }
