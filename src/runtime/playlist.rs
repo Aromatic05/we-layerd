@@ -21,7 +21,6 @@ pub(crate) enum AdvanceDirection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlaylistSelection {
-    pub(crate) playlist: String,
     pub(crate) index: usize,
     pub(crate) wallpaper_id: String,
     pub(crate) source: String,
@@ -270,7 +269,6 @@ impl PlaylistRuntime {
         let playlist_name = self.active_playlist.as_ref()?;
         let item = self.config.definitions.get(playlist_name)?.items.get(index)?;
         Some(PlaylistSelection {
-            playlist: playlist_name.clone(),
             index,
             wallpaper_id: item.wallpaper_id.clone(),
             source: item.source.clone(),
@@ -312,7 +310,19 @@ pub(crate) fn load_snapshot(path: &Path) -> Result<Option<PlaylistRuntimeSnapsho
         .with_context(|| format!("invalid playlist runtime state in {}", path.display()))
 }
 
-pub(crate) fn save_snapshot(path: &Path, snapshot: &PlaylistRuntimeSnapshot) -> Result<()> {
+pub(crate) fn persist_snapshot(
+    path: &Path,
+    snapshot: Option<&PlaylistRuntimeSnapshot>,
+) -> Result<()> {
+    let Some(snapshot) = snapshot else {
+        match fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to remove {}", path.display()))
+            }
+        }
+    };
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -373,11 +383,14 @@ fn next_seed(seed: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        fs,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
 
     use we_core::playlist::{Playlist, PlaylistConfig, PlaylistItem, PlaylistMode};
 
-    use super::{AdvanceDirection, PlaylistRuntime};
+    use super::{load_snapshot, persist_snapshot, AdvanceDirection, PlaylistRuntime};
 
     fn config(mode: PlaylistMode, ids: &[&str]) -> PlaylistConfig {
         let mut config = PlaylistConfig::default();
@@ -457,5 +470,26 @@ mod tests {
                 .wallpaper_id,
             "c"
         );
+    }
+
+    #[test]
+    fn clearing_playlist_runtime_state_prevents_a_stopped_playlist_from_restoring() {
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
+        let root = std::env::temp_dir()
+            .join(format!("we-layerd-playlist-runtime-state-{}-{suffix}", std::process::id()));
+        let path = root.join("runtime.json");
+        let started = Instant::now();
+        let mut runtime = PlaylistRuntime::new(config(PlaylistMode::Repeat, &["a", "b"]), 23);
+        runtime.ensure_started(started).expect("playlist starts");
+        let snapshot = runtime.snapshot().expect("active runtime snapshot");
+
+        persist_snapshot(&path, Some(&snapshot)).expect("persist active playlist state");
+        assert!(load_snapshot(&path).expect("load active state").is_some());
+
+        runtime.stop();
+        persist_snapshot(&path, runtime.snapshot().as_ref()).expect("clear stopped playlist state");
+        assert_eq!(load_snapshot(&path).expect("load cleared state"), None);
+
+        let _ = fs::remove_dir_all(root);
     }
 }

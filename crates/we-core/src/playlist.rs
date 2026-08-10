@@ -148,7 +148,7 @@ impl PlaylistCursor {
         }
 
         let index = if playlist.mode == PlaylistMode::Shuffle {
-            self.refill_shuffle_bag(None);
+            self.refill_shuffle_bag();
             self.take_random_from_bag()?
         } else {
             0
@@ -180,9 +180,9 @@ impl PlaylistCursor {
                     Some(forward)
                 } else {
                     if self.shuffle_remaining.is_empty() {
-                        self.refill_shuffle_bag(Some(current));
+                        self.refill_shuffle_bag();
                     }
-                    self.take_random_from_bag()
+                    self.take_random_from_bag_avoiding(Some(current))
                 }
             }
         }?;
@@ -226,17 +226,30 @@ impl PlaylistCursor {
         self.forward_history.retain(|index| *index < item_count);
     }
 
-    fn refill_shuffle_bag(&mut self, exclude: Option<usize>) {
-        self.shuffle_remaining =
-            (0..self.item_count).filter(|index| Some(*index) != exclude).collect();
+    fn refill_shuffle_bag(&mut self) {
+        self.shuffle_remaining = (0..self.item_count).collect();
     }
 
     fn take_random_from_bag(&mut self) -> Option<usize> {
+        self.take_random_from_bag_avoiding(None)
+    }
+
+    fn take_random_from_bag_avoiding(&mut self, avoid: Option<usize>) -> Option<usize> {
         if self.shuffle_remaining.is_empty() {
             return None;
         }
-        let index = self.next_random_index(self.shuffle_remaining.len());
-        Some(self.shuffle_remaining.swap_remove(index))
+        let candidates = self
+            .shuffle_remaining
+            .iter()
+            .enumerate()
+            .filter_map(|(position, item)| (Some(*item) != avoid).then_some(position))
+            .collect::<Vec<_>>();
+        let position = if candidates.is_empty() {
+            self.next_random_index(self.shuffle_remaining.len())
+        } else {
+            candidates[self.next_random_index(candidates.len())]
+        };
+        Some(self.shuffle_remaining.swap_remove(position))
     }
 
     fn next_random_index(&mut self, upper_bound: usize) -> usize {
@@ -333,8 +346,14 @@ mod tests {
         cycle.sort_unstable();
         assert_eq!(cycle, vec![0, 1, 2, 3]);
 
-        let next_cycle = cursor.next(&playlist).expect("next cycle starts");
-        assert_ne!(next_cycle, fourth);
+        let fifth = cursor.next(&playlist).expect("next cycle starts");
+        let sixth = cursor.next(&playlist).expect("next cycle continues");
+        let seventh = cursor.next(&playlist).expect("next cycle continues");
+        let eighth = cursor.next(&playlist).expect("next cycle completes");
+        assert_ne!(fifth, fourth);
+        let mut second_cycle = vec![fifth, sixth, seventh, eighth];
+        second_cycle.sort_unstable();
+        assert_eq!(second_cycle, vec![0, 1, 2, 3]);
     }
 
     #[test]

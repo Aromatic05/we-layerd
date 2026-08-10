@@ -309,10 +309,11 @@ fn playlist_item_is_available(item: &we_core::playlist::PlaylistItem) -> bool {
 }
 
 fn persist_playlist_runtime(path: Option<&Path>, runtime: &PlaylistRuntime) {
-    let (Some(path), Some(snapshot)) = (path, runtime.snapshot()) else {
+    let Some(path) = path else {
         return;
     };
-    if let Err(error) = playlist::save_snapshot(path, &snapshot) {
+    let snapshot = runtime.snapshot();
+    if let Err(error) = playlist::persist_snapshot(path, snapshot.as_ref()) {
         warn!(error = %error, "failed to persist playlist runtime state");
     }
 }
