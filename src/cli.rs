@@ -42,6 +42,11 @@ pub enum Command {
         #[arg(value_enum)]
         action: ControlAction,
     },
+    /// Control daemon-managed playlists
+    Playlist {
+        #[command(subcommand)]
+        action: PlaylistAction,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -51,4 +56,16 @@ pub enum ControlAction {
     Resume,
     Reload,
     Status,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum PlaylistAction {
+    /// Start a named playlist
+    Play { name: String },
+    /// Advance to the next playable entry
+    Next,
+    /// Return to the previous playable entry
+    Previous,
+    /// Stop playlist progression while leaving the current wallpaper running
+    Stop,
 }

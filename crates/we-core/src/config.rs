@@ -9,7 +9,10 @@ use std::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::wallpaper::settings::{RenderResolution, WallpaperFillMode, WallpaperSettings};
+use crate::{
+    playlist::PlaylistConfig,
+    wallpaper::settings::{RenderResolution, WallpaperFillMode, WallpaperSettings},
+};
 
 static CONFIG_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -23,6 +26,8 @@ pub struct AppConfig {
     pub hooks: HooksConfig,
     #[serde(default)]
     pub wallpapers: BTreeMap<String, WallpaperSettings>,
+    #[serde(default)]
+    pub playlists: PlaylistConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -126,6 +131,7 @@ pub struct LaunchSettings {
     pub options_json: Option<String>,
     pub hooks: HooksConfig,
     pub wallpapers: BTreeMap<String, WallpaperSettings>,
+    pub playlists: PlaylistConfig,
 }
 
 fn default_interactive() -> bool {
@@ -216,6 +222,7 @@ impl Default for LaunchSettings {
             options_json: None,
             hooks: HooksConfig::default(),
             wallpapers: BTreeMap::new(),
+            playlists: PlaylistConfig::default(),
         }
     }
 }
@@ -233,6 +240,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
     cfg.renderer.options_json = settings.options_json.clone();
     cfg.hooks = settings.hooks.clone();
+    cfg.playlists = settings.playlists.clone();
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path =
         Path::new(&settings.assets_path).join("assets").display().to_string();
@@ -268,6 +276,7 @@ pub fn build_config_for_wallpaper(
         settings.force_scene_audio_loop,
     )?);
     config.wallpapers = settings.wallpapers.clone();
+    config.playlists = settings.playlists.clone();
     Ok(config)
 }
 
@@ -306,6 +315,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         options_json: cfg.renderer.options_json,
         hooks: cfg.hooks,
         wallpapers: cfg.wallpapers,
+        playlists: cfg.playlists,
     })
 }
 

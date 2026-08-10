@@ -17,6 +17,18 @@ we-layerd ctl reload
 we-layerd ctl status
 ```
 
+Daemon-managed playlists keep progressing when `we-gui` is closed:
+
+```bash
+we-layerd playlist play "Daily"
+we-layerd playlist next
+we-layerd playlist previous
+we-layerd playlist stop
+```
+
+`playlist stop` stops playlist progression and leaves the currently rendered wallpaper running.
+Playlist position is restored after daemon restart; the restored entry starts with a fresh timer.
+
 Other commands:
 ```bash
 we-layerd doctor

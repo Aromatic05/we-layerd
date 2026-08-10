@@ -45,6 +45,25 @@ impl ControlCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaylistCommand {
+    Play(String),
+    Next,
+    Previous,
+    Stop,
+}
+
+impl PlaylistCommand {
+    fn request(&self) -> String {
+        match self {
+            Self::Play(name) => format!("playlist play {name}"),
+            Self::Next => "playlist next".to_string(),
+            Self::Previous => "playlist previous".to_string(),
+            Self::Stop => "playlist stop".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeLoopExit {
     Stop,
@@ -52,11 +71,12 @@ pub enum RuntimeLoopExit {
     Reconfigure,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ControlRequest {
     Command(ControlCommand),
     Status,
     SwitchConfig(PathBuf),
+    Playlist(PlaylistCommand),
 }
 
 impl ControlRequest {
@@ -68,6 +88,21 @@ impl ControlRequest {
                 return None;
             }
             return Some(Self::SwitchConfig(PathBuf::from(path)));
+        }
+        if let Some(name) = trimmed.strip_prefix("playlist play ") {
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            return Some(Self::Playlist(PlaylistCommand::Play(name.to_string())));
+        }
+        match trimmed.to_ascii_lowercase().as_str() {
+            "playlist next" => return Some(Self::Playlist(PlaylistCommand::Next)),
+            "playlist previous" | "playlist prev" => {
+                return Some(Self::Playlist(PlaylistCommand::Previous))
+            }
+            "playlist stop" => return Some(Self::Playlist(PlaylistCommand::Stop)),
+            _ => {}
         }
         let normalized = trimmed.to_ascii_lowercase();
         if normalized == "status" {
@@ -83,16 +118,18 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    pub fn start<F, H, S>(
+    pub fn start<F, H, S, P>(
         tx: Sender<ControlCommand>,
         status_provider: F,
         command_handler: H,
         switch_config_handler: S,
+        playlist_handler: P,
     ) -> Result<Self>
     where
         F: Fn() -> String + Send + Sync + 'static,
         H: Fn(ControlCommand) -> Result<bool> + Send + Sync + 'static,
         S: Fn(&Path) -> Result<()> + Send + Sync + 'static,
+        P: Fn(PlaylistCommand) -> Result<()> + Send + Sync + 'static,
     {
         let instance_lock = acquire_instance_lock()?;
         let endpoint = default_endpoint()?;
@@ -101,6 +138,7 @@ impl ControlServer {
         let status_provider = std::sync::Arc::new(status_provider);
         let command_handler = std::sync::Arc::new(command_handler);
         let switch_config_handler = std::sync::Arc::new(switch_config_handler);
+        let playlist_handler = std::sync::Arc::new(playlist_handler);
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else {
@@ -120,6 +158,14 @@ impl ControlServer {
                         let _ = stream.write_all(status.as_bytes());
                     }
                     ControlRequest::SwitchConfig(path) => match switch_config_handler(&path) {
+                        Ok(()) => {
+                            let _ = stream.write_all(b"OK\n");
+                        }
+                        Err(err) => {
+                            let _ = stream.write_all(format!("ERR {err}\n").as_bytes());
+                        }
+                    },
+                    ControlRequest::Playlist(command) => match playlist_handler(command) {
                         Ok(()) => {
                             let _ = stream.write_all(b"OK\n");
                         }
@@ -179,6 +225,14 @@ pub fn request_running_config() -> Result<String> {
 
 pub fn send_switch_config(config_path: &Path) -> Result<()> {
     let response = send_request(&format!("switch-config {}", config_path.display()))?;
+    if response.trim_start().starts_with("ERR") {
+        return Err(anyhow!(response.trim().to_string()));
+    }
+    Ok(())
+}
+
+pub fn send_playlist_command(command: &PlaylistCommand) -> Result<()> {
+    let response = send_request(&command.request())?;
     if response.trim_start().starts_with("ERR") {
         return Err(anyhow!(response.trim().to_string()));
     }
@@ -349,4 +403,30 @@ fn acquire_instance_lock() -> Result<fs::File> {
 fn abstract_socket_name() -> Vec<u8> {
     let uid = unsafe { libc::geteuid() };
     format!("we-layerd.control.{uid}").into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ControlRequest, PlaylistCommand};
+
+    #[test]
+    fn playlist_ipc_preserves_named_playlists_and_rejects_empty_names() {
+        assert_eq!(
+            ControlRequest::parse("playlist play Focus Session"),
+            Some(ControlRequest::Playlist(PlaylistCommand::Play("Focus Session".to_string())))
+        );
+        assert_eq!(ControlRequest::parse("playlist play    "), None);
+        assert_eq!(
+            ControlRequest::parse("playlist next"),
+            Some(ControlRequest::Playlist(PlaylistCommand::Next))
+        );
+        assert_eq!(
+            ControlRequest::parse("playlist previous"),
+            Some(ControlRequest::Playlist(PlaylistCommand::Previous))
+        );
+        assert_eq!(
+            ControlRequest::parse("playlist stop"),
+            Some(ControlRequest::Playlist(PlaylistCommand::Stop))
+        );
+    }
 }
