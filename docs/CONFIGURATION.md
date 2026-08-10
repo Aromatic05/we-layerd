@@ -105,6 +105,25 @@ Workshop items are skipped rather than terminating a repeat/shuffle playlist.
 Playlist runtime state is stored separately from the renderer configuration. On daemon restart the
 current playlist entry and shuffle history are restored, while that entry's timer restarts from zero.
 
+### GUI playlist workflow
+
+`we-gui` exposes the same daemon playlist model from the **Playlists** sidebar. It can create,
+rename, and delete named playlists; append wallpapers directly from the library; preserve duplicate
+entries; reorder or remove entries; set playback mode; and set either a playlist-wide duration or an
+entry-specific duration override. Play, previous, next, and stop actions are sent to the running
+daemon rather than implemented by a GUI timer.
+
+Playlist edits are written to the `[playlists]` section without replacing unrelated configuration
+sections. When the edited playlist is currently running, the GUI asks the daemon to reload the
+updated configuration. Stopping a playlist from the GUI also clears `playlists.active` on disk so a
+later daemon start does not silently resume a playlist the user explicitly stopped. Manually playing
+a single wallpaper likewise deactivates playlist playback first.
+
+Older `we-gui` random-playback preferences are migration-only. On the first library scan after this
+version, an enabled legacy shuffle configuration is converted once into a `Migrated shuffle`
+playlist if no playlist definitions already exist. The old source-type filters and interval become
+that playlist's entries and default duration; the GUI no longer runs its own shuffle timer.
+
 ## Wallpaper applied hook
 
 Use an optional command hook to integrate theme generators such as DMS/Matugen without making

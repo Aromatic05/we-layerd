@@ -6,7 +6,6 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::SearchWallpapers => "Search wallpapers",
         Text::NoMatchingWallpapers => "No wallpapers match your search and filters.",
         Text::OpenSettings => "Open settings",
-        Text::ShuffleWallpapers => "Shuffle once",
         Text::Playlists => "Playlists",
         Text::PlaylistsSubtitle => "Build and control daemon-managed wallpaper playlists",
         Text::NewPlaylist => "New playlist name",
@@ -30,9 +29,6 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::StopPlaylist => "Stop playlist",
         Text::EntryDuration => "Duration override (ms)",
         Text::UseDefaultDuration => "Use default",
-        Text::MoveUp => "Move up",
-        Text::MoveDown => "Move down",
-        Text::Remove => "Remove",
         Text::ActivePlaylist => "Active playlist",
         Text::CurrentPlaylistEntry => "Current entry",
         Text::FilterAll => "All",
@@ -61,19 +57,6 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ScaleCover => "Cover",
         Text::ScaleStretch => "Stretch",
         Text::Behaviour => "Behaviour",
-        Text::ShufflePlayback => "Random playback",
-        Text::EnableAutomaticShuffle => "Automatically switch wallpapers",
-        Text::ShuffleInterval => "Preset interval",
-        Text::ShuffleCustomInterval => "Custom interval (milliseconds, minimum 100)",
-        Text::ShuffleEveryMinute => "Every minute",
-        Text::ShuffleEvery5Minutes => "Every 5 minutes",
-        Text::ShuffleEvery15Minutes => "Every 15 minutes",
-        Text::ShuffleEvery30Minutes => "Every 30 minutes",
-        Text::ShuffleEveryHour => "Every hour",
-        Text::ShuffleSources => "Wallpaper sources",
-        Text::ShuffleDescription => {
-            "Random playback avoids the currently running wallpaper and only advances while playback is running."
-        }
         Text::EnableWallpaperInput => "Enable wallpaper input",
         Text::ForceSceneAudioLoop => "Force loop scene audio",
         Text::ForceSceneAudioLoopDescription => {

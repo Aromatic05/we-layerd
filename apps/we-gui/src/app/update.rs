@@ -290,15 +290,17 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 return Task::none();
             };
             let was_running = app.runtime_playlist_active.as_deref() == Some(name.as_str());
+            if was_running {
+                let _ = runtime::send_playlist_action("stop");
+                app.runtime_playlist_active = None;
+                app.runtime_playlist_index = None;
+            }
             match delete_playlist(&mut app.launch_settings.playlists, &name) {
                 Ok(()) => {
                     app.playlist_selected =
                         app.launch_settings.playlists.definitions.keys().next().cloned();
                     sync_playlist_editor_inputs(app);
-                    if persist_playlist_changes_and_reload_if(app, was_running) && was_running {
-                        app.runtime_playlist_active = None;
-                        app.runtime_playlist_index = None;
-                    }
+                    persist_playlist_changes(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -661,7 +663,10 @@ fn migrate_legacy_shuffle_if_needed(app: &mut App) -> Task<Message> {
 
 fn persist_playlist_changes(app: &mut App) -> bool {
     match config::persist_playlists(&app.config_path, &app.launch_settings.playlists) {
-        Ok(()) => true,
+        Ok(()) => {
+            app.runtime_status = RuntimeStatus::PlaylistSaved;
+            true
+        }
         Err(error) => {
             app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
             eprintln!("failed to save playlists: {error}");

@@ -9,12 +9,24 @@ use crate::{
     domain::{
         i18n::{Localized, Text},
         playlist_editor::MoveDirection,
+        runtime_status::RuntimeStatus,
     },
     ui::theme::scrollbar,
 };
 
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
     let language = app.language;
+    let feedback: Element<'_, Message> = match &app.runtime_status {
+        RuntimeStatus::PlaylistError(_) | RuntimeStatus::ConfigSaveFailed(_) => container(
+            text(language.runtime_status(&app.runtime_status))
+                .size(12)
+                .color(Color::from_rgb8(255, 180, 171)),
+        )
+        .padding(8)
+        .style(entry_style)
+        .into(),
+        _ => text("").into(),
+    };
     let mut playlist_list = column!().spacing(6);
     for name in app.launch_settings.playlists.definitions.keys() {
         let selected = app.playlist_selected.as_deref() == Some(name.as_str());
@@ -230,6 +242,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                 .style(super::detail::outlined_button_style),
         ]
         .align_y(iced::Alignment::Center),
+        feedback,
         create,
         text(language.text(Text::Playlists)).size(15),
         playlist_list,

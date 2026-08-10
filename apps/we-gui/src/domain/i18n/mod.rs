@@ -122,6 +122,8 @@ impl Language {
             (Self::SimplifiedChinese, RuntimeStatus::PreferencesSaveFailed(detail)) => {
                 format!("保存界面偏好设置失败：{detail}")
             }
+            (Self::English, RuntimeStatus::PlaylistSaved) => "playlist saved".to_string(),
+            (Self::SimplifiedChinese, RuntimeStatus::PlaylistSaved) => "播放列表已保存".to_string(),
             (Self::English, RuntimeStatus::PlaylistError(detail)) => {
                 format!("playlist error: {detail}")
             }
@@ -147,7 +149,6 @@ pub(crate) enum Text {
     SearchWallpapers,
     NoMatchingWallpapers,
     OpenSettings,
-    ShuffleWallpapers,
     Playlists,
     PlaylistsSubtitle,
     NewPlaylist,
@@ -171,9 +172,6 @@ pub(crate) enum Text {
     StopPlaylist,
     EntryDuration,
     UseDefaultDuration,
-    MoveUp,
-    MoveDown,
-    Remove,
     ActivePlaylist,
     CurrentPlaylistEntry,
     FilterAll,
@@ -202,17 +200,6 @@ pub(crate) enum Text {
     ScaleCover,
     ScaleStretch,
     Behaviour,
-    ShufflePlayback,
-    EnableAutomaticShuffle,
-    ShuffleInterval,
-    ShuffleCustomInterval,
-    ShuffleEveryMinute,
-    ShuffleEvery5Minutes,
-    ShuffleEvery15Minutes,
-    ShuffleEvery30Minutes,
-    ShuffleEveryHour,
-    ShuffleSources,
-    ShuffleDescription,
     EnableWallpaperInput,
     ForceSceneAudioLoop,
     ForceSceneAudioLoopDescription,
