@@ -73,6 +73,38 @@ Current DMA-BUF scope:
 - v4 feedback changes are forwarded while the renderer is running, allowing output rebinding or SHM fallback
 - `prefer_dmabuf` selects policy; `allow_shm_fallback` controls behavior when no compatible pair exists
 
+## Playlists
+
+Named playlists are part of the daemon configuration, so timing and progression do not depend on
+the GUI process. Entries are ordered references to Workshop item directories and may repeat the
+same wallpaper more than once.
+
+```toml
+[playlists]
+active = "Daily"
+
+[playlists.definitions.Daily]
+mode = "repeat"
+default_duration_ms = 1800000
+
+[[playlists.definitions.Daily.items]]
+wallpaper_id = "1234567890"
+source = "/path/to/Steam/steamapps/workshop/content/431960/1234567890"
+
+[[playlists.definitions.Daily.items]]
+wallpaper_id = "9876543210"
+source = "/path/to/Steam/steamapps/workshop/content/431960/9876543210"
+duration_ms = 300000
+```
+
+Modes are `sequential`, `repeat`, `shuffle`, and `manual`. Sequential playback stops progressing
+after the final entry, repeat wraps in order, shuffle uses a bag so an entry is not reused until the
+current bag is exhausted, and manual only changes through explicit next/previous control. Missing
+Workshop items are skipped rather than terminating a repeat/shuffle playlist.
+
+Playlist runtime state is stored separately from the renderer configuration. On daemon restart the
+current playlist entry and shuffle history are restored, while that entry's timer restarts from zero.
+
 ## Wallpaper applied hook
 
 Use an optional command hook to integrate theme generators such as DMS/Matugen without making

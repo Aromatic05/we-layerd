@@ -6,6 +6,8 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
     },
+    thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -22,23 +24,49 @@ use crate::{
     },
     config::Config,
     hooks::{self, WallpaperAppliedContext, WallpaperAppliedTrigger},
-    ipc::{self, ControlCommand, RuntimeLoopExit},
-    runtime::{control::RuntimePhase, status::RuntimeStatusSnapshot},
+    ipc::{self, ControlCommand, PlaylistCommand, RuntimeLoopExit},
+    runtime::{
+        control::RuntimePhase,
+        playlist::{self, AdvanceDirection, PlaylistRuntime, PlaylistSelection},
+        status::RuntimeStatusSnapshot,
+    },
 };
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
-    let cfg = Config::load(config_path)?;
+    let mut cfg = Config::load(config_path)?;
+    let playlist_state_path = playlist::state_path_for_config(config_path);
+    let now = Instant::now();
+    let mut playlist_runtime =
+        match playlist_state_path.as_deref().map(playlist::load_snapshot).transpose() {
+            Ok(Some(Some(snapshot))) => {
+                PlaylistRuntime::restore(cfg.playlists.clone(), snapshot, now)
+            }
+            Ok(_) => PlaylistRuntime::new(cfg.playlists.clone(), playlist::random_seed()),
+            Err(error) => {
+                warn!(error = %error, "ignoring invalid playlist runtime state");
+                PlaylistRuntime::new(cfg.playlists.clone(), playlist::random_seed())
+            }
+        };
+    if let Some(selection) = select_initial_playlist_item(&mut playlist_runtime, now) {
+        playlist::apply_selection_to_config(&mut cfg, &selection)?;
+    }
+    persist_playlist_runtime(playlist_state_path.as_deref(), &playlist_runtime);
+    let playlist_runtime = Arc::new(Mutex::new(playlist_runtime));
+
     let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
     let desired_cfg = Arc::new(Mutex::new(cfg.clone()));
     let current_cfg = Arc::new(Mutex::new(cfg.clone()));
     let runtime_cfg_toml = Arc::new(Mutex::new(cfg.to_toml_pretty()?));
     let runtime_state = Arc::new(Mutex::new(RuntimeState::new(&cfg)));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
+    let scheduler_stop = Arc::new(AtomicBool::new(false));
     install_runtime_ctrlc_handler(control_tx.clone(), shutdown_requested.clone())?;
 
     let status_state = runtime_state.clone();
+    let status_playlist = playlist_runtime.clone();
     let command_tx = control_tx.clone();
     let switch_tx = control_tx.clone();
+    let playlist_tx = control_tx.clone();
 
     let _control_server = ipc::ControlServer::start(
         control_tx,
@@ -53,35 +81,161 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                     status.push_str("\n\n");
                     status.push_str(&guard.render_status_toml());
                 }
+                if let Ok(guard) = status_playlist.lock() {
+                    status.push_str("\n\n");
+                    status.push_str(&guard.render_status_toml());
+                }
                 status
             }
         },
         {
             let runtime_state = runtime_state.clone();
-            move |cmd| handle_runtime_control_command(cmd, &command_tx, &runtime_state)
+            let playlist_runtime = playlist_runtime.clone();
+            let scheduler_stop = scheduler_stop.clone();
+            let playlist_state_path = playlist_state_path.clone();
+            move |cmd| {
+                let handled = handle_runtime_control_command(cmd, &command_tx, &runtime_state)?;
+                let now = Instant::now();
+                if let Ok(mut runtime) = playlist_runtime.lock() {
+                    match cmd {
+                        ControlCommand::Pause => runtime.pause(now),
+                        ControlCommand::Resume => runtime.resume(now),
+                        ControlCommand::Stop => scheduler_stop.store(true, Ordering::Relaxed),
+                        _ => {}
+                    }
+                    persist_playlist_runtime(playlist_state_path.as_deref(), &runtime);
+                }
+                Ok(handled)
+            }
         },
         {
             let desired_cfg = desired_cfg.clone();
             let runtime_cfg_toml = runtime_cfg_toml.clone();
             let runtime_state = runtime_state.clone();
+            let playlist_runtime = playlist_runtime.clone();
+            let playlist_state_path = playlist_state_path.clone();
+            let switch_tx = switch_tx.clone();
             move |config_path| {
-                let next_cfg = Config::load(Some(config_path))?;
-                if let Ok(mut guard) = desired_cfg.lock() {
-                    *guard = next_cfg.clone();
+                let mut next_cfg = Config::load(Some(config_path))?;
+                let now = Instant::now();
+                if let Ok(mut runtime) = playlist_runtime.lock() {
+                    runtime.configure(next_cfg.playlists.clone(), now);
+                    if let Some(selection) = select_initial_playlist_item(&mut runtime, now) {
+                        playlist::apply_selection_to_config(&mut next_cfg, &selection)?;
+                    }
+                    persist_playlist_runtime(playlist_state_path.as_deref(), &runtime);
                 }
-                if let Ok(mut guard) = runtime_cfg_toml.lock() {
-                    *guard = next_cfg.to_toml_pretty()?;
+                schedule_config_reconfigure(
+                    next_cfg,
+                    &desired_cfg,
+                    &runtime_cfg_toml,
+                    &runtime_state,
+                    &switch_tx,
+                )
+            }
+        },
+        {
+            let desired_cfg = desired_cfg.clone();
+            let runtime_cfg_toml = runtime_cfg_toml.clone();
+            let runtime_state = runtime_state.clone();
+            let playlist_runtime = playlist_runtime.clone();
+            let playlist_state_path = playlist_state_path.clone();
+            move |command| {
+                let now = Instant::now();
+                let (selection, active_name) = {
+                    let mut runtime = playlist_runtime
+                        .lock()
+                        .map_err(|_| anyhow!("playlist runtime lock poisoned"))?;
+                    let selection = match &command {
+                        PlaylistCommand::Play(name) => {
+                            let first = runtime.play(name, now).map_err(anyhow::Error::msg)?;
+                            if playlist_selection_is_available(&first) {
+                                Some(first)
+                            } else {
+                                runtime.advance(
+                                    AdvanceDirection::Next,
+                                    now,
+                                    playlist_item_is_available,
+                                )
+                            }
+                        }
+                        PlaylistCommand::Next => {
+                            runtime.advance(AdvanceDirection::Next, now, playlist_item_is_available)
+                        }
+                        PlaylistCommand::Previous => runtime.advance(
+                            AdvanceDirection::Previous,
+                            now,
+                            playlist_item_is_available,
+                        ),
+                        PlaylistCommand::Stop => {
+                            runtime.stop();
+                            None
+                        }
+                    };
+                    persist_playlist_runtime(playlist_state_path.as_deref(), &runtime);
+                    (selection, runtime.active_name().map(str::to_string))
+                };
+
+                if matches!(command, PlaylistCommand::Stop) {
+                    update_playlist_active_config(None, &desired_cfg, &runtime_cfg_toml)?;
+                    return Ok(());
                 }
-                if let Ok(mut state) = runtime_state.lock() {
-                    state.begin_switch(&next_cfg);
-                }
-                switch_tx
-                    .send(ControlCommand::Reconfigure)
-                    .context("failed to schedule runtime reconfiguration")?;
-                Ok(())
+
+                let selection =
+                    selection.ok_or_else(|| anyhow!("playlist has no playable item"))?;
+                schedule_playlist_selection(
+                    selection,
+                    active_name,
+                    &desired_cfg,
+                    &runtime_cfg_toml,
+                    &runtime_state,
+                    &playlist_tx,
+                )
             }
         },
     )?;
+
+    {
+        let desired_cfg = desired_cfg.clone();
+        let runtime_cfg_toml = runtime_cfg_toml.clone();
+        let runtime_state = runtime_state.clone();
+        let playlist_runtime = playlist_runtime.clone();
+        let playlist_state_path = playlist_state_path.clone();
+        let shutdown_requested = shutdown_requested.clone();
+        let scheduler_stop = scheduler_stop.clone();
+        let scheduler_tx = switch_tx.clone();
+        thread::spawn(move || {
+            while !shutdown_requested.load(Ordering::Relaxed)
+                && !scheduler_stop.load(Ordering::Relaxed)
+            {
+                thread::sleep(Duration::from_millis(50));
+                let now = Instant::now();
+                let (selection, active_name) = {
+                    let Ok(mut runtime) = playlist_runtime.lock() else {
+                        break;
+                    };
+                    let selection = runtime.due_selection(now, playlist_item_is_available);
+                    if selection.is_some() {
+                        persist_playlist_runtime(playlist_state_path.as_deref(), &runtime);
+                    }
+                    (selection, runtime.active_name().map(str::to_string))
+                };
+                let Some(selection) = selection else {
+                    continue;
+                };
+                if let Err(error) = schedule_playlist_selection(
+                    selection,
+                    active_name,
+                    &desired_cfg,
+                    &runtime_cfg_toml,
+                    &runtime_state,
+                    &scheduler_tx,
+                ) {
+                    warn!(error = %error, "failed to advance playlist");
+                }
+            }
+        });
+    }
 
     loop {
         let next_cfg = desired_cfg
@@ -124,12 +278,98 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         }
 
         match exit {
-            RuntimeLoopExit::Stop => break,
+            RuntimeLoopExit::Stop => {
+                scheduler_stop.store(true, Ordering::Relaxed);
+                break;
+            }
             RuntimeLoopExit::RestartCurrent | RuntimeLoopExit::Reconfigure => continue,
         }
     }
 
     Ok(())
+}
+
+fn select_initial_playlist_item(
+    runtime: &mut PlaylistRuntime,
+    now: Instant,
+) -> Option<PlaylistSelection> {
+    let selection = runtime.ensure_started(now)?;
+    if playlist_selection_is_available(&selection) {
+        return Some(selection);
+    }
+    runtime.advance(AdvanceDirection::Next, now, playlist_item_is_available)
+}
+
+fn playlist_selection_is_available(selection: &PlaylistSelection) -> bool {
+    Path::new(&selection.source).join("project.json").is_file()
+}
+
+fn playlist_item_is_available(item: &we_core::playlist::PlaylistItem) -> bool {
+    Path::new(&item.source).join("project.json").is_file()
+}
+
+fn persist_playlist_runtime(path: Option<&Path>, runtime: &PlaylistRuntime) {
+    let (Some(path), Some(snapshot)) = (path, runtime.snapshot()) else {
+        return;
+    };
+    if let Err(error) = playlist::save_snapshot(path, &snapshot) {
+        warn!(error = %error, "failed to persist playlist runtime state");
+    }
+}
+
+fn update_playlist_active_config(
+    active_name: Option<String>,
+    desired_cfg: &Arc<Mutex<Config>>,
+    runtime_cfg_toml: &Arc<Mutex<String>>,
+) -> Result<()> {
+    let mut next_cfg = desired_cfg
+        .lock()
+        .map_err(|_| anyhow!("failed to update desired playlist config"))?
+        .clone();
+    next_cfg.playlists.active = active_name;
+    if let Ok(mut guard) = desired_cfg.lock() {
+        *guard = next_cfg.clone();
+    }
+    if let Ok(mut guard) = runtime_cfg_toml.lock() {
+        *guard = next_cfg.to_toml_pretty()?;
+    }
+    Ok(())
+}
+
+fn schedule_playlist_selection(
+    selection: PlaylistSelection,
+    active_name: Option<String>,
+    desired_cfg: &Arc<Mutex<Config>>,
+    runtime_cfg_toml: &Arc<Mutex<String>>,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    control_tx: &mpsc::Sender<ControlCommand>,
+) -> Result<()> {
+    let mut next_cfg =
+        desired_cfg.lock().map_err(|_| anyhow!("failed to read desired playlist config"))?.clone();
+    next_cfg.playlists.active = active_name;
+    playlist::apply_selection_to_config(&mut next_cfg, &selection)?;
+    schedule_config_reconfigure(next_cfg, desired_cfg, runtime_cfg_toml, runtime_state, control_tx)
+}
+
+fn schedule_config_reconfigure(
+    next_cfg: Config,
+    desired_cfg: &Arc<Mutex<Config>>,
+    runtime_cfg_toml: &Arc<Mutex<String>>,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    control_tx: &mpsc::Sender<ControlCommand>,
+) -> Result<()> {
+    if let Ok(mut guard) = desired_cfg.lock() {
+        *guard = next_cfg.clone();
+    }
+    if let Ok(mut guard) = runtime_cfg_toml.lock() {
+        *guard = next_cfg.to_toml_pretty()?;
+    }
+    if let Ok(mut state) = runtime_state.lock() {
+        state.begin_switch(&next_cfg);
+    }
+    control_tx
+        .send(ControlCommand::Reconfigure)
+        .context("failed to schedule runtime reconfiguration")
 }
 
 #[derive(Debug, Clone)]

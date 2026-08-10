@@ -9,8 +9,8 @@ mod runtime;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Command, ControlAction};
-use ipc::ControlCommand;
+use cli::{Cli, Command, ControlAction, PlaylistAction};
+use ipc::{ControlCommand, PlaylistCommand};
 
 fn main() -> Result<()> {
     logging::init();
@@ -42,5 +42,14 @@ fn main() -> Result<()> {
                 Ok(())
             }
         },
+        Command::Playlist { action } => {
+            let command = match action {
+                PlaylistAction::Play { name } => PlaylistCommand::Play(name),
+                PlaylistAction::Next => PlaylistCommand::Next,
+                PlaylistAction::Previous => PlaylistCommand::Previous,
+                PlaylistAction::Stop => PlaylistCommand::Stop,
+            };
+            ipc::send_playlist_command(&command)
+        }
     }
 }

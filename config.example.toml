@@ -26,3 +26,15 @@ options_json = '''
 # [hooks.wallpaper_applied]
 # command = "~/.local/bin/we-theme-sync"
 # args = []
+
+# Optional daemon-managed playlist. The GUI will manage these entries in a later phase.
+# [playlists]
+# active = "Daily"
+#
+# [playlists.definitions.Daily]
+# mode = "repeat"
+# default_duration_ms = 1800000
+#
+# [[playlists.definitions.Daily.items]]
+# wallpaper_id = "1234567890"
+# source = "/path/to/Steam/steamapps/workshop/content/431960/1234567890"

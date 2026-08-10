@@ -1,8 +1,12 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use we_core::{config::HooksConfig, wallpaper::settings::WallpaperFillMode};
+use we_core::{
+    config::HooksConfig,
+    playlist::PlaylistConfig,
+    wallpaper::settings::{WallpaperFillMode, WallpaperSettings},
+};
 
 use crate::backend::{gnome::protocol, traits::BackendKind};
 
@@ -16,6 +20,10 @@ pub struct Config {
     pub renderer: RendererConfig,
     #[serde(default, skip_serializing_if = "HooksConfig::is_empty")]
     pub hooks: HooksConfig,
+    #[serde(default)]
+    pub wallpapers: BTreeMap<String, WallpaperSettings>,
+    #[serde(default)]
+    pub playlists: PlaylistConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
