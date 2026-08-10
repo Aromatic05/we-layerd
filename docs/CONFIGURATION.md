@@ -51,6 +51,7 @@ fps = 60
 speed = 1.0
 volume = 1.0
 muted = false
+msaa_samples = 1
 options_json = '''
 {
   "example": true
@@ -63,7 +64,17 @@ options_json = '''
 - `allow_shm_fallback`: allow SHM presentation when DMA-BUF is unavailable or explicitly disabled
 - `fps`: target update rate passed to the renderer
 - `speed`, `volume`, `muted`: source parameters forwarded directly to the renderer ABI
+- `msaa_samples`: final-output MSAA request. `1` disables MSAA. Values above 1 are supported by
+  scene wallpapers only; the renderer resolves unsupported sample counts downward to the highest
+  supported count and reports the decision through renderer diagnostics. Video and web sources
+  reject values above 1 instead of silently ignoring them.
 - `options_json`: optional raw JSON string forwarded to `we_renderer::Source.options_json`; invalid JSON stops runtime startup with a clear error
+
+The GUI stores MSAA per wallpaper and exposes common 1x/2x/4x/8x choices only for scene
+wallpapers. For video and web wallpapers it shows the setting as unsupported. Renderer diagnostics
+are collected outside the frame hot path, exposed by `we-layerd ctl status`, and shown separately in
+the GUI Settings panel. Loading an older renderer library that lacks the diagnostics ABI does not
+prevent playback; status reports diagnostics as unavailable instead.
 
 Current DMA-BUF scope:
 

@@ -196,7 +196,9 @@ fn renderer_diagnostics_view<'a>(
 ) -> Element<'a, Message> {
     let diagnostics = renderer_diagnostics(runtime_status);
     if diagnostics.is_empty() {
-        return container(text(language.text(Text::NoRendererDiagnostics)).size(13))
+        let message = renderer_diagnostics_error(runtime_status)
+            .unwrap_or_else(|| language.text(Text::NoRendererDiagnostics).to_string());
+        return container(text(message).size(13))
             .padding(12)
             .width(Fill)
             .style(status_box_style)
@@ -259,6 +261,19 @@ fn renderer_diagnostics(runtime_status: &RuntimeStatus) -> Vec<RendererDiagnosti
             })
         })
         .collect()
+}
+
+fn renderer_diagnostics_error(runtime_status: &RuntimeStatus) -> Option<String> {
+    let RuntimeStatus::Raw(raw) = runtime_status else {
+        return None;
+    };
+    let document = toml::from_str::<toml::Value>(raw).ok()?;
+    document
+        .get("runtime")?
+        .get("renderer_diagnostics_error")?
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn format_path_for_display(path: &str, limit: usize) -> String {

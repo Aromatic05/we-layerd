@@ -31,7 +31,37 @@ impl RendererSession {
     }
 
     pub(crate) fn configure(&mut self, config: RenderConfig) -> Result<()> {
-        self.session.configure(config).context("failed to set render config")
+        match self.session.configure(config) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let diagnostic_detail = self
+                    .session
+                    .diagnostics()
+                    .ok()
+                    .map(|diagnostics| {
+                        diagnostics
+                            .entries
+                            .into_iter()
+                            .filter(|entry| {
+                                matches!(
+                                    entry.severity,
+                                    we_renderer::DiagnosticSeverity::Warning
+                                        | we_renderer::DiagnosticSeverity::Error
+                                )
+                            })
+                            .map(|entry| format!("{}: {}", entry.source, entry.message))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    })
+                    .filter(|detail| !detail.is_empty());
+                let context = diagnostic_detail
+                    .map(|detail| {
+                        format!("failed to set render config; renderer diagnostics: {detail}")
+                    })
+                    .unwrap_or_else(|| "failed to set render config".to_string());
+                Err(anyhow::Error::new(error).context(context))
+            }
+        }
     }
 
     pub(crate) fn resize_output(&mut self, width: u32, height: u32) -> Result<()> {

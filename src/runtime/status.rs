@@ -217,3 +217,36 @@ fn scale_mode_name(scale_mode: ScaleMode) -> &'static str {
         ScaleMode::Stretch => "stretch",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use we_renderer::{DiagnosticEntry, DiagnosticSeverity, RendererDiagnostics};
+
+    use super::{RuntimeDiagnostics, RuntimeStatusSnapshot};
+
+    #[test]
+    fn renderer_diagnostics_are_valid_toml_and_preserve_json_payload() {
+        let mut snapshot = RuntimeStatusSnapshot::default();
+        snapshot.runtime = RuntimeDiagnostics {
+            renderer_diagnostics: Some(RendererDiagnostics {
+                version: 1,
+                entries: vec![DiagnosticEntry {
+                    severity: DiagnosticSeverity::Warning,
+                    source: "abi.render-config.msaa".to_string(),
+                    message: "scene only".to_string(),
+                }],
+            }),
+            ..RuntimeDiagnostics::default()
+        };
+
+        let rendered = snapshot.render_toml();
+        let document = toml::from_str::<toml::Value>(&rendered).expect("valid status TOML");
+        let json = document["runtime"]["renderer_diagnostics_json"]
+            .as_str()
+            .expect("diagnostics JSON string");
+        let payload =
+            serde_json::from_str::<serde_json::Value>(json).expect("valid diagnostics JSON");
+        assert_eq!(payload["entries"][0]["source"], "abi.render-config.msaa");
+        assert_eq!(document["runtime"]["renderer_warning_count"].as_integer(), Some(1));
+    }
+}
