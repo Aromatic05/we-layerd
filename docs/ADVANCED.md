@@ -29,6 +29,10 @@ we-layerd playlist stop
 `playlist stop` stops playlist progression and leaves the currently rendered wallpaper running.
 Playlist position is restored after daemon restart; the restored entry starts with a fresh timer.
 
+The GUI **Playlists** sidebar controls these commands directly. Closing the wallpaper library window
+does not drive playlist timing: progression remains daemon-owned. GUI playlist edits are persisted in
+the normal configuration and a running edited playlist is reloaded by the daemon.
+
 Other commands:
 ```bash
 we-layerd doctor

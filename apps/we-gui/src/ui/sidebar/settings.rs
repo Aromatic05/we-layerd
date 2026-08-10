@@ -28,17 +28,6 @@ pub fn build_settings_overlay<'a>(
     ];
     let selected_scale =
         scale_options.iter().find(|option| option.value == ui_settings.scale_mode).cloned();
-    let shuffle_intervals = vec![
-        Localized::new(60_000, language.text(Text::ShuffleEveryMinute)),
-        Localized::new(300_000, language.text(Text::ShuffleEvery5Minutes)),
-        Localized::new(900_000, language.text(Text::ShuffleEvery15Minutes)),
-        Localized::new(1_800_000, language.text(Text::ShuffleEvery30Minutes)),
-        Localized::new(3_600_000, language.text(Text::ShuffleEveryHour)),
-    ];
-    let selected_shuffle_interval = shuffle_intervals
-        .iter()
-        .find(|option| option.value == ui_settings.shuffle_interval_ms)
-        .cloned();
 
     let content = column![
         row![
@@ -133,56 +122,6 @@ pub fn build_settings_overlay<'a>(
             .menu_style(md_menu_style),
         )
         .id("settings.scale-mode"),
-        section_title(language.text(Text::ShufflePlayback)),
-        text(language.text(Text::ShuffleDescription)).size(12),
-        container(
-            checkbox(ui_settings.shuffle_enabled)
-                .label(language.text(Text::EnableAutomaticShuffle))
-                .on_toggle(Message::ShuffleEnabledToggled)
-                .style(md_checkbox_style),
-        )
-        .id("settings.shuffle.enabled"),
-        text(language.text(Text::ShuffleInterval)).size(14),
-        container(
-            pick_list(shuffle_intervals, selected_shuffle_interval, |option| {
-                Message::ShuffleIntervalSelected(option.value)
-            },)
-            .padding([14, 10])
-            .style(md_pick_list_style)
-            .menu_style(md_menu_style),
-        )
-        .id("settings.shuffle.interval"),
-        text(language.text(Text::ShuffleCustomInterval)).size(14),
-        text_input("1800000", &ui_settings.shuffle_interval_input)
-            .id("settings.shuffle.custom-interval")
-            .on_input(Message::ShuffleIntervalChanged)
-            .padding([14, 10])
-            .style(md_text_input_style),
-        text(language.text(Text::ShuffleSources)).size(14),
-        row![
-            container(
-                checkbox(ui_settings.shuffle_include_video)
-                    .label(language.text(Text::FilterVideo))
-                    .on_toggle(Message::ShuffleIncludeVideoToggled)
-                    .style(md_checkbox_style),
-            )
-            .id("settings.shuffle.video"),
-            container(
-                checkbox(ui_settings.shuffle_include_scene)
-                    .label(language.text(Text::FilterScene))
-                    .on_toggle(Message::ShuffleIncludeSceneToggled)
-                    .style(md_checkbox_style),
-            )
-            .id("settings.shuffle.scene"),
-            container(
-                checkbox(ui_settings.shuffle_include_web)
-                    .label(language.text(Text::FilterWeb))
-                    .on_toggle(Message::ShuffleIncludeWebToggled)
-                    .style(md_checkbox_style),
-            )
-            .id("settings.shuffle.web"),
-        ]
-        .spacing(16),
         section_title(language.text(Text::Behaviour)),
         container(
             checkbox(ui_settings.interactive)

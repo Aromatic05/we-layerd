@@ -36,6 +36,22 @@ pub fn send_control(action: &str) -> bool {
     command_succeeds_quietly(&mut command)
 }
 
+pub fn play_playlist(name: &str) -> bool {
+    let Ok(mut command) = layerd_command() else {
+        return false;
+    };
+    command.arg("playlist").arg("play").arg(name);
+    command_succeeds_quietly(&mut command)
+}
+
+pub fn send_playlist_action(action: &str) -> bool {
+    let Ok(mut command) = layerd_command() else {
+        return false;
+    };
+    command.arg("playlist").arg(action);
+    command_succeeds_quietly(&mut command)
+}
+
 pub fn start(config_path: &Path) -> std::io::Result<Child> {
     layerd_command()?.arg("run").arg("--config").arg(config_path).spawn()
 }
@@ -53,7 +69,7 @@ pub fn restart(config_path: &Path, child: &mut Option<Child>) -> Result<Child, S
     Err("timed out waiting for the previous daemon to stop".to_string())
 }
 
-pub async fn fetch_status() -> Result<DaemonStatus, String> {
+pub fn fetch_status_sync() -> Result<DaemonStatus, String> {
     let output = layerd_command()
         .map_err(|error| error.to_string())?
         .arg("ctl")
@@ -62,6 +78,10 @@ pub async fn fetch_status() -> Result<DaemonStatus, String> {
         .map_err(|error| error.to_string())?;
 
     Ok(classify_daemon_status(output.status.success(), &output.stdout))
+}
+
+pub async fn fetch_status() -> Result<DaemonStatus, String> {
+    fetch_status_sync()
 }
 
 pub async fn fetch_outputs() -> Result<Vec<String>, String> {
@@ -107,7 +127,7 @@ pub fn stop(child: &mut Option<Child>) -> bool {
     stopped || !daemon_is_running()
 }
 
-fn daemon_is_running() -> bool {
+pub fn daemon_is_running() -> bool {
     layerd_command()
         .ok()
         .and_then(|mut command| command.arg("ctl").arg("status").output().ok())

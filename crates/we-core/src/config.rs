@@ -362,16 +362,7 @@ pub fn merge_scene_source_options(
 }
 
 pub fn save_force_scene_audio_loop(path: &Path, enabled: bool) -> Result<()> {
-    let mut document = match fs::read_to_string(path) {
-        Ok(raw) => toml::from_str::<toml::Value>(&raw)
-            .with_context(|| format!("invalid TOML in {}", path.display()))?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            toml::Value::Table(Default::default())
-        }
-        Err(error) => {
-            return Err(error).with_context(|| format!("failed to read {}", path.display()));
-        }
-    };
+    let mut document = load_config_document(path)?;
     let Some(root) = document.as_table_mut() else {
         bail!("config root in {} must be a TOML table", path.display());
     };
@@ -381,6 +372,32 @@ pub fn save_force_scene_audio_loop(path: &Path, enabled: bool) -> Result<()> {
     };
     general.insert("force_scene_audio_loop".to_string(), toml::Value::Boolean(enabled));
 
+    save_config_document(path, &document)
+}
+
+pub fn save_playlists(path: &Path, playlists: &PlaylistConfig) -> Result<()> {
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    let playlists = toml::Value::try_from(playlists).context("failed to serialize playlists")?;
+    root.insert("playlists".to_string(), playlists);
+
+    save_config_document(path, &document)
+}
+
+fn load_config_document(path: &Path) -> Result<toml::Value> {
+    match fs::read_to_string(path) {
+        Ok(raw) => toml::from_str::<toml::Value>(&raw)
+            .with_context(|| format!("invalid TOML in {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(toml::Value::Table(Default::default()))
+        }
+        Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+    }
+}
+
+fn save_config_document(path: &Path, document: &toml::Value) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -425,8 +442,10 @@ mod tests {
 
     use super::{
         build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
-        save_force_scene_audio_loop, HookCommand, HooksConfig, LaunchSettings, ScaleMode,
+        save_force_scene_audio_loop, save_playlists, HookCommand, HooksConfig, LaunchSettings,
+        ScaleMode,
     };
+    use crate::playlist::{Playlist, PlaylistConfig, PlaylistItem, PlaylistMode};
     use crate::wallpaper::settings::{
         RenderResolution, Rotation, WallpaperFillMode, WallpaperSettings,
     };
@@ -625,5 +644,42 @@ options_json = "{\"keep\":true}"
     fn launch_settings_default_to_auto_renderer_resolution() {
         let settings = LaunchSettings::default();
         assert!(settings.renderer_library_path.is_empty());
+    }
+
+    #[test]
+    fn playlist_patch_round_trips_and_preserves_unrelated_config() {
+        let path = unique_temp_path("playlist-config.toml");
+        fs::write(
+            &path,
+            "[general]\ninteractive = true\n\n[renderer]\nsource = \"/old/source\"\nassets_path = \"/assets\"\n\n[gnome]\ncustom = \"keep\"\n",
+        )
+        .expect("write config");
+
+        let mut playlists = PlaylistConfig::default();
+        playlists.active = Some("Focus".to_string());
+        playlists.definitions.insert(
+            "Focus".to_string(),
+            Playlist {
+                mode: PlaylistMode::Shuffle,
+                default_duration_ms: 45_000,
+                items: vec![PlaylistItem {
+                    wallpaper_id: "42".to_string(),
+                    source: "/workshop/42".to_string(),
+                    duration_ms: Some(12_000),
+                }],
+            },
+        );
+
+        save_playlists(&path, &playlists).expect("save playlists");
+
+        let document = fs::read_to_string(&path).expect("read config");
+        let value = toml::from_str::<toml::Value>(&document).expect("valid TOML");
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/old/source"));
+        assert_eq!(value["gnome"]["custom"].as_str(), Some("keep"));
+
+        let loaded = load_launch_settings(&path).expect("reload launch settings");
+        assert_eq!(loaded.playlists, playlists);
+
+        let _ = fs::remove_file(path);
     }
 }

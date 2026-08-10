@@ -13,18 +13,6 @@ pub(crate) struct UiSettings {
     pub fps_limit: String,
     pub show_fps: bool,
     pub scale_mode: ScaleModeOption,
-    pub shuffle_enabled: bool,
-    pub shuffle_interval_ms: u32,
-    pub shuffle_interval_input: String,
-    pub shuffle_include_video: bool,
-    pub shuffle_include_scene: bool,
-    pub shuffle_include_web: bool,
-}
-
-pub(crate) const MIN_SHUFFLE_INTERVAL_MS: u32 = 100;
-
-pub(crate) fn is_shuffle_interval_ms(value: u32) -> bool {
-    value >= MIN_SHUFFLE_INTERVAL_MS
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

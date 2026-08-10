@@ -10,6 +10,7 @@ pub(crate) enum Pane {
 pub(crate) enum Sidebar {
     Detail,
     Settings,
+    Playlist,
 }
 
 #[derive(Debug, Clone)]
