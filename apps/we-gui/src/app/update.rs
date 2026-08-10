@@ -647,6 +647,7 @@ fn migrate_legacy_shuffle_if_needed(app: &mut App) -> Task<Message> {
             app.playlist_selected = app.launch_settings.playlists.active.clone();
             sync_playlist_editor_inputs(app);
             if persist_playlist_changes(app) {
+                synchronize_migrated_playlist_with_running_daemon(app);
                 app.playlist_migration_completed = true;
                 queue_preferences_save(app)
             } else {
@@ -793,9 +794,57 @@ fn play_selected_playlist(app: &mut App) -> Task<Message> {
     }
 }
 
+fn synchronize_migrated_playlist_with_running_daemon(app: &mut App) {
+    if !runtime::daemon_is_running() {
+        return;
+    }
+    let Some(name) = app.launch_settings.playlists.active.clone() else {
+        return;
+    };
+
+    if runtime::try_switch(&app.config_path) && runtime::play_playlist(&name) {
+        app.runtime_shutdown = false;
+        app.playback_running = true;
+        app.playback_paused = false;
+        app.runtime_playlist_active = Some(name);
+        app.runtime_playlist_index = None;
+        return;
+    }
+
+    match runtime::restart(&app.config_path, &mut app.runtime_child) {
+        Ok(child) => {
+            app.runtime_child = Some(child);
+            app.runtime_shutdown = false;
+            app.playback_running = true;
+            app.playback_paused = false;
+            app.runtime_playlist_active = Some(name);
+            app.runtime_playlist_index = None;
+        }
+        Err(error) => set_playlist_error(
+            app,
+            format!(
+                "legacy shuffle was migrated but the running daemon could not reload it: {error}"
+            ),
+        ),
+    }
+}
+
+fn playlist_stop_can_be_persisted(command_succeeded: bool, daemon_running: bool) -> bool {
+    command_succeeded || !daemon_running
+}
+
 fn playlist_runtime_action(app: &mut App, action: &str) -> Task<Message> {
     if action == "stop" {
         let daemon_stopped_playlist = runtime::send_playlist_action(action);
+        let daemon_running = !daemon_stopped_playlist && runtime::daemon_is_running();
+        if !playlist_stop_can_be_persisted(daemon_stopped_playlist, daemon_running) {
+            set_playlist_error(
+                app,
+                "the daemon is still running and did not accept the playlist stop command"
+                    .to_string(),
+            );
+            return Task::none();
+        }
         app.launch_settings.playlists.active = None;
         app.runtime_playlist_active = None;
         app.runtime_playlist_index = None;
@@ -906,7 +955,10 @@ fn selected_wallpaper_source(app: &App) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_playback_start, status_section_value, PlaybackStart};
+    use super::{
+        effective_playback_start, playlist_stop_can_be_persisted, status_section_value,
+        PlaybackStart,
+    };
 
     #[test]
     fn appimage_restarts_an_unowned_daemon_before_first_playback() {
@@ -937,5 +989,13 @@ wallpaper_id = "42"
 "#;
         assert_eq!(status_section_value(status, "playlist_runtime", "active"), Some("Running"));
         assert_eq!(status_section_value(status, "playlist_runtime", "index"), Some("2"));
+    }
+
+    #[test]
+    fn playlist_stop_is_only_persisted_after_the_daemon_stops_progressing_or_is_absent() {
+        assert!(playlist_stop_can_be_persisted(true, true));
+        assert!(playlist_stop_can_be_persisted(true, false));
+        assert!(playlist_stop_can_be_persisted(false, false));
+        assert!(!playlist_stop_can_be_persisted(false, true));
     }
 }

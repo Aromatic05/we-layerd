@@ -123,7 +123,7 @@ pub fn stop(child: &mut Option<Child>) -> bool {
     stopped || !daemon_is_running()
 }
 
-fn daemon_is_running() -> bool {
+pub fn daemon_is_running() -> bool {
     layerd_command()
         .ok()
         .and_then(|mut command| command.arg("ctl").arg("status").output().ok())
