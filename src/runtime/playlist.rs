@@ -87,6 +87,7 @@ impl PlaylistRuntime {
     pub(crate) fn configure(&mut self, config: PlaylistConfig, now: Instant) {
         let previous_snapshot = self.snapshot();
         let previous_active = self.active_playlist.clone();
+        let previous_active_definition = self.active_playlist_definition().cloned();
         self.config = config;
         self.active_playlist = self
             .config
@@ -94,6 +95,11 @@ impl PlaylistRuntime {
             .as_ref()
             .filter(|name| self.config.definitions.contains_key(*name))
             .cloned();
+        if self.active_playlist == previous_active
+            && self.active_playlist_definition() == previous_active_definition.as_ref()
+        {
+            return;
+        }
         self.exhausted = false;
 
         if self.active_playlist == previous_active {
@@ -393,8 +399,8 @@ mod tests {
     use super::{load_snapshot, persist_snapshot, AdvanceDirection, PlaylistRuntime};
 
     fn config(mode: PlaylistMode, ids: &[&str]) -> PlaylistConfig {
-        let mut config = PlaylistConfig::default();
-        config.active = Some("daily".to_string());
+        let mut config =
+            PlaylistConfig { active: Some("daily".to_string()), ..PlaylistConfig::default() };
         config.definitions.insert(
             "daily".to_string(),
             Playlist {
@@ -428,6 +434,25 @@ mod tests {
             runtime
                 .due_selection(started + Duration::from_millis(10_600), |_| true)
                 .expect("remaining 600ms expires")
+                .wallpaper_id,
+            "b"
+        );
+    }
+
+    #[test]
+    fn unrelated_playlist_definition_refresh_preserves_active_elapsed_time() {
+        let started = Instant::now();
+        let mut playlist_config = config(PlaylistMode::Repeat, &["a", "b"]);
+        let mut runtime = PlaylistRuntime::new(playlist_config.clone(), 7);
+        runtime.ensure_started(started).expect("playlist starts");
+
+        playlist_config.definitions.insert("later".to_string(), Playlist::default());
+        runtime.configure(playlist_config, started + Duration::from_millis(400));
+
+        assert_eq!(
+            runtime
+                .due_selection(started + Duration::from_millis(1_000), |_| true)
+                .expect("unrelated refresh must not restart the active timer")
                 .wallpaper_id,
             "b"
         );

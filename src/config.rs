@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use we_core::{
     config::{HooksConfig, OutputBinding},
     playlist::PlaylistConfig,
+    profile::ProfileConfig,
     wallpaper::settings::{WallpaperFillMode, WallpaperSettings},
 };
 
@@ -26,6 +27,8 @@ pub struct Config {
     pub playlists: PlaylistConfig,
     #[serde(default)]
     pub outputs: BTreeMap<String, OutputBinding>,
+    #[serde(default)]
+    pub profiles: ProfileConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

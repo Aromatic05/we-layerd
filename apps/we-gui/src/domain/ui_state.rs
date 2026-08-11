@@ -11,6 +11,7 @@ pub(crate) enum Sidebar {
     Detail,
     Settings,
     Playlist,
+    Profile,
 }
 
 #[derive(Debug, Clone)]

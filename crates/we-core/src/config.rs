@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     playlist::PlaylistConfig,
+    profile::ProfileConfig,
     wallpaper::settings::{RenderResolution, WallpaperFillMode, WallpaperSettings},
 };
 
@@ -30,6 +31,8 @@ pub struct AppConfig {
     pub playlists: PlaylistConfig,
     #[serde(default)]
     pub outputs: BTreeMap<String, OutputBinding>,
+    #[serde(default)]
+    pub profiles: ProfileConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,6 +169,7 @@ pub struct LaunchSettings {
     pub wallpapers: BTreeMap<String, WallpaperSettings>,
     pub playlists: PlaylistConfig,
     pub outputs: BTreeMap<String, OutputBinding>,
+    pub profiles: ProfileConfig,
 }
 
 fn default_interactive() -> bool {
@@ -264,6 +268,7 @@ impl Default for LaunchSettings {
             wallpapers: BTreeMap::new(),
             playlists: PlaylistConfig::default(),
             outputs: BTreeMap::new(),
+            profiles: ProfileConfig::default(),
         }
     }
 }
@@ -284,6 +289,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.hooks = settings.hooks.clone();
     cfg.playlists = settings.playlists.clone();
     cfg.outputs = settings.outputs.clone();
+    cfg.profiles = settings.profiles.clone();
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path =
         Path::new(&settings.assets_path).join("assets").display().to_string();
@@ -326,6 +332,7 @@ pub fn build_config_for_wallpaper(
     config.wallpapers = settings.wallpapers.clone();
     config.playlists = settings.playlists.clone();
     config.outputs = settings.outputs.clone();
+    config.profiles = settings.profiles.clone();
     Ok(config)
 }
 
@@ -367,6 +374,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         wallpapers: cfg.wallpapers,
         playlists: cfg.playlists,
         outputs: cfg.outputs,
+        profiles: cfg.profiles,
     })
 }
 
@@ -445,6 +453,81 @@ pub fn save_outputs(path: &Path, outputs: &BTreeMap<String, OutputBinding>) -> R
     let outputs = toml::Value::try_from(outputs).context("failed to serialize output bindings")?;
     root.insert("outputs".to_string(), outputs);
 
+    save_config_document(path, &document)
+}
+
+pub fn save_profiles_and_outputs(
+    path: &Path,
+    profiles: &ProfileConfig,
+    outputs: &BTreeMap<String, OutputBinding>,
+) -> Result<()> {
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    root.insert(
+        "profiles".to_string(),
+        toml::Value::try_from(profiles).context("failed to serialize output profiles")?,
+    );
+    root.insert(
+        "outputs".to_string(),
+        toml::Value::try_from(outputs).context("failed to serialize output bindings")?,
+    );
+    save_config_document(path, &document)
+}
+
+pub fn save_playlists_profiles_and_outputs(
+    path: &Path,
+    playlists: &PlaylistConfig,
+    profiles: &ProfileConfig,
+    outputs: &BTreeMap<String, OutputBinding>,
+) -> Result<()> {
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    root.insert(
+        "playlists".to_string(),
+        toml::Value::try_from(playlists).context("failed to serialize playlists")?,
+    );
+    root.insert(
+        "profiles".to_string(),
+        toml::Value::try_from(profiles).context("failed to serialize output profiles")?,
+    );
+    root.insert(
+        "outputs".to_string(),
+        toml::Value::try_from(outputs).context("failed to serialize output bindings")?,
+    );
+    save_config_document(path, &document)
+}
+
+pub fn save_wallpapers_playlists_profiles_and_outputs(
+    path: &Path,
+    wallpapers: &BTreeMap<String, WallpaperSettings>,
+    playlists: &PlaylistConfig,
+    profiles: &ProfileConfig,
+    outputs: &BTreeMap<String, OutputBinding>,
+) -> Result<()> {
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    root.insert(
+        "wallpapers".to_string(),
+        toml::Value::try_from(wallpapers).context("failed to serialize wallpaper profiles")?,
+    );
+    root.insert(
+        "playlists".to_string(),
+        toml::Value::try_from(playlists).context("failed to serialize playlists")?,
+    );
+    root.insert(
+        "profiles".to_string(),
+        toml::Value::try_from(profiles).context("failed to serialize output profiles")?,
+    );
+    root.insert(
+        "outputs".to_string(),
+        toml::Value::try_from(outputs).context("failed to serialize output bindings")?,
+    );
     save_config_document(path, &document)
 }
 
@@ -584,11 +667,12 @@ mod tests {
 
     use super::{
         build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
-        save_force_scene_audio_loop, save_outputs, save_playlists,
+        save_force_scene_audio_loop, save_outputs, save_playlists, save_profiles_and_outputs,
         save_wallpapers_playlists_and_outputs, HookCommand, HooksConfig, LaunchSettings,
         OutputBinding, ScaleMode,
     };
     use crate::playlist::{Playlist, PlaylistConfig, PlaylistItem, PlaylistMode};
+    use crate::profile::{OutputProfile, ProfileConfig};
     use crate::wallpaper::settings::{
         RenderResolution, Rotation, WallpaperFillMode, WallpaperSettings,
     };
@@ -802,8 +886,8 @@ options_json = "{\"keep\":true}"
         )
         .expect("write config");
 
-        let mut playlists = PlaylistConfig::default();
-        playlists.active = Some("Focus".to_string());
+        let mut playlists =
+            PlaylistConfig { active: Some("Focus".to_string()), ..PlaylistConfig::default() };
         playlists.definitions.insert(
             "Focus".to_string(),
             Playlist {
@@ -880,6 +964,30 @@ options_json = "{\"keep\":true}"
         assert_eq!(loaded.wallpapers, wallpapers);
         assert_eq!(loaded.playlists.active, None);
         assert_eq!(loaded.outputs, outputs);
+
+        let _ = fs::remove_file(path);
+    }
+    #[test]
+    fn profile_and_output_patch_survives_reload_and_preserves_renderer_fallback() {
+        let path = unique_temp_path("profiles.toml");
+        fs::write(&path, "[renderer]\nsource = \"/keep/fallback\"\nassets_path = \"/assets\"\n")
+            .expect("write config");
+        let outputs = std::collections::BTreeMap::from([(
+            "DP-1".to_string(),
+            OutputBinding::wallpaper("42", "/workshop/42"),
+        )]);
+        let mut profiles =
+            ProfileConfig { active: Some("Desk".to_string()), ..ProfileConfig::default() };
+        profiles.definitions.insert("Desk".to_string(), OutputProfile { outputs: outputs.clone() });
+
+        save_profiles_and_outputs(&path, &profiles, &outputs).expect("save profiles and outputs");
+
+        let loaded = load_launch_settings(&path).expect("reload launch settings");
+        assert_eq!(loaded.profiles, profiles);
+        assert_eq!(loaded.outputs, outputs);
+        let document = fs::read_to_string(&path).expect("read config");
+        let value = toml::from_str::<toml::Value>(&document).expect("valid TOML");
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/fallback"));
 
         let _ = fs::remove_file(path);
     }

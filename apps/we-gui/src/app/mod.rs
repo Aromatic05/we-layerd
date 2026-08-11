@@ -147,6 +147,9 @@ mod tests {
             runtime_playlist_active: None,
             runtime_playlist_index: None,
             runtime_outputs: Default::default(),
+            profile_selected: None,
+            profile_new_name_input: String::new(),
+            profile_name_input: String::new(),
             legacy_shuffle: legacy_shuffle(),
             playlist_migration_completed: true,
         };
@@ -239,6 +242,9 @@ mod tests {
             runtime_playlist_active: None,
             runtime_playlist_index: None,
             runtime_outputs: Default::default(),
+            profile_selected: None,
+            profile_new_name_input: String::new(),
+            profile_name_input: String::new(),
             legacy_shuffle: legacy_shuffle(),
             playlist_migration_completed: true,
         };

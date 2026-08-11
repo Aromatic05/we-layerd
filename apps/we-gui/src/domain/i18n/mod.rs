@@ -130,6 +130,14 @@ impl Language {
             (Self::SimplifiedChinese, RuntimeStatus::PlaylistError(detail)) => {
                 format!("播放列表错误：{detail}")
             }
+            (Self::English, RuntimeStatus::ProfileSaved) => "profile saved".to_string(),
+            (Self::SimplifiedChinese, RuntimeStatus::ProfileSaved) => "配置档已保存".to_string(),
+            (Self::English, RuntimeStatus::ProfileError(detail)) => {
+                format!("profile error: {detail}")
+            }
+            (Self::SimplifiedChinese, RuntimeStatus::ProfileError(detail)) => {
+                format!("配置档错误：{detail}")
+            }
         }
     }
 }
@@ -174,6 +182,17 @@ pub(crate) enum Text {
     UseDefaultDuration,
     ActivePlaylist,
     CurrentPlaylistEntry,
+    Profiles,
+    ProfilesSubtitle,
+    NewProfile,
+    CreateProfile,
+    ProfileName,
+    RenameProfile,
+    DeleteProfile,
+    SaveCurrentProfile,
+    ApplyProfile,
+    ProfileOutputs,
+    ProfileEmpty,
     FilterAll,
     FilterWeb,
     FilterScene,

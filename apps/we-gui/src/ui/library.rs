@@ -17,7 +17,7 @@ use crate::{
 
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
     let matches = app.entries.iter().enumerate().filter(|(_, entry)| {
-        app.type_filter.is_none_or(|ty| entry.ty == ty)
+        app.type_filter.map_or(true, |ty| entry.ty == ty)
             && entry.title.to_lowercase().contains(&app.search_query.to_lowercase())
     });
     let entries = matches.collect::<Vec<_>>();
@@ -79,6 +79,12 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                 .style(top_bar_button_style),
         )
         .id("library.playlists"),
+        container(
+            button(text(format!("▦  {}", language.text(Text::Profiles))).size(16))
+                .on_press(Message::ProfilesPressed)
+                .style(top_bar_button_style),
+        )
+        .id("library.profiles"),
         container(
             button(text(format!("⚙  {}", language.text(Text::OpenSettings))).size(16))
                 .on_press(Message::SettingsPressed)

@@ -214,14 +214,6 @@ fn exit_runtime_loop(
     Ok(exit)
 }
 
-pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
-    let outputs = crate::backend::wayland_common::outputs::list_output_names()?;
-    let target_output = outputs
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("compositor did not expose any named wl_output"))?;
-    run_output(ctx, target_output)
-}
-
 pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result<RuntimeLoopExit> {
     if ctx.shutdown_requested.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(RuntimeLoopExit::Stop);
