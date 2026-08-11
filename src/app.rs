@@ -505,6 +505,7 @@ impl RuntimeState {
             "[orchestrator]".to_string(),
             format!("backend = \"{}\"", backend_name(self.backend)),
             format!("phase = \"{}\"", self.phase.as_str()),
+            "multi_output = true".to_string(),
             format!("generation = {}", self.generation),
             format!("source = {:?}", self.source),
         ];
@@ -725,11 +726,39 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
 
     let source_path = expand_tilde(&cfg.renderer.source);
     if cfg.renderer.source.trim().is_empty() {
-        lines.push("ERR renderer.source = empty".to_string());
+        if cfg.outputs.is_empty() {
+            lines.push("ERR renderer.source = empty".to_string());
+        } else {
+            lines.push(format!("OK renderer.source = per-output bindings ({})", cfg.outputs.len()));
+        }
     } else if source_path.is_dir() {
         lines.push(format!("OK renderer.source = {}", source_path.display()));
     } else {
         lines.push(format!("ERR renderer.source = missing {}", source_path.display()));
+    }
+
+    for (output, binding) in &cfg.outputs {
+        if binding.is_ambiguous() {
+            lines.push(format!(
+                "ERR output.{output} = wallpaper and playlist bindings are mutually exclusive"
+            ));
+            continue;
+        }
+        if let Some(source) = binding.source.as_deref() {
+            let source = expand_tilde(source);
+            if source.is_dir() {
+                lines.push(format!("OK output.{output}.source = {}", source.display()));
+            } else {
+                lines.push(format!("ERR output.{output}.source = missing {}", source.display()));
+            }
+        }
+        if let Some(playlist) = binding.playlist.as_deref() {
+            if cfg.playlists.definitions.contains_key(playlist) {
+                lines.push(format!("OK output.{output}.playlist = {playlist}"));
+            } else {
+                lines.push(format!("ERR output.{output}.playlist = missing {playlist}"));
+            }
+        }
     }
 
     if cfg.renderer.assets_path.trim().is_empty() {
@@ -917,13 +946,18 @@ mod tests {
         cfg.renderer.source.clear();
         cfg.renderer.assets_path = "/tmp/assets".to_string();
         let state = std::sync::Arc::new(std::sync::Mutex::new(RuntimeState::new(&cfg)));
+        let desired = std::sync::Arc::new(std::sync::Mutex::new(cfg.clone()));
         let (_tx, rx) = std::sync::mpsc::channel();
-        let stop = AtomicBool::new(false);
+        let (_output_tx, output_rx) = std::sync::mpsc::channel();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
 
-        let err = super::run_runtime_loop(&cfg, &stop, &state, 1, &rx)
+        let err = super::run_runtime_loop(&cfg, desired, &stop, &state, 1, &rx, &output_rx)
             .expect_err("missing source should fail");
 
-        assert_eq!(err.to_string(), "renderer.source is required");
+        assert_eq!(
+            err.to_string(),
+            "renderer.source is required when no per-output bindings are configured"
+        );
     }
 
     #[test]
@@ -939,10 +973,12 @@ mod tests {
         cfg.renderer.assets_path = "/tmp/assets".to_string();
         cfg.renderer.options_json = Some("{invalid".to_string());
         let state = std::sync::Arc::new(std::sync::Mutex::new(RuntimeState::new(&cfg)));
+        let desired = std::sync::Arc::new(std::sync::Mutex::new(cfg.clone()));
         let (_tx, rx) = std::sync::mpsc::channel();
-        let stop = AtomicBool::new(false);
+        let (_output_tx, output_rx) = std::sync::mpsc::channel();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
 
-        let err = super::run_runtime_loop(&cfg, &stop, &state, 1, &rx)
+        let err = super::run_runtime_loop(&cfg, desired, &stop, &state, 1, &rx, &output_rx)
             .expect_err("invalid options_json should fail");
 
         assert!(err.to_string().contains("renderer.options_json must be valid JSON"));

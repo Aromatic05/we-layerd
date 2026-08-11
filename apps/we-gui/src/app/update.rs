@@ -348,16 +348,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                         app.launch_settings.playlists.definitions.keys().next().cloned();
                     sync_playlist_editor_inputs(app);
                     sync_selected_outputs_for_playlist(app);
-                    if persist_playlist_changes(app)
-                        && output_bound
-                        && runtime::daemon_is_running()
-                        && !runtime::try_switch(&app.config_path)
+                    if persist_playlist_changes(app) && output_bound && runtime::daemon_is_running()
                     {
-                        set_playlist_error(
-                            app,
-                            "playlist was deleted but output runtimes could not reload the binding change"
-                                .to_string(),
-                        );
+                        if let Err(error) = reload_running_config(app) {
+                            set_playlist_error(
+                                app,
+                                format!(
+                                    "playlist was deleted but output runtimes could not reload the binding change: {error}"
+                                ),
+                            );
+                        }
                     }
                 }
                 Err(error) => set_playlist_error(app, error),
@@ -771,12 +771,14 @@ fn persist_playlist_changes_and_reload(app: &mut App, edited_name: Option<&str>)
             return false;
         }
     };
-    if reload_running && !runtime::try_switch(&app.config_path) {
-        set_playlist_error(
-            app,
-            "playlist was saved but the running daemon could not reload it".to_string(),
-        );
-        return false;
+    if reload_running {
+        if let Err(error) = reload_running_config(app) {
+            set_playlist_error(
+                app,
+                format!("playlist was saved but the running daemon could not reload it: {error}"),
+            );
+            return false;
+        }
     }
     if reload_running {
         app.runtime_playlist_active = Some(name.to_string());
@@ -788,14 +790,43 @@ fn persist_playlist_changes_and_reload_if(app: &mut App, reload_running: bool) -
     if !persist_playlist_changes(app) {
         return false;
     }
-    if reload_running && !runtime::try_switch(&app.config_path) {
-        set_playlist_error(
-            app,
-            "playlist was saved but the running daemon could not reload it".to_string(),
-        );
-        return false;
+    if reload_running {
+        if let Err(error) = reload_running_config(app) {
+            set_playlist_error(
+                app,
+                format!("playlist was saved but the running daemon could not reload it: {error}"),
+            );
+            return false;
+        }
     }
     true
+}
+
+fn reload_running_config(app: &mut App) -> Result<(), String> {
+    if !runtime::daemon_is_running() {
+        return Ok(());
+    }
+    if !multi_output_mode(app) {
+        return runtime::try_switch(&app.config_path)
+            .then_some(())
+            .ok_or_else(|| "switch-config command failed".to_string());
+    }
+
+    let forced_renderer_library =
+        std::env::var_os(we_core::install_layout::RENDERER_LIBRARY_OVERRIDE_ENV).is_some();
+    let must_restart_unowned = forced_renderer_library && app.runtime_child.is_none();
+    let supports_multi_output = match runtime::fetch_status_sync()? {
+        runtime::DaemonStatus::Running(status) => daemon_status_supports_multi_output(&status),
+        runtime::DaemonStatus::NotRunning => return Ok(()),
+        runtime::DaemonStatus::EmptyResponse => false,
+    };
+    if supports_multi_output && !must_restart_unowned && runtime::try_switch(&app.config_path) {
+        return Ok(());
+    }
+
+    let child = runtime::restart(&app.config_path, &mut app.runtime_child)?;
+    app.runtime_child = Some(child);
+    Ok(())
 }
 
 fn set_playlist_error(app: &mut App, error: String) {
@@ -902,7 +933,11 @@ fn play_selected_playlist(app: &mut App) -> Task<Message> {
         return Task::none();
     }
 
-    if !app.outputs.is_empty() {
+    if multi_output_mode(app) {
+        if app.outputs.is_empty() {
+            set_playlist_error(app, "no connected displays are available".to_string());
+            return Task::none();
+        }
         if app.selected_outputs.is_empty() {
             set_playlist_error(app, "select at least one display for the playlist".to_string());
             return Task::none();
@@ -1049,7 +1084,7 @@ fn playlist_stop_can_be_persisted(command_succeeded: bool, daemon_running: bool)
 }
 
 fn playlist_runtime_action(app: &mut App, action: &str) -> Task<Message> {
-    if !app.outputs.is_empty() {
+    if multi_output_mode(app) {
         let Some(playlist_name) = app.playlist_selected.clone() else {
             set_playlist_error(app, "select a playlist first".to_string());
             return Task::none();
@@ -1150,6 +1185,10 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
         return Task::none();
     }
 
+    if multi_output_mode(app) {
+        return start_or_reconfigure_multi_output(app);
+    }
+
     if let Err(error) = runtime::reap(&mut app.runtime_child) {
         eprintln!("failed to query daemon child status: {error}");
     }
@@ -1189,8 +1228,11 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
 }
 
 fn bind_selected_wallpaper_outputs(app: &mut App) -> Result<(), String> {
-    if app.outputs.is_empty() {
+    if !multi_output_mode(app) {
         return Ok(());
+    }
+    if app.outputs.is_empty() {
+        return Err("no connected displays are available".to_string());
     }
     if app.selected_outputs.is_empty() {
         return Err("select at least one display before applying the wallpaper".to_string());
@@ -1223,11 +1265,35 @@ fn start_or_reconfigure_multi_output(app: &mut App) -> Task<Message> {
     if let Err(error) = runtime::reap(&mut app.runtime_child) {
         eprintln!("failed to query daemon child status: {error}");
     }
-    if runtime::try_switch(&app.config_path) {
-        app.playback_running = true;
-        app.playback_paused = false;
-        app.runtime_status = RuntimeStatus::SwitchedDaemon;
-        return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
+    if runtime::daemon_is_running() {
+        let forced_renderer_library =
+            std::env::var_os(we_core::install_layout::RENDERER_LIBRARY_OVERRIDE_ENV).is_some();
+        let must_restart_unowned = forced_renderer_library && app.runtime_child.is_none();
+        let supports_multi_output = match runtime::fetch_status_sync() {
+            Ok(runtime::DaemonStatus::Running(status)) => {
+                daemon_status_supports_multi_output(&status)
+            }
+            _ => false,
+        };
+        if supports_multi_output && !must_restart_unowned && runtime::try_switch(&app.config_path) {
+            app.playback_running = true;
+            app.playback_paused = false;
+            app.runtime_status = RuntimeStatus::SwitchedDaemon;
+            return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
+        }
+        return match runtime::restart(&app.config_path, &mut app.runtime_child) {
+            Ok(child) => {
+                app.runtime_child = Some(child);
+                app.playback_running = true;
+                app.playback_paused = false;
+                app.runtime_status = RuntimeStatus::StartedDaemon;
+                Task::perform(runtime::fetch_status(), Message::StatusLoaded)
+            }
+            Err(error) => {
+                app.runtime_status = RuntimeStatus::StartFailed(error);
+                Task::none()
+            }
+        };
     }
     match runtime::start(&app.config_path) {
         Ok(child) => {
@@ -1242,6 +1308,14 @@ fn start_or_reconfigure_multi_output(app: &mut App) -> Task<Message> {
             Task::none()
         }
     }
+}
+
+fn multi_output_mode(app: &App) -> bool {
+    !app.outputs.is_empty() || !app.launch_settings.outputs.is_empty()
+}
+
+fn daemon_status_supports_multi_output(status: &str) -> bool {
+    status_section_value(status, "orchestrator", "multi_output") == Some("true")
 }
 
 fn effective_playback_start(
@@ -1313,8 +1387,8 @@ fn output_runtime_state(runtime: &toml::value::Table) -> OutputRuntimeState {
 #[cfg(test)]
 mod tests {
     use super::{
-        effective_playback_start, parse_output_runtime_states, playlist_stop_can_be_persisted,
-        status_section_value, PlaybackStart,
+        daemon_status_supports_multi_output, effective_playback_start, parse_output_runtime_states,
+        playlist_stop_can_be_persisted, status_section_value, PlaybackStart,
     };
 
     #[test]
@@ -1393,5 +1467,13 @@ playlist_index = 4
         assert_eq!(outputs["DP-1"].playlist_index, Some(1));
         assert_eq!(outputs["HDMI-A-1"].source, "/wallpapers/two");
         assert_eq!(outputs["HDMI-A-1"].playlist_index, Some(4));
+    }
+
+    #[test]
+    fn multi_output_capability_requires_explicit_orchestrator_flag() {
+        assert!(daemon_status_supports_multi_output(
+            "[orchestrator]\nphase = \"running\"\nmulti_output = true\n"
+        ));
+        assert!(!daemon_status_supports_multi_output("[orchestrator]\nphase = \"running\"\n"));
     }
 }

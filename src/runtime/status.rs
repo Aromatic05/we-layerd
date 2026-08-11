@@ -257,6 +257,8 @@ fn scale_mode_name(scale_mode: ScaleMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use we_renderer::{DiagnosticEntry, DiagnosticSeverity, RendererDiagnostics};
 
     use super::{RuntimeDiagnostics, RuntimeStatusSnapshot};
@@ -285,5 +287,24 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(json).expect("valid diagnostics JSON");
         assert_eq!(payload["entries"][0]["source"], "abi.render-config.msaa");
         assert_eq!(document["runtime"]["renderer_warning_count"].as_integer(), Some(1));
+    }
+
+    #[test]
+    fn output_scoped_status_round_trips_named_output_source_and_playlist_cursor() {
+        let snapshot = RuntimeStatusSnapshot {
+            output_name: "DP-1".to_string(),
+            output_source: "/wallpapers/42".to_string(),
+            output_playlist_active: Some("Focus".to_string()),
+            output_playlist_index: Some(3),
+            ..RuntimeStatusSnapshot::default()
+        };
+
+        let rendered = snapshot.render_output_toml("DP-1");
+        let document = toml::from_str::<toml::Value>(&rendered).expect("valid output status TOML");
+        let runtime = &document["output_runtime"]["DP-1"]["runtime"];
+        assert_eq!(runtime["output_name"].as_str(), Some("DP-1"));
+        assert_eq!(runtime["source"].as_str(), Some("/wallpapers/42"));
+        assert_eq!(runtime["playlist_active"].as_str(), Some("Focus"));
+        assert_eq!(runtime["playlist_index"].as_integer(), Some(3));
     }
 }

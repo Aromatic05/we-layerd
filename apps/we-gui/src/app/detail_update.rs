@@ -136,7 +136,7 @@ pub(crate) fn persist_wallpaper_profiles(app: &App) -> Result<(), String> {
 }
 
 pub(crate) fn persist_playback_config(app: &App) -> Result<(), String> {
-    if !app.outputs.is_empty() {
+    if !app.outputs.is_empty() || !app.launch_settings.outputs.is_empty() {
         return config::persist_wallpapers_playlists_and_outputs(
             &app.config_path,
             &app.launch_settings.wallpapers,

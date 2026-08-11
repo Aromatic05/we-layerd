@@ -28,7 +28,7 @@ options_json = '''
 # command = "~/.local/bin/we-theme-sync"
 # args = []
 
-# Optional daemon-managed playlist. The GUI will manage these entries in a later phase.
+# Optional daemon-managed playlist. The GUI can create and edit these entries.
 # [playlists]
 # active = "Daily"
 #
@@ -39,3 +39,12 @@ options_json = '''
 # [[playlists.definitions.Daily.items]]
 # wallpaper_id = "1234567890"
 # source = "/path/to/Steam/steamapps/workshop/content/431960/1234567890"
+
+# Optional per-output layer-shell bindings. Keys are stable wl_output.name values.
+# A binding is either wallpaper_id + source OR playlist, never both.
+# [outputs."DP-1"]
+# wallpaper_id = "1234567890"
+# source = "/path/to/Steam/steamapps/workshop/content/431960/1234567890"
+#
+# [outputs."HDMI-A-1"]
+# playlist = "Daily"
