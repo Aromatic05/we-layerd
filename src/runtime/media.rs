@@ -15,7 +15,21 @@ pub(crate) struct MediaCandidate {
 }
 
 pub(crate) fn choose_media_candidate(_candidates: &[MediaCandidate]) -> Option<MediaCandidate> {
-    todo!("implemented after the behavior tests are established")
+    let mut candidates = _candidates.to_vec();
+    candidates.sort_by(|left, right| {
+        media_playback_rank(left.playback)
+            .cmp(&media_playback_rank(right.playback))
+            .then_with(|| left.bus_name.cmp(&right.bus_name))
+    });
+    candidates.into_iter().next()
+}
+
+fn media_playback_rank(state: MediaPlaybackState) -> u8 {
+    match state {
+        MediaPlaybackState::Playing => 0,
+        MediaPlaybackState::Paused => 1,
+        MediaPlaybackState::Stopped => 2,
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -26,10 +40,11 @@ pub(crate) struct MediaBridgeState {
 impl MediaBridgeState {
     pub(crate) fn update(
         &mut self,
-        _enabled: bool,
-        _candidates: &[MediaCandidate],
+        enabled: bool,
+        candidates: &[MediaCandidate],
     ) -> Option<MediaCandidate> {
-        todo!("implemented after the behavior tests are established")
+        self.current = enabled.then(|| choose_media_candidate(candidates)).flatten();
+        self.current.clone()
     }
 }
 

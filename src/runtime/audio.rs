@@ -10,12 +10,65 @@ pub(crate) struct StereoSpectrum {
 
 impl StereoSpectrum {
     pub(crate) fn flattened(&self) -> Arc<[f32]> {
-        todo!("implemented after the behavior tests are established")
+        let mut values = Vec::with_capacity(AUDIO_SPECTRUM_BINS * 2);
+        values.extend_from_slice(&self.left);
+        values.extend_from_slice(&self.right);
+        values.into()
     }
 }
 
-pub(crate) fn spectrum_from_interleaved_pcm(_samples: &[f32], _sample_rate: u32) -> StereoSpectrum {
-    todo!("implemented after the behavior tests are established")
+pub(crate) fn spectrum_from_interleaved_pcm(samples: &[f32], sample_rate: u32) -> StereoSpectrum {
+    let mut left = [0.0; AUDIO_SPECTRUM_BINS];
+    let mut right = [0.0; AUDIO_SPECTRUM_BINS];
+    if sample_rate == 0 || samples.len() < 4 {
+        return StereoSpectrum { left, right };
+    }
+
+    let frame_count = (samples.len() / 2).min(4096);
+    if frame_count < 2 {
+        return StereoSpectrum { left, right };
+    }
+    let start_frame = samples.len() / 2 - frame_count;
+    let mut window_sum = 0.0_f32;
+    let mut window = Vec::with_capacity(frame_count);
+    for index in 0..frame_count {
+        let phase = std::f32::consts::TAU * index as f32 / (frame_count - 1) as f32;
+        let value = 0.5 - 0.5 * phase.cos();
+        window.push(value);
+        window_sum += value;
+    }
+    if window_sum <= f32::EPSILON {
+        return StereoSpectrum { left, right };
+    }
+
+    let nyquist = sample_rate as f32 * 0.5;
+    for exported_bin in 0..AUDIO_SPECTRUM_BINS {
+        let frequency = nyquist * exported_bin as f32 / AUDIO_SPECTRUM_BINS as f32;
+        let radians_per_sample = std::f32::consts::TAU * frequency / sample_rate as f32;
+        let mut left_re = 0.0_f32;
+        let mut left_im = 0.0_f32;
+        let mut right_re = 0.0_f32;
+        let mut right_im = 0.0_f32;
+
+        for (offset, weight) in window.iter().copied().enumerate() {
+            let frame = start_frame + offset;
+            let angle = radians_per_sample * offset as f32;
+            let cos = angle.cos();
+            let sin = angle.sin();
+            let left_sample = samples[frame * 2] * weight;
+            let right_sample = samples[frame * 2 + 1] * weight;
+            left_re += left_sample * cos;
+            left_im -= left_sample * sin;
+            right_re += right_sample * cos;
+            right_im -= right_sample * sin;
+        }
+
+        let normalize = 2.0 / window_sum;
+        left[exported_bin] = (left_re.hypot(left_im) * normalize).clamp(0.0, 1.0);
+        right[exported_bin] = (right_re.hypot(right_im) * normalize).clamp(0.0, 1.0);
+    }
+
+    StereoSpectrum { left, right }
 }
 
 #[cfg(test)]

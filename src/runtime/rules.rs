@@ -30,11 +30,40 @@ pub(crate) struct RuntimePolicy {
 }
 
 pub(crate) fn policies_for_outputs(
-    _rules: RuleSet,
-    _outputs: impl IntoIterator<Item = String>,
-    _toplevels: &[ToplevelActivity],
+    rules: RuleSet,
+    outputs: impl IntoIterator<Item = String>,
+    toplevels: &[ToplevelActivity],
 ) -> BTreeMap<String, RuntimePolicy> {
-    todo!("implemented after the behavior tests are established")
+    let mut policies = outputs
+        .into_iter()
+        .map(|output| (output, RuntimePolicy::default()))
+        .collect::<BTreeMap<_, _>>();
+
+    for toplevel in toplevels {
+        for output in &toplevel.outputs {
+            let Some(policy) = policies.get_mut(output) else {
+                continue;
+            };
+            if toplevel.activated {
+                apply_rule_action(policy, rules.focused);
+            }
+            if toplevel.maximized {
+                apply_rule_action(policy, rules.maximized);
+            }
+            if toplevel.fullscreen {
+                apply_rule_action(policy, rules.fullscreen);
+            }
+        }
+    }
+    policies
+}
+
+fn apply_rule_action(policy: &mut RuntimePolicy, action: RuleAction) {
+    match action {
+        RuleAction::Keep => {}
+        RuleAction::Mute => policy.mute = true,
+        RuleAction::Pause => policy.pause = true,
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -44,16 +73,16 @@ pub(crate) struct PauseState {
 }
 
 impl PauseState {
-    pub(crate) fn set_manual(&mut self, _paused: bool) {
-        todo!("implemented after the behavior tests are established")
+    pub(crate) fn set_manual(&mut self, paused: bool) {
+        self.manual = paused;
     }
 
-    pub(crate) fn set_rule(&mut self, _paused: bool) {
-        todo!("implemented after the behavior tests are established")
+    pub(crate) fn set_rule(&mut self, paused: bool) {
+        self.rule = paused;
     }
 
     pub(crate) fn effective(self) -> bool {
-        todo!("implemented after the behavior tests are established")
+        self.manual || self.rule
     }
 }
 
