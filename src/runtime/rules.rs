@@ -275,6 +275,12 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for ForeignToplevelProbe {
             _ => {}
         }
     }
+
+    // `toplevel` is opcode 0 and creates a handle object. wayland-client requires
+    // explicit child user-data initialization for event-created protocol objects.
+    wayland_client::event_created_child!(ForeignToplevelProbe, ZwlrForeignToplevelManagerV1, [
+        0 => (ZwlrForeignToplevelHandleV1, ()),
+    ]);
 }
 
 impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for ForeignToplevelProbe {
