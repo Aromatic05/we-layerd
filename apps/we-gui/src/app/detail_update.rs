@@ -13,11 +13,6 @@ pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) ->
     use wallpaper_detail::{DetailMessage, ResolutionMode};
 
     if matches!(message, DetailMessage::Apply) {
-        if let Err(error) = persist_current_config(app) {
-            app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
-            eprintln!("failed to save config: {error}");
-            return Task::none();
-        }
         return super::update::update(app, Message::PlayPressed);
     }
     match message {
@@ -108,7 +103,7 @@ pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) ->
         }
         DetailMessage::ResetProperties => profile.user_properties.clear(),
     }
-    if let Err(error) = persist_current_config(app) {
+    if let Err(error) = persist_wallpaper_profiles(app) {
         app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
         eprintln!("failed to save config: {error}");
     }
@@ -136,7 +131,19 @@ pub(crate) fn set_resolution_inputs(app: &mut App, profile: &WallpaperSettings) 
     }
 }
 
-pub(crate) fn persist_current_config(app: &App) -> Result<(), String> {
+pub(crate) fn persist_wallpaper_profiles(app: &App) -> Result<(), String> {
+    config::persist_wallpapers(&app.config_path, &app.launch_settings.wallpapers)
+}
+
+pub(crate) fn persist_playback_config(app: &App) -> Result<(), String> {
+    if !app.outputs.is_empty() {
+        return config::persist_wallpapers_playlists_and_outputs(
+            &app.config_path,
+            &app.launch_settings.wallpapers,
+            &app.launch_settings.playlists,
+            &app.launch_settings.outputs,
+        );
+    }
     let Some(selected_id) = app.selected_id.as_deref() else {
         return Ok(());
     };

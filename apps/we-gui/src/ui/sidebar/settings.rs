@@ -238,29 +238,43 @@ fn renderer_diagnostics(runtime_status: &RuntimeStatus) -> Vec<RendererDiagnosti
     let Ok(document) = toml::from_str::<toml::Value>(raw) else {
         return Vec::new();
     };
-    let Some(json) = document
-        .get("runtime")
-        .and_then(|runtime| runtime.get("renderer_diagnostics_json"))
-        .and_then(toml::Value::as_str)
-    else {
-        return Vec::new();
+    let mut diagnostics = Vec::new();
+    if let Some(runtime) = document.get("runtime").and_then(toml::Value::as_table) {
+        append_renderer_diagnostics(&mut diagnostics, runtime, None);
+    }
+    if let Some(outputs) = document.get("output_runtime").and_then(toml::Value::as_table) {
+        for (output, value) in outputs {
+            if let Some(runtime) = value.get("runtime").and_then(toml::Value::as_table) {
+                append_renderer_diagnostics(&mut diagnostics, runtime, Some(output));
+            }
+        }
+    }
+    diagnostics
+}
+
+fn append_renderer_diagnostics(
+    diagnostics: &mut Vec<RendererDiagnosticView>,
+    runtime: &toml::value::Table,
+    output: Option<&str>,
+) {
+    let Some(json) = runtime.get("renderer_diagnostics_json").and_then(toml::Value::as_str) else {
+        return;
     };
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(json) else {
-        return Vec::new();
+        return;
     };
-    payload
-        .get("entries")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            Some(RendererDiagnosticView {
-                severity: entry.get("severity")?.as_str()?.to_string(),
-                source: entry.get("source")?.as_str()?.to_string(),
-                message: entry.get("message")?.as_str()?.to_string(),
-            })
+    let Some(entries) = payload.get("entries").and_then(serde_json::Value::as_array) else {
+        return;
+    };
+    diagnostics.extend(entries.iter().filter_map(|entry| {
+        let source = entry.get("source")?.as_str()?;
+        Some(RendererDiagnosticView {
+            severity: entry.get("severity")?.as_str()?.to_string(),
+            source: output
+                .map_or_else(|| source.to_string(), |output| format!("{output} · {source}")),
+            message: entry.get("message")?.as_str()?.to_string(),
         })
-        .collect()
+    }));
 }
 
 fn renderer_diagnostics_error(runtime_status: &RuntimeStatus) -> Option<String> {
@@ -268,12 +282,28 @@ fn renderer_diagnostics_error(runtime_status: &RuntimeStatus) -> Option<String> 
         return None;
     };
     let document = toml::from_str::<toml::Value>(raw).ok()?;
-    document
-        .get("runtime")?
-        .get("renderer_diagnostics_error")?
-        .as_str()
+    let mut errors = Vec::new();
+    if let Some(error) = document
+        .get("runtime")
+        .and_then(|runtime| runtime.get("renderer_diagnostics_error"))
+        .and_then(toml::Value::as_str)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
+    {
+        errors.push(error.to_string());
+    }
+    if let Some(outputs) = document.get("output_runtime").and_then(toml::Value::as_table) {
+        for (output, value) in outputs {
+            if let Some(error) = value
+                .get("runtime")
+                .and_then(|runtime| runtime.get("renderer_diagnostics_error"))
+                .and_then(toml::Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
+                errors.push(format!("{output}: {error}"));
+            }
+        }
+    }
+    (!errors.is_empty()).then(|| errors.join("\n"))
 }
 
 fn format_path_for_display(path: &str, limit: usize) -> String {

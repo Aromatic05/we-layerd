@@ -99,15 +99,50 @@ impl Default for PresentationStatus {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RuntimeStatusSnapshot {
+    pub(crate) output_name: String,
+    pub(crate) output_source: String,
+    pub(crate) output_playlist_active: Option<String>,
+    pub(crate) output_playlist_index: Option<usize>,
+    pub(crate) remove_output: bool,
     pub(crate) runtime: RuntimeDiagnostics,
     pub(crate) presentation: PresentationStatus,
     pub(crate) frame_stats: FrameStats,
 }
 
 impl RuntimeStatusSnapshot {
+    pub(crate) fn removed_output(output_name: String) -> Self {
+        Self { output_name, remove_output: true, ..Self::default() }
+    }
+
     pub(crate) fn render_toml(&self) -> String {
+        self.render_toml_with_headers("[runtime]".to_string(), "[presentation]".to_string())
+    }
+
+    pub(crate) fn render_output_toml(&self, output_name: &str) -> String {
+        let output_key = toml::Value::String(output_name.to_string()).to_string();
+        self.render_toml_with_headers(
+            format!("[output_runtime.{output_key}.runtime]"),
+            format!("[output_runtime.{output_key}.presentation]"),
+        )
+    }
+
+    fn render_toml_with_headers(
+        &self,
+        runtime_header: String,
+        presentation_header: String,
+    ) -> String {
         let mut lines = vec![
-            "[runtime]".to_string(),
+            runtime_header,
+            format!("output_name = {}", toml::Value::String(self.output_name.clone())),
+            format!("source = {}", toml::Value::String(self.output_source.clone())),
+            format!(
+                "playlist_active = {}",
+                toml::Value::String(self.output_playlist_active.clone().unwrap_or_default())
+            ),
+            format!(
+                "playlist_index = {}",
+                self.output_playlist_index.map(|index| index as i64).unwrap_or(-1)
+            ),
             format!("wayland_connected = {}", self.runtime.wayland_connected),
             format!("dmabuf_global_available = {}", self.runtime.dmabuf_global_available),
             format!("dmabuf_global_version = {}", self.runtime.dmabuf_global_version),
@@ -159,7 +194,7 @@ impl RuntimeStatusSnapshot {
                 )
             ),
             String::new(),
-            "[presentation]".to_string(),
+            presentation_header,
             format!("configured = {}", self.presentation.configured),
             format!("logical_width = {}", self.presentation.logical_width),
             format!("logical_height = {}", self.presentation.logical_height),

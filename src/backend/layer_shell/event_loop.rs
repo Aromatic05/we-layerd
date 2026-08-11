@@ -8,8 +8,9 @@ use anyhow::{Context, Result};
 use tracing::info;
 use wayland_backend::client::WaylandError;
 use wayland_client::{
-    protocol::{wl_compositor::WlCompositor, wl_seat::WlSeat, wl_shm::WlShm},
-    Connection,
+    globals::GlobalList,
+    protocol::{wl_compositor::WlCompositor, wl_output::WlOutput, wl_seat::WlSeat, wl_shm::WlShm},
+    Connection, EventQueue, QueueHandle,
 };
 use wayland_protocols::wp::{
     fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
@@ -144,6 +145,52 @@ fn stop_and_drop_session(state: &mut LayerShellState) {
     info!("session.stop end");
 }
 
+fn bind_named_output(
+    globals: &GlobalList,
+    event_queue: &mut EventQueue<LayerShellState>,
+    qh: &QueueHandle<LayerShellState>,
+    state: &mut LayerShellState,
+    target_output: &str,
+) -> Result<(WlOutput, u32)> {
+    let output_globals = globals
+        .contents()
+        .clone_list()
+        .into_iter()
+        .filter(|global| global.interface == "wl_output")
+        .collect::<Vec<_>>();
+    if output_globals.is_empty() {
+        anyhow::bail!("compositor did not expose any wl_output globals");
+    }
+
+    state.discovered_output_names.clear();
+    let mut probes = Vec::with_capacity(output_globals.len());
+    for global in &output_globals {
+        if global.version < 4 {
+            anyhow::bail!("wl_output global {} does not expose stable output names", global.name);
+        }
+        probes.push(globals.registry().bind::<WlOutput, _, _>(global.name, 4, qh, global.name));
+    }
+    event_queue
+        .roundtrip(state)
+        .with_context(|| format!("failed to resolve Wayland output '{target_output}'"))?;
+
+    let global_name = state
+        .discovered_output_names
+        .iter()
+        .find_map(|(global_name, name)| (name == target_output).then_some(*global_name))
+        .ok_or_else(|| {
+            anyhow::anyhow!("Wayland output '{target_output}' is no longer available")
+        })?;
+    let global = output_globals
+        .iter()
+        .find(|global| global.name == global_name)
+        .ok_or_else(|| anyhow::anyhow!("Wayland output '{target_output}' disappeared"))?;
+    let selected =
+        globals.registry().bind::<WlOutput, _, _>(global.name, global.version.min(4), qh, ());
+    drop(probes);
+    Ok((selected, output_globals.len() as u32))
+}
+
 fn exit_runtime_loop(
     conn: &Connection,
     state: &mut LayerShellState,
@@ -168,6 +215,14 @@ fn exit_runtime_loop(
 }
 
 pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
+    let outputs = crate::backend::wayland_common::outputs::list_output_names()?;
+    let target_output = outputs
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("compositor did not expose any named wl_output"))?;
+    run_output(ctx, target_output)
+}
+
+pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result<RuntimeLoopExit> {
     if ctx.shutdown_requested.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(RuntimeLoopExit::Stop);
     }
@@ -214,6 +269,7 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     let output = OutputState::new(cfg.general.scale_mode);
     let presentation_geometry = output.geometry;
     let mut state = LayerShellState {
+        output_name: target_output.to_string(),
         objects: WaylandObjects::default(),
         output,
         presentation_geometry,
@@ -250,6 +306,7 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         paused: false,
         stopping: false,
         pending_input_events: crate::runtime::input::PendingInput::default(),
+        discovered_output_names: Default::default(),
     };
     state.output.render_size_override =
         match (cfg.renderer.render_width, cfg.renderer.render_height) {
@@ -257,12 +314,16 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
             _ => None,
         };
 
+    let (selected_output, output_count) =
+        bind_named_output(&globals, &mut event_queue, &qh, &mut state, target_output)?;
+
     surface::init_wayland(
         &conn,
         &qh,
         &mut state,
-        &globals,
         compositor,
+        selected_output,
+        output_count,
         layer_shell,
         shm,
         dmabuf,

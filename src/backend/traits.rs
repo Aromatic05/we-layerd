@@ -1,10 +1,10 @@
-use std::sync::{atomic::AtomicBool, mpsc};
+use std::sync::{atomic::AtomicBool, mpsc, Arc, Mutex};
 
 use anyhow::Result;
 
 use crate::{
     config::Config,
-    ipc::{ControlCommand, RuntimeLoopExit},
+    ipc::{ControlCommand, OutputPlaylistRequest, RuntimeLoopExit},
     runtime::status::RuntimeStatusSnapshot,
 };
 
@@ -34,8 +34,10 @@ pub struct BackendCapabilities {
 
 pub struct BackendContext<'a> {
     pub cfg: &'a Config,
-    pub shutdown_requested: &'a AtomicBool,
+    pub desired_cfg: Arc<Mutex<Config>>,
+    pub shutdown_requested: Arc<AtomicBool>,
     pub control_rx: &'a mpsc::Receiver<ControlCommand>,
+    pub output_playlist_rx: Option<&'a mpsc::Receiver<OutputPlaylistRequest>>,
     pub status_sink: &'a mut dyn FnMut(RuntimeStatusSnapshot),
 }
 

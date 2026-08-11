@@ -1,6 +1,7 @@
 use std::{path::Path, time::Duration};
 
 use iced::{window, Task};
+use we_core::config::OutputBinding;
 use we_core::wallpaper::{
     properties::UserPropertySchema,
     settings::{inherited_final_output_msaa, WallpaperSettings},
@@ -21,7 +22,8 @@ use crate::{
 };
 
 use super::{
-    detail_update::{persist_current_config, set_resolution_inputs},
+    detail_update::{persist_playback_config, persist_wallpaper_profiles, set_resolution_inputs},
+    state::OutputRuntimeState,
     App, Message,
 };
 
@@ -241,6 +243,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             };
             if app.sidebar == Some(Sidebar::Playlist) {
                 ensure_playlist_selection(app);
+                sync_selected_outputs_for_playlist(app);
             }
             Task::none()
         }
@@ -248,6 +251,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             if app.launch_settings.playlists.definitions.contains_key(&name) {
                 app.playlist_selected = Some(name);
                 sync_playlist_editor_inputs(app);
+                sync_selected_outputs_for_playlist(app);
             }
             Task::none()
         }
@@ -262,6 +266,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.playlist_selected = Some(name);
                     app.playlist_new_name_input.clear();
                     sync_playlist_editor_inputs(app);
+                    sync_selected_outputs_for_playlist(app);
                     persist_playlist_changes(app);
                 }
                 Err(error) => set_playlist_error(app, error),
@@ -286,10 +291,18 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             let next = app.playlist_name_input.trim().to_string();
             match rename_playlist(&mut app.launch_settings.playlists, &current, &next) {
                 Ok(()) => {
+                    for binding in app.launch_settings.outputs.values_mut() {
+                        if binding.playlist.as_deref() == Some(current.as_str()) {
+                            binding.playlist = Some(next.clone());
+                        }
+                    }
                     app.playlist_selected = Some(next.clone());
                     sync_playlist_editor_inputs(app);
+                    sync_selected_outputs_for_playlist(app);
                     if persist_playlist_changes_and_reload_if(app, was_running) && was_running {
-                        app.runtime_playlist_active = Some(next);
+                        if app.launch_settings.playlists.active.as_deref() == Some(next.as_str()) {
+                            app.runtime_playlist_active = Some(next);
+                        }
                     }
                 }
                 Err(error) => set_playlist_error(app, error),
@@ -300,14 +313,19 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             let Some(name) = app.playlist_selected.clone() else {
                 return Task::none();
             };
-            let was_running = match playlist_is_running(app, &name) {
+            let output_bound = app
+                .launch_settings
+                .outputs
+                .values()
+                .any(|binding| binding.playlist.as_deref() == Some(name.as_str()));
+            let globally_running = match global_playlist_is_running(app, &name) {
                 Ok(value) => value,
                 Err(error) => {
                     set_playlist_error(app, error);
                     return Task::none();
                 }
             };
-            if was_running {
+            if globally_running {
                 let stopped = runtime::send_playlist_action("stop");
                 let daemon_running = !stopped && runtime::daemon_is_running();
                 if !playlist_stop_can_be_persisted(stopped, daemon_running) {
@@ -323,10 +341,24 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             match delete_playlist(&mut app.launch_settings.playlists, &name) {
                 Ok(()) => {
+                    app.launch_settings
+                        .outputs
+                        .retain(|_, binding| binding.playlist.as_deref() != Some(name.as_str()));
                     app.playlist_selected =
                         app.launch_settings.playlists.definitions.keys().next().cloned();
                     sync_playlist_editor_inputs(app);
-                    persist_playlist_changes(app);
+                    sync_selected_outputs_for_playlist(app);
+                    if persist_playlist_changes(app)
+                        && output_bound
+                        && runtime::daemon_is_running()
+                        && !runtime::try_switch(&app.config_path)
+                    {
+                        set_playlist_error(
+                            app,
+                            "playlist was deleted but output runtimes could not reload the binding change"
+                                .to_string(),
+                        );
+                    }
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -465,6 +497,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.playback_running = status_value(&text, "phase") == Some("running");
                     app.playback_paused = status_value(&text, "phase") == Some("paused");
                     if app.playback_running || app.playback_paused {
+                        app.runtime_outputs = parse_output_runtime_states(&text);
                         app.running_source = status_value(&text, "source").map(str::to_string);
                         app.runtime_playlist_active =
                             status_section_value(&text, "playlist_runtime", "active")
@@ -496,8 +529,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::StatusTick => Task::perform(runtime::fetch_status(), Message::StatusLoaded),
         Message::OutputsLoaded(result) => {
             if let Ok(outputs) = result {
-                app.selected_outputs = outputs.iter().cloned().collect();
                 app.outputs = outputs;
+                if app.sidebar == Some(Sidebar::Playlist) && app.playlist_selected.is_some() {
+                    sync_selected_outputs_for_playlist(app);
+                } else if app.selected_id.is_some() {
+                    sync_selected_outputs_for_wallpaper(app);
+                } else if app.launch_settings.outputs.is_empty() {
+                    app.selected_outputs = app.outputs.iter().cloned().collect();
+                } else {
+                    app.selected_outputs.clear();
+                }
             }
             Task::none()
         }
@@ -649,7 +690,8 @@ fn select_wallpaper(app: &mut App, index: usize, show_details: bool) -> bool {
         })
         .clone();
     set_resolution_inputs(app, &profile);
-    if let Err(error) = config::persist_selected(&app.config_path, &app.launch_settings, &entry) {
+    sync_selected_outputs_for_wallpaper(app);
+    if let Err(error) = persist_wallpaper_profiles(app) {
         app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
         eprintln!("failed to save config: {error}");
     }
@@ -698,7 +740,11 @@ fn migrate_legacy_shuffle_if_needed(app: &mut App) -> Task<Message> {
 }
 
 fn persist_playlist_changes(app: &mut App) -> bool {
-    match config::persist_playlists(&app.config_path, &app.launch_settings.playlists) {
+    match config::persist_playlists_and_outputs(
+        &app.config_path,
+        &app.launch_settings.playlists,
+        &app.launch_settings.outputs,
+    ) {
         Ok(()) => {
             app.runtime_status = RuntimeStatus::PlaylistSaved;
             true
@@ -796,6 +842,48 @@ fn sync_playlist_editor_inputs(app: &mut App) {
         .collect();
 }
 
+fn sync_selected_outputs_for_wallpaper(app: &mut App) {
+    let Some(wallpaper_id) = app.selected_id.as_deref() else {
+        return;
+    };
+    if app.launch_settings.outputs.is_empty() {
+        app.selected_outputs = app.outputs.iter().cloned().collect();
+        return;
+    }
+    app.selected_outputs = app
+        .outputs
+        .iter()
+        .filter(|output| {
+            app.launch_settings
+                .outputs
+                .get(*output)
+                .and_then(|binding| binding.wallpaper_id.as_deref())
+                == Some(wallpaper_id)
+        })
+        .cloned()
+        .collect();
+}
+
+fn sync_selected_outputs_for_playlist(app: &mut App) {
+    let Some(playlist_name) = app.playlist_selected.as_deref() else {
+        app.selected_outputs.clear();
+        return;
+    };
+    if app.launch_settings.outputs.is_empty() {
+        app.selected_outputs = app.outputs.iter().cloned().collect();
+        return;
+    }
+    app.selected_outputs = app
+        .outputs
+        .iter()
+        .filter(|output| {
+            app.launch_settings.outputs.get(*output).and_then(|binding| binding.playlist.as_deref())
+                == Some(playlist_name)
+        })
+        .cloned()
+        .collect();
+}
+
 fn play_selected_playlist(app: &mut App) -> Task<Message> {
     let Some(name) = app.playlist_selected.clone() else {
         set_playlist_error(app, "select a playlist first".to_string());
@@ -812,6 +900,34 @@ fn play_selected_playlist(app: &mut App) -> Task<Message> {
     if !app.layerd_available {
         app.runtime_status = RuntimeStatus::DaemonNotFound;
         return Task::none();
+    }
+
+    if !app.outputs.is_empty() {
+        if app.selected_outputs.is_empty() {
+            set_playlist_error(app, "select at least one display for the playlist".to_string());
+            return Task::none();
+        }
+        let available_outputs = app.outputs.clone();
+        let selected_outputs = app.selected_outputs.clone();
+        app.launch_settings.outputs.retain(|output, binding| {
+            !available_outputs.contains(output)
+                || binding.playlist.as_deref() != Some(name.as_str())
+                || selected_outputs.contains(output)
+        });
+        for output in app.selected_outputs.clone() {
+            app.launch_settings.outputs.insert(output, OutputBinding::playlist(name.clone()));
+        }
+        app.launch_settings.playlists.active = None;
+        if let Err(error) = config::persist_playlists_and_outputs(
+            &app.config_path,
+            &app.launch_settings.playlists,
+            &app.launch_settings.outputs,
+        ) {
+            app.runtime_status = RuntimeStatus::ConfigSaveFailed(error);
+            return Task::none();
+        }
+        app.runtime_shutdown = false;
+        return start_or_reconfigure_multi_output(app);
     }
 
     app.launch_settings.playlists.active = Some(name.clone());
@@ -899,6 +1015,18 @@ fn synchronize_migrated_playlist_with_running_daemon(app: &mut App) {
 }
 
 fn playlist_is_running(app: &App, playlist_name: &str) -> Result<bool, String> {
+    let output_bound = app
+        .launch_settings
+        .outputs
+        .values()
+        .any(|binding| binding.playlist.as_deref() == Some(playlist_name));
+    if output_bound && runtime::daemon_is_running() {
+        return Ok(true);
+    }
+    global_playlist_is_running(app, playlist_name)
+}
+
+fn global_playlist_is_running(app: &App, playlist_name: &str) -> Result<bool, String> {
     if !app.layerd_available {
         return Ok(false);
     }
@@ -921,6 +1049,45 @@ fn playlist_stop_can_be_persisted(command_succeeded: bool, daemon_running: bool)
 }
 
 fn playlist_runtime_action(app: &mut App, action: &str) -> Task<Message> {
+    if !app.outputs.is_empty() {
+        let Some(playlist_name) = app.playlist_selected.clone() else {
+            set_playlist_error(app, "select a playlist first".to_string());
+            return Task::none();
+        };
+        let targets = app
+            .selected_outputs
+            .iter()
+            .filter(|output| {
+                app.launch_settings
+                    .outputs
+                    .get(*output)
+                    .and_then(|binding| binding.playlist.as_deref())
+                    == Some(playlist_name.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            set_playlist_error(
+                app,
+                format!("no selected display is bound to playlist '{playlist_name}'"),
+            );
+            return Task::none();
+        }
+        let failed = targets
+            .iter()
+            .filter(|output| !runtime::send_output_playlist_action(output, action))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !failed.is_empty() {
+            set_playlist_error(
+                app,
+                format!("failed to send playlist {action} to {}", failed.join(", ")),
+            );
+            return Task::none();
+        }
+        return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
+    }
+
     if action == "stop" {
         let daemon_stopped_playlist = runtime::send_playlist_action(action);
         let daemon_running = !daemon_stopped_playlist && runtime::daemon_is_running();
@@ -972,7 +1139,12 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
     app.runtime_playlist_active = None;
     app.runtime_playlist_index = None;
 
-    if let Err(error) = persist_current_config(app) {
+    if let Err(error) = bind_selected_wallpaper_outputs(app) {
+        app.runtime_status = RuntimeStatus::ConfigSaveFailed(error);
+        return Task::none();
+    }
+
+    if let Err(error) = persist_playback_config(app) {
         app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
         eprintln!("failed to save config: {error}");
         return Task::none();
@@ -1016,6 +1188,62 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
     Task::none()
 }
 
+fn bind_selected_wallpaper_outputs(app: &mut App) -> Result<(), String> {
+    if app.outputs.is_empty() {
+        return Ok(());
+    }
+    if app.selected_outputs.is_empty() {
+        return Err("select at least one display before applying the wallpaper".to_string());
+    }
+    let selected_id =
+        app.selected_id.clone().ok_or_else(|| "select a wallpaper first".to_string())?;
+    let entry = app
+        .entries
+        .iter()
+        .find(|entry| entry.id == selected_id)
+        .ok_or_else(|| "selected wallpaper is no longer in the library".to_string())?;
+    let source =
+        entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy().into_owned();
+    let available_outputs = app.outputs.clone();
+    let selected_outputs = app.selected_outputs.clone();
+    app.launch_settings.outputs.retain(|output, binding| {
+        !available_outputs.contains(output)
+            || binding.wallpaper_id.as_deref() != Some(selected_id.as_str())
+            || selected_outputs.contains(output)
+    });
+    for output in app.selected_outputs.clone() {
+        app.launch_settings
+            .outputs
+            .insert(output, OutputBinding::wallpaper(entry.id.clone(), source.clone()));
+    }
+    Ok(())
+}
+
+fn start_or_reconfigure_multi_output(app: &mut App) -> Task<Message> {
+    if let Err(error) = runtime::reap(&mut app.runtime_child) {
+        eprintln!("failed to query daemon child status: {error}");
+    }
+    if runtime::try_switch(&app.config_path) {
+        app.playback_running = true;
+        app.playback_paused = false;
+        app.runtime_status = RuntimeStatus::SwitchedDaemon;
+        return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
+    }
+    match runtime::start(&app.config_path) {
+        Ok(child) => {
+            app.runtime_child = Some(child);
+            app.playback_running = true;
+            app.playback_paused = false;
+            app.runtime_status = RuntimeStatus::StartedDaemon;
+            Task::perform(runtime::fetch_status(), Message::StatusLoaded)
+        }
+        Err(error) => {
+            app.runtime_status = RuntimeStatus::StartFailed(error.to_string());
+            Task::none()
+        }
+    }
+}
+
 fn effective_playback_start(
     requested: PlaybackStart,
     forced_renderer_library: bool,
@@ -1040,11 +1268,53 @@ fn selected_wallpaper_source(app: &App) -> Option<String> {
     Some(entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy().into_owned())
 }
 
+fn parse_output_runtime_states(
+    raw: &str,
+) -> std::collections::BTreeMap<String, OutputRuntimeState> {
+    let Ok(document) = toml::from_str::<toml::Value>(raw) else {
+        return Default::default();
+    };
+    let mut outputs = std::collections::BTreeMap::new();
+
+    if let Some(runtime) = document.get("runtime").and_then(toml::Value::as_table) {
+        if let Some(output_name) = runtime.get("output_name").and_then(toml::Value::as_str) {
+            if !output_name.is_empty() {
+                outputs.insert(output_name.to_string(), output_runtime_state(runtime));
+            }
+        }
+    }
+
+    if let Some(output_runtime) = document.get("output_runtime").and_then(toml::Value::as_table) {
+        for (output_name, value) in output_runtime {
+            let Some(runtime) = value.get("runtime").and_then(toml::Value::as_table) else {
+                continue;
+            };
+            outputs.insert(output_name.clone(), output_runtime_state(runtime));
+        }
+    }
+    outputs
+}
+
+fn output_runtime_state(runtime: &toml::value::Table) -> OutputRuntimeState {
+    let source =
+        runtime.get("source").and_then(toml::Value::as_str).unwrap_or_default().to_string();
+    let playlist_active = runtime
+        .get("playlist_active")
+        .and_then(toml::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let playlist_index = runtime
+        .get("playlist_index")
+        .and_then(toml::Value::as_integer)
+        .and_then(|index| usize::try_from(index).ok());
+    OutputRuntimeState { source, playlist_active, playlist_index }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        effective_playback_start, playlist_stop_can_be_persisted, status_section_value,
-        PlaybackStart,
+        effective_playback_start, parse_output_runtime_states, playlist_stop_can_be_persisted,
+        status_section_value, PlaybackStart,
     };
 
     #[test]
@@ -1084,5 +1354,44 @@ wallpaper_id = "42"
         assert!(playlist_stop_can_be_persisted(true, false));
         assert!(playlist_stop_can_be_persisted(false, false));
         assert!(!playlist_stop_can_be_persisted(false, true));
+    }
+
+    #[test]
+    fn output_runtime_status_parser_supports_legacy_single_output_status() {
+        let status = r#"
+[runtime]
+output_name = "DP-1"
+source = "/wallpapers/one"
+playlist_active = "Focus"
+playlist_index = 2
+"#;
+        let outputs = parse_output_runtime_states(status);
+        let dp = outputs.get("DP-1").expect("DP-1 runtime");
+        assert_eq!(dp.source, "/wallpapers/one");
+        assert_eq!(dp.playlist_active.as_deref(), Some("Focus"));
+        assert_eq!(dp.playlist_index, Some(2));
+    }
+
+    #[test]
+    fn output_runtime_status_parser_keeps_multiple_outputs_independent() {
+        let status = r#"
+[output_runtime."DP-1".runtime]
+output_name = "DP-1"
+source = "/wallpapers/one"
+playlist_active = "Focus"
+playlist_index = 1
+
+[output_runtime."HDMI-A-1".runtime]
+output_name = "HDMI-A-1"
+source = "/wallpapers/two"
+playlist_active = "Ambient"
+playlist_index = 4
+"#;
+        let outputs = parse_output_runtime_states(status);
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs["DP-1"].playlist_active.as_deref(), Some("Focus"));
+        assert_eq!(outputs["DP-1"].playlist_index, Some(1));
+        assert_eq!(outputs["HDMI-A-1"].source, "/wallpapers/two");
+        assert_eq!(outputs["HDMI-A-1"].playlist_index, Some(4));
     }
 }

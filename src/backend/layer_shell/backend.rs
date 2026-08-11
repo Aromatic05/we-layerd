@@ -24,6 +24,6 @@ impl WallpaperBackend for LayerShellBackend {
     }
 
     fn run(&mut self, ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
-        super::event_loop::run(ctx)
+        super::orchestrator::run(ctx)
     }
 }

@@ -10,7 +10,7 @@ mod runtime;
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command, ControlAction, PlaylistAction};
-use ipc::{ControlCommand, PlaylistCommand};
+use ipc::{ControlCommand, OutputPlaylistAction, PlaylistCommand};
 
 fn main() -> Result<()> {
     logging::init();
@@ -44,10 +44,30 @@ fn main() -> Result<()> {
         },
         Command::Playlist { action } => {
             let command = match action {
-                PlaylistAction::Play { name } => PlaylistCommand::Play(name),
-                PlaylistAction::Next => PlaylistCommand::Next,
-                PlaylistAction::Previous => PlaylistCommand::Previous,
-                PlaylistAction::Stop => PlaylistCommand::Stop,
+                PlaylistAction::Play { name, output } => match output {
+                    Some(output) => {
+                        PlaylistCommand::Output { output, action: OutputPlaylistAction::Play(name) }
+                    }
+                    None => PlaylistCommand::Play(name),
+                },
+                PlaylistAction::Next { output } => match output {
+                    Some(output) => {
+                        PlaylistCommand::Output { output, action: OutputPlaylistAction::Next }
+                    }
+                    None => PlaylistCommand::Next,
+                },
+                PlaylistAction::Previous { output } => match output {
+                    Some(output) => {
+                        PlaylistCommand::Output { output, action: OutputPlaylistAction::Previous }
+                    }
+                    None => PlaylistCommand::Previous,
+                },
+                PlaylistAction::Stop { output } => match output {
+                    Some(output) => {
+                        PlaylistCommand::Output { output, action: OutputPlaylistAction::Stop }
+                    }
+                    None => PlaylistCommand::Stop,
+                },
             };
             ipc::send_playlist_command(&command)
         }

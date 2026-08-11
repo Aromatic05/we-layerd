@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     os::fd::OwnedFd,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -84,6 +85,7 @@ impl Default for BufferBookkeeping {
 }
 
 pub(crate) struct LayerShellState {
+    pub(super) output_name: String,
     pub(super) objects: WaylandObjects,
     pub(super) output: OutputState,
     pub(super) presentation_geometry: PresentationGeometry,
@@ -105,6 +107,7 @@ pub(crate) struct LayerShellState {
     pub(super) paused: bool,
     pub(super) stopping: bool,
     pub(super) pending_input_events: PendingInput,
+    pub(super) discovered_output_names: BTreeMap<u32, String>,
 }
 
 impl LayerShellState {
@@ -218,6 +221,11 @@ impl LayerShellState {
 
     pub(super) fn snapshot(&self) -> RuntimeStatusSnapshot {
         RuntimeStatusSnapshot {
+            output_name: self.output_name.clone(),
+            output_source: String::new(),
+            output_playlist_active: None,
+            output_playlist_index: None,
+            remove_output: false,
             runtime: self.diagnostics.clone(),
             presentation: crate::runtime::status::PresentationStatus {
                 configured: self.configured,

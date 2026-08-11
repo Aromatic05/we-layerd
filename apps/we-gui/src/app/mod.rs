@@ -146,6 +146,7 @@ mod tests {
             playlist_entry_duration_inputs: Vec::new(),
             runtime_playlist_active: None,
             runtime_playlist_index: None,
+            runtime_outputs: Default::default(),
             legacy_shuffle: legacy_shuffle(),
             playlist_migration_completed: true,
         };
@@ -237,6 +238,7 @@ mod tests {
             playlist_entry_duration_inputs: Vec::new(),
             runtime_playlist_active: None,
             runtime_playlist_index: None,
+            runtime_outputs: Default::default(),
             legacy_shuffle: legacy_shuffle(),
             playlist_migration_completed: true,
         };

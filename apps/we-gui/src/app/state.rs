@@ -63,8 +63,16 @@ pub(crate) struct App {
     pub playlist_entry_duration_inputs: Vec<String>,
     pub runtime_playlist_active: Option<String>,
     pub runtime_playlist_index: Option<usize>,
+    pub runtime_outputs: std::collections::BTreeMap<String, OutputRuntimeState>,
     pub legacy_shuffle: LegacyShuffleMigration,
     pub playlist_migration_completed: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct OutputRuntimeState {
+    pub(crate) source: String,
+    pub(crate) playlist_active: Option<String>,
+    pub(crate) playlist_index: Option<usize>,
 }
 
 impl App {
@@ -74,6 +82,17 @@ impl App {
             return false;
         };
         let source = entry.project_json.parent().unwrap_or(&entry.project_json).to_string_lossy();
+        if !self.runtime_outputs.is_empty() {
+            return self.playback_running
+                && !self.playback_paused
+                && self
+                    .runtime_outputs
+                    .iter()
+                    .filter(|(output, _)| {
+                        self.selected_outputs.is_empty() || self.selected_outputs.contains(*output)
+                    })
+                    .any(|(_, runtime)| runtime.source == source.as_ref());
+        }
         self.playback_running
             && !self.playback_paused
             && self.running_source.as_deref() == Some(source.as_ref())
@@ -95,6 +114,7 @@ impl App {
         self.running_source = None;
         self.runtime_playlist_active = None;
         self.runtime_playlist_index = None;
+        self.runtime_outputs.clear();
     }
 }
 

@@ -51,6 +51,22 @@ pub enum PlaylistCommand {
     Next,
     Previous,
     Stop,
+    Output { output: String, action: OutputPlaylistAction },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutputPlaylistAction {
+    Play(String),
+    Next,
+    Previous,
+    Stop,
+}
+
+#[derive(Debug)]
+pub struct OutputPlaylistRequest {
+    pub output: String,
+    pub action: OutputPlaylistAction,
+    pub reply: std::sync::mpsc::Sender<std::result::Result<(), String>>,
 }
 
 impl PlaylistCommand {
@@ -60,6 +76,16 @@ impl PlaylistCommand {
             Self::Next => "playlist next".to_string(),
             Self::Previous => "playlist previous".to_string(),
             Self::Stop => "playlist stop".to_string(),
+            Self::Output { output, action } => match action {
+                OutputPlaylistAction::Play(name) => {
+                    format!("playlist output {output} play {name}")
+                }
+                OutputPlaylistAction::Next => format!("playlist output {output} next"),
+                OutputPlaylistAction::Previous => {
+                    format!("playlist output {output} previous")
+                }
+                OutputPlaylistAction::Stop => format!("playlist output {output} stop"),
+            },
         }
     }
 }
@@ -95,6 +121,32 @@ impl ControlRequest {
                 return None;
             }
             return Some(Self::Playlist(PlaylistCommand::Play(name.to_string())));
+        }
+        if let Some(rest) = trimmed.strip_prefix("playlist output ") {
+            let (output, action) = rest.split_once(' ')?;
+            let output = output.trim();
+            let action = action.trim();
+            if output.is_empty() || action.is_empty() {
+                return None;
+            }
+            let action = if let Some(name) = action.strip_prefix("play ") {
+                let name = name.trim();
+                if name.is_empty() {
+                    return None;
+                }
+                OutputPlaylistAction::Play(name.to_string())
+            } else {
+                match action.to_ascii_lowercase().as_str() {
+                    "next" => OutputPlaylistAction::Next,
+                    "previous" | "prev" => OutputPlaylistAction::Previous,
+                    "stop" => OutputPlaylistAction::Stop,
+                    _ => return None,
+                }
+            };
+            return Some(Self::Playlist(PlaylistCommand::Output {
+                output: output.to_string(),
+                action,
+            }));
         }
         match trimmed.to_ascii_lowercase().as_str() {
             "playlist next" => return Some(Self::Playlist(PlaylistCommand::Next)),
@@ -407,7 +459,7 @@ fn abstract_socket_name() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlRequest, PlaylistCommand};
+    use super::{ControlRequest, OutputPlaylistAction, PlaylistCommand};
 
     #[test]
     fn playlist_ipc_preserves_named_playlists_and_rejects_empty_names() {
@@ -427,6 +479,37 @@ mod tests {
         assert_eq!(
             ControlRequest::parse("playlist stop"),
             Some(ControlRequest::Playlist(PlaylistCommand::Stop))
+        );
+    }
+
+    #[test]
+    fn playlist_ipc_routes_output_scoped_actions_without_changing_global_commands() {
+        assert_eq!(
+            ControlRequest::parse("playlist output DP-1 play Focus Session"),
+            Some(ControlRequest::Playlist(PlaylistCommand::Output {
+                output: "DP-1".to_string(),
+                action: OutputPlaylistAction::Play("Focus Session".to_string()),
+            }))
+        );
+        assert_eq!(
+            ControlRequest::parse("playlist output HDMI-A-1 next"),
+            Some(ControlRequest::Playlist(PlaylistCommand::Output {
+                output: "HDMI-A-1".to_string(),
+                action: OutputPlaylistAction::Next,
+            }))
+        );
+        assert_eq!(
+            ControlRequest::parse("playlist output HDMI-A-1 stop"),
+            Some(ControlRequest::Playlist(PlaylistCommand::Output {
+                output: "HDMI-A-1".to_string(),
+                action: OutputPlaylistAction::Stop,
+            }))
+        );
+        assert_eq!(ControlRequest::parse("playlist output DP-1 play    "), None);
+        assert_eq!(ControlRequest::parse("playlist output    next"), None);
+        assert_eq!(
+            ControlRequest::parse("playlist next"),
+            Some(ControlRequest::Playlist(PlaylistCommand::Next))
         );
     }
 }
