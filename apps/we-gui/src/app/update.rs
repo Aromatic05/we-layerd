@@ -952,7 +952,6 @@ fn play_selected_playlist(app: &mut App) -> Task<Message> {
         for output in app.selected_outputs.clone() {
             app.launch_settings.outputs.insert(output, OutputBinding::playlist(name.clone()));
         }
-        app.launch_settings.playlists.active = None;
         if let Err(error) = config::persist_playlists_and_outputs(
             &app.config_path,
             &app.launch_settings.playlists,
@@ -1055,8 +1054,22 @@ fn playlist_is_running(app: &App, playlist_name: &str) -> Result<bool, String> {
         .outputs
         .values()
         .any(|binding| binding.playlist.as_deref() == Some(playlist_name));
-    if output_bound && runtime::daemon_is_running() {
-        return Ok(true);
+    if output_bound {
+        match runtime::fetch_status_sync()? {
+            runtime::DaemonStatus::NotRunning => return Ok(false),
+            runtime::DaemonStatus::EmptyResponse => {
+                return Err("cannot determine output playlist state from an empty daemon status"
+                    .to_string())
+            }
+            runtime::DaemonStatus::Running(status) => {
+                if !daemon_status_supports_multi_output(&status) {
+                    return Ok(true);
+                }
+                return Ok(parse_output_runtime_states(&status)
+                    .values()
+                    .any(|runtime| runtime.playlist_active.as_deref() == Some(playlist_name)));
+            }
+        }
     }
     global_playlist_is_running(app, playlist_name)
 }
@@ -1167,12 +1180,15 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
         return Task::none();
     }
 
-    if app.runtime_playlist_active.is_some() {
-        let _ = runtime::send_playlist_action("stop");
+    let multi_output = multi_output_mode(app);
+    if !multi_output {
+        if app.runtime_playlist_active.is_some() {
+            let _ = runtime::send_playlist_action("stop");
+        }
+        app.launch_settings.playlists.active = None;
+        app.runtime_playlist_active = None;
+        app.runtime_playlist_index = None;
     }
-    app.launch_settings.playlists.active = None;
-    app.runtime_playlist_active = None;
-    app.runtime_playlist_index = None;
 
     if let Err(error) = bind_selected_wallpaper_outputs(app) {
         app.runtime_status = RuntimeStatus::ConfigSaveFailed(error);
@@ -1185,7 +1201,7 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
         return Task::none();
     }
 
-    if multi_output_mode(app) {
+    if multi_output {
         return start_or_reconfigure_multi_output(app);
     }
 
@@ -1467,6 +1483,21 @@ playlist_index = 4
         assert_eq!(outputs["DP-1"].playlist_index, Some(1));
         assert_eq!(outputs["HDMI-A-1"].source, "/wallpapers/two");
         assert_eq!(outputs["HDMI-A-1"].playlist_index, Some(4));
+    }
+
+    #[test]
+    fn output_runtime_status_parser_treats_stopped_playlist_as_inactive() {
+        let status = r#"
+[output_runtime."DP-1".runtime]
+output_name = "DP-1"
+source = "/wallpapers/one"
+playlist_active = ""
+playlist_index = -1
+"#;
+        let outputs = parse_output_runtime_states(status);
+        let dp = outputs.get("DP-1").expect("DP-1 runtime");
+        assert_eq!(dp.playlist_active, None);
+        assert_eq!(dp.playlist_index, None);
     }
 
     #[test]

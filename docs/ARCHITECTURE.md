@@ -3,15 +3,17 @@
 ## Runtime path
 
 ```text
-renderer dynamic library
--> renderer session
+Wayland output discovery (`wl_output.name`)
+-> layer-shell orchestrator
+-> one isolated output worker / Wayland connection per applicable output
+-> renderer dynamic library + renderer session
 -> renderer tick / acquire
 -> frame-callback paced present
 -> in-flight buffer backpressure
 -> acquire dmabuf/shm frame
--> Wayland layer-shell present
+-> output-bound Wayland layer-shell surface
 -> pointer input forwarding
--> IPC control
+-> per-output status / playlist state
 ```
 
 `we-layerd` no longer launches Wallpaper Engine through Wine and no longer captures X11 windows.
@@ -48,21 +50,26 @@ renderer dynamic library
 
 The active runtime is centered in:
 
-- `src/wayland/renderer.rs`
-- `src/wayland/state.rs`
-- `src/wayland/wayland.rs`
-- `src/wayland/geometry.rs`
-- `src/wayland/diagnostics.rs`
+- `src/backend/layer_shell/orchestrator.rs`
+- `src/backend/layer_shell/event_loop.rs`
+- `src/backend/layer_shell/state.rs`
+- `src/backend/layer_shell/surface.rs`
+- `src/backend/layer_shell/presenter.rs`
+- `src/backend/wayland_common/`
+- `src/runtime/status.rs`
 
 Current behavior:
 
-- one renderer session for the selected output
-- one layer-shell surface bound to the first advertised `wl_output`
+- stable output identity from `wl_output.name` (protocol version 4)
+- one independent renderer session and layer-shell surface per active output worker
+- independent worker lifecycle, playlist cursor/timer, presentation state, and error status
+- hotplug reconciliation that starts/stops only affected workers
+- output-local reconfiguration/failure isolation instead of tearing down unrelated displays
 - one presenter path that supports DMA-BUF and SHM
 - presentation paced by `wl_surface.frame` callbacks
 - acquire throttled by an in-flight buffer cap
 - pointer input forwarding when `general.interactive = true`
-- live runtime status exported through `we-layerd ctl status`
+- live per-output runtime status exported through `we-layerd ctl status`
 - linux-dmabuf v4 surface feedback, with v3 global modifier fallback
 - exact `(fourcc, modifier)` capability forwarding to the renderer before output binding
 - dynamic renderer output renegotiation when v4 surface feedback changes

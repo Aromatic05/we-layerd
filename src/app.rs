@@ -410,7 +410,11 @@ fn schedule_config_reconfigure(
         *guard = next_cfg.to_toml_pretty()?;
     }
     if let Ok(mut state) = runtime_state.lock() {
-        state.begin_switch(&next_cfg);
+        if resolve_backend(&next_cfg) == BackendKind::LayerShell {
+            state.live_reconfigure(&next_cfg);
+        } else {
+            state.begin_switch(&next_cfg);
+        }
     }
     control_tx
         .send(ControlCommand::Reconfigure)
@@ -452,6 +456,13 @@ impl RuntimeState {
     fn begin_switch(&mut self, cfg: &Config) {
         self.backend = resolve_backend(cfg);
         self.phase = RuntimePhase::Starting;
+        self.source = cfg.renderer.source.clone();
+        self.error = None;
+        self.runtime_statuses.clear();
+    }
+
+    fn live_reconfigure(&mut self, cfg: &Config) {
+        self.backend = resolve_backend(cfg);
         self.source = cfg.renderer.source.clone();
         self.error = None;
         self.runtime_statuses.clear();
@@ -505,7 +516,7 @@ impl RuntimeState {
             "[orchestrator]".to_string(),
             format!("backend = \"{}\"", backend_name(self.backend)),
             format!("phase = \"{}\"", self.phase.as_str()),
-            "multi_output = true".to_string(),
+            format!("multi_output = {}", self.backend == BackendKind::LayerShell),
             format!("generation = {}", self.generation),
             format!("source = {:?}", self.source),
         ];
@@ -937,7 +948,24 @@ mod tests {
         let status = state.render_status_toml();
 
         assert!(status.contains("phase = \"running\""));
+        assert!(status.contains("multi_output = true"));
         assert!(status.contains("source = \"/tmp/workshop/item\""));
+    }
+
+    #[test]
+    fn layer_shell_live_reconfigure_preserves_running_phase() {
+        let mut cfg = Config::default();
+        cfg.renderer.source = "/tmp/workshop/one".to_string();
+        let mut state = RuntimeState::new(&cfg);
+        let generation = state.begin_session(&cfg);
+        state.mark_running(generation);
+
+        let mut next = cfg.clone();
+        next.renderer.source = "/tmp/workshop/two".to_string();
+        state.live_reconfigure(&next);
+
+        assert_eq!(state.phase, RuntimePhase::Running);
+        assert_eq!(state.source, "/tmp/workshop/two");
     }
 
     #[test]

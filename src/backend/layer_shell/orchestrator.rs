@@ -217,6 +217,7 @@ enum WorkerEvent {
 
 pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     let (worker_event_tx, worker_event_rx) = mpsc::channel::<WorkerEvent>();
+    let output_playlist_rx = ctx.output_playlist_rx.take();
     let mut workers = BTreeMap::<String, OutputWorker>::new();
     let mut last_discovery = Instant::now() - Duration::from_secs(2);
 
@@ -259,8 +260,16 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
             }
         }
 
-        if let Some(output_playlist_rx) = ctx.output_playlist_rx {
+        if let Some(output_playlist_rx) = output_playlist_rx {
             while let Ok(request) = output_playlist_rx.try_recv() {
+                if output_playlist_action_requires_reconcile(&request.action) {
+                    if let Err(error) =
+                        reconcile_live_workers(&mut ctx, &mut workers, &worker_event_tx)
+                    {
+                        let _ = request.reply.send(Err(error.to_string()));
+                        continue;
+                    }
+                }
                 let result = handle_output_playlist_request(&request, &mut workers);
                 let _ = request.reply.send(result.map_err(|error| error.to_string()));
             }
@@ -283,23 +292,34 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                     if !current_instance {
                         continue;
                     }
-                    if let Some(error) = error {
-                        warn!(
-                            output = %output,
-                            error = %error,
-                            "output runtime failed without stopping other outputs"
-                        );
-                        let mut snapshot = RuntimeStatusSnapshot {
-                            output_name: output.clone(),
-                            ..RuntimeStatusSnapshot::default()
-                        };
-                        snapshot.frame_stats.last_error = Some(error);
-                        (ctx.status_sink)(snapshot);
-                    }
+                    let error =
+                        error.unwrap_or_else(|| "output runtime exited unexpectedly".to_string());
+                    warn!(
+                        output = %output,
+                        error = %error,
+                        "output runtime failed without stopping other outputs"
+                    );
+                    let mut snapshot = RuntimeStatusSnapshot {
+                        output_name: output.clone(),
+                        ..RuntimeStatusSnapshot::default()
+                    };
                     if let Some(worker) = workers.get_mut(&output) {
+                        if let Ok(config) = worker.desired_cfg.lock() {
+                            snapshot.output_source = config.renderer.source.clone();
+                        }
+                        if let Ok(runtime) = worker.playlist_runtime.lock() {
+                            if let Some(runtime) = runtime.as_ref() {
+                                snapshot.output_playlist_active =
+                                    runtime.active_name().map(str::to_string);
+                                snapshot.output_playlist_index =
+                                    runtime.current_selection().map(|selection| selection.index);
+                            }
+                        }
                         worker.handle.take();
                         worker.retry_at = Some(Instant::now() + Duration::from_secs(3));
                     }
+                    snapshot.frame_stats.last_error = Some(error);
+                    (ctx.status_sink)(snapshot);
                 }
             }
         }
@@ -327,8 +347,6 @@ fn reconcile_live_workers(
         .map_err(|_| anyhow::anyhow!("desired config lock poisoned"))?
         .clone();
     let (desired, spec_errors) = build_output_specs_with_errors(&desired_config, &discovered);
-    let discovered_set =
-        discovered.iter().map(String::as_str).collect::<std::collections::BTreeSet<_>>();
     let now = Instant::now();
     let current = workers
         .iter()
@@ -342,9 +360,7 @@ fn reconcile_live_workers(
         match action {
             OutputAction::Stop(output) => {
                 stop_worker(workers, &output);
-                if !discovered_set.contains(output.as_str()) {
-                    (ctx.status_sink)(RuntimeStatusSnapshot::removed_output(output));
-                }
+                (ctx.status_sink)(RuntimeStatusSnapshot::removed_output(output));
             }
             OutputAction::Restart(output) => {
                 stop_worker(workers, &output);
@@ -415,13 +431,14 @@ fn spawn_worker(
     let worker_desired_cfg = desired_cfg.clone();
     let worker_playlist_runtime = playlist_runtime.clone();
     let worker_stop_scheduler = stop_scheduler.clone();
+    let worker_shutdown = shutdown_requested.clone();
     let worker_output = output_name.clone();
     let handle = thread::Builder::new()
         .name(format!("we-layerd-output-{output_name}"))
         .spawn(move || {
             info!(output = %worker_output, "starting output runtime worker");
             let result = loop {
-                if shutdown_requested.load(Ordering::Relaxed) {
+                if worker_shutdown.load(Ordering::Relaxed) {
                     break Ok(RuntimeLoopExit::Stop);
                 }
                 let config = match worker_desired_cfg.lock() {
@@ -445,7 +462,7 @@ fn spawn_worker(
                 let worker_context = BackendContext {
                     cfg: &config,
                     desired_cfg: worker_desired_cfg.clone(),
-                    shutdown_requested: shutdown_requested.clone(),
+                    shutdown_requested: worker_shutdown.clone(),
                     control_rx: &control_rx,
                     output_playlist_rx: None,
                     status_sink: &mut sink,
@@ -502,6 +519,10 @@ fn spawn_worker(
 
 fn failed_worker_retry_due(retry_at: Option<Instant>, now: Instant) -> bool {
     retry_at.is_some_and(|deadline| deadline <= now)
+}
+
+fn output_playlist_action_requires_reconcile(action: &OutputPlaylistAction) -> bool {
+    matches!(action, OutputPlaylistAction::Play(_))
 }
 
 fn prepare_output_playlist(
@@ -696,7 +717,8 @@ mod tests {
 
     use super::{
         apply_output_playlist_action, build_output_specs, build_output_specs_with_errors,
-        failed_worker_retry_due, reconcile_workers, OutputAction,
+        failed_worker_retry_due, output_playlist_action_requires_reconcile, reconcile_workers,
+        OutputAction,
     };
 
     #[test]
@@ -854,6 +876,15 @@ mod tests {
         assert!(!failed_worker_retry_due(Some(now + std::time::Duration::from_secs(3)), now));
         assert!(failed_worker_retry_due(Some(now), now));
         assert!(!failed_worker_retry_due(None, now));
+    }
+
+    #[test]
+    fn output_playlist_play_reconciles_binding_before_worker_control() {
+        assert!(output_playlist_action_requires_reconcile(&OutputPlaylistAction::Play(
+            "Focus".to_string()
+        )));
+        assert!(!output_playlist_action_requires_reconcile(&OutputPlaylistAction::Next));
+        assert!(!output_playlist_action_requires_reconcile(&OutputPlaylistAction::Stop));
     }
 
     #[test]

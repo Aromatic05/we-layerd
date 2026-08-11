@@ -171,8 +171,8 @@ Playlist edits are written without replacing unrelated configuration sections. O
 updated atomically with playlist edits when required. When an edited playlist is currently running,
 the GUI asks the daemon to reload the updated configuration. Global playlist stop clears
 `playlists.active` on disk; per-output playlist control acts on the selected output worker. Manually
-playing a single wallpaper deactivates the global playlist before updating the selected output
-bindings.
+playing a single wallpaper deactivates the global playlist only in legacy/single-output mode; in
+multi-output mode it changes only the selected output bindings.
 
 Older `we-gui` random-playback preferences are migration-only. On the first library scan after this
 version, an enabled legacy shuffle configuration is converted once into a `Migrated shuffle`
