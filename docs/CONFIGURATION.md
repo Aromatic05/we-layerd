@@ -16,7 +16,9 @@ assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 ```
 
 - `renderer.library_path`: leave it empty for automatic lookup, or set an explicit path to `libwallpaper-engine-renderer.so`
-- `renderer.source`: workshop item directory, not a video file and not a Wallpaper Engine CLI argument list
+- `renderer.source`: workshop item directory used as the single-output/default fallback. It may be
+  empty when layer-shell output bindings provide every wallpaper/playlist the daemon should run.
+  It is a directory, not a video file and not a Wallpaper Engine CLI argument list.
 - `renderer.assets_path`: Wallpaper Engine `assets/` directory
 
 ## General settings
@@ -84,6 +86,47 @@ Current DMA-BUF scope:
 - v4 feedback changes are forwarded while the renderer is running, allowing output rebinding or SHM fallback
 - `prefer_dmabuf` selects policy; `allow_shm_fallback` controls behavior when no compatible pair exists
 
+## Multi-output layer-shell runtime
+
+Wayland outputs are addressed by the stable `wl_output.name` value exposed by protocol version 4.
+Each configured output owns an independent layer surface, renderer session, buffer/presentation
+state, and playlist cursor/timer. Reconfiguring or failing one output does not tear down the other
+output workers.
+
+```toml
+[renderer]
+# Optional fallback for discovered outputs without an explicit binding.
+source = "/path/to/Steam/steamapps/workshop/content/431960/1111111111"
+
+[outputs."DP-1"]
+wallpaper_id = "2222222222"
+source = "/path/to/Steam/steamapps/workshop/content/431960/2222222222"
+
+[outputs."HDMI-A-1"]
+playlist = "Daily"
+```
+
+An output may bind either one wallpaper (`wallpaper_id` plus `source`) or one named playlist, but
+not both. If `renderer.source` is empty, discovered outputs without an explicit binding are left
+unused. If a named output disappears, only that worker is stopped; when a new named output appears,
+only the newly applicable worker is started. Invalid or failed output workers are reported through
+status without stopping healthy outputs.
+
+Per-output playlists use independent playback state. The global playlist commands remain available
+for the legacy/shared playlist runtime; target a layer-shell output explicitly with:
+
+```bash
+we-layerd playlist play Daily --output DP-1
+we-layerd playlist next --output DP-1
+we-layerd playlist previous --output DP-1
+we-layerd playlist stop --output DP-1
+```
+
+`we-layerd ctl status` keeps the legacy `[runtime]` / `[presentation]` form when exactly one output
+worker is present. With multiple workers it reports independent
+`[output_runtime."<name>".runtime]` and `[output_runtime."<name>".presentation]` tables, including
+each output's source and playlist cursor.
+
 ## Playlists
 
 Named playlists are part of the daemon configuration, so timing and progression do not depend on
@@ -124,11 +167,12 @@ entries; reorder or remove entries; set playback mode; and set either a playlist
 entry-specific duration override. Play, previous, next, and stop actions are sent to the running
 daemon rather than implemented by a GUI timer.
 
-Playlist edits are written to the `[playlists]` section without replacing unrelated configuration
-sections. When the edited playlist is currently running, the GUI asks the daemon to reload the
-updated configuration. Stopping a playlist from the GUI also clears `playlists.active` on disk so a
-later daemon start does not silently resume a playlist the user explicitly stopped. Manually playing
-a single wallpaper likewise deactivates playlist playback first.
+Playlist edits are written without replacing unrelated configuration sections. Output bindings are
+updated atomically with playlist edits when required. When an edited playlist is currently running,
+the GUI asks the daemon to reload the updated configuration. Global playlist stop clears
+`playlists.active` on disk; per-output playlist control acts on the selected output worker. Manually
+playing a single wallpaper deactivates the global playlist only in legacy/single-output mode; in
+multi-output mode it changes only the selected output bindings.
 
 Older `we-gui` random-playback preferences are migration-only. On the first library scan after this
 version, an enabled legacy shuffle configuration is converted once into a `Migrated shuffle`
@@ -147,9 +191,10 @@ args = []
 ```
 
 The command starts asynchronously once the first frame has been submitted for each successful
-startup, wallpaper switch, or reload. Hook startup or exit failures are logged and do not stop the
-wallpaper runtime. `command` is executed directly, not through a shell; put pipelines, redirection,
-or other shell syntax in an executable script instead.
+output startup or wallpaper switch. Multi-output workers are tracked independently, so the first
+presented frame on DP-1 does not suppress the hook for HDMI-A-1. Hook startup or exit failures are
+logged and do not stop the wallpaper runtime. `command` is executed directly, not through a shell;
+put pipelines, redirection, or other shell syntax in an executable script instead.
 
 The hook inherits the daemon environment and receives:
 
@@ -170,7 +215,9 @@ If `renderer.library_path` is empty or does not resolve to an existing file, `we
 
 `we-gui` generates renderer-native config only:
 
-- it writes `renderer.source` as the selected workshop item directory
+- in legacy/single-output mode it writes `renderer.source` as the selected workshop item directory
+- in multi-output mode it patches wallpaper profiles and `[outputs]` bindings while preserving the
+  global `renderer.source` fallback
 - it derives `renderer.assets_path` from the Wallpaper Engine install path
 - it preserves `renderer.options_json` when re-saving an existing config
 - it preserves `hooks` when generating the selected wallpaper config

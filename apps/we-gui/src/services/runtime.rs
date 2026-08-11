@@ -52,6 +52,14 @@ pub fn send_playlist_action(action: &str) -> bool {
     command_succeeds_quietly(&mut command)
 }
 
+pub fn send_output_playlist_action(output: &str, action: &str) -> bool {
+    let Ok(mut command) = layerd_command() else {
+        return false;
+    };
+    command.arg("playlist").arg(action).arg("--output").arg(output);
+    command_succeeds_quietly(&mut command)
+}
+
 pub fn start(config_path: &Path) -> std::io::Result<Child> {
     layerd_command()?.arg("run").arg("--config").arg(config_path).spawn()
 }

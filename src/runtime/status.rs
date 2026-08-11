@@ -99,15 +99,50 @@ impl Default for PresentationStatus {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RuntimeStatusSnapshot {
+    pub(crate) output_name: String,
+    pub(crate) output_source: String,
+    pub(crate) output_playlist_active: Option<String>,
+    pub(crate) output_playlist_index: Option<usize>,
+    pub(crate) remove_output: bool,
     pub(crate) runtime: RuntimeDiagnostics,
     pub(crate) presentation: PresentationStatus,
     pub(crate) frame_stats: FrameStats,
 }
 
 impl RuntimeStatusSnapshot {
+    pub(crate) fn removed_output(output_name: String) -> Self {
+        Self { output_name, remove_output: true, ..Self::default() }
+    }
+
     pub(crate) fn render_toml(&self) -> String {
+        self.render_toml_with_headers("[runtime]".to_string(), "[presentation]".to_string())
+    }
+
+    pub(crate) fn render_output_toml(&self, output_name: &str) -> String {
+        let output_key = toml::Value::String(output_name.to_string()).to_string();
+        self.render_toml_with_headers(
+            format!("[output_runtime.{output_key}.runtime]"),
+            format!("[output_runtime.{output_key}.presentation]"),
+        )
+    }
+
+    fn render_toml_with_headers(
+        &self,
+        runtime_header: String,
+        presentation_header: String,
+    ) -> String {
         let mut lines = vec![
-            "[runtime]".to_string(),
+            runtime_header,
+            format!("output_name = {}", toml::Value::String(self.output_name.clone())),
+            format!("source = {}", toml::Value::String(self.output_source.clone())),
+            format!(
+                "playlist_active = {}",
+                toml::Value::String(self.output_playlist_active.clone().unwrap_or_default())
+            ),
+            format!(
+                "playlist_index = {}",
+                self.output_playlist_index.map(|index| index as i64).unwrap_or(-1)
+            ),
             format!("wayland_connected = {}", self.runtime.wayland_connected),
             format!("dmabuf_global_available = {}", self.runtime.dmabuf_global_available),
             format!("dmabuf_global_version = {}", self.runtime.dmabuf_global_version),
@@ -159,7 +194,7 @@ impl RuntimeStatusSnapshot {
                 )
             ),
             String::new(),
-            "[presentation]".to_string(),
+            presentation_header,
             format!("configured = {}", self.presentation.configured),
             format!("logical_width = {}", self.presentation.logical_width),
             format!("logical_height = {}", self.presentation.logical_height),
@@ -222,6 +257,8 @@ fn scale_mode_name(scale_mode: ScaleMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use we_renderer::{DiagnosticEntry, DiagnosticSeverity, RendererDiagnostics};
 
     use super::{RuntimeDiagnostics, RuntimeStatusSnapshot};
@@ -250,5 +287,24 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(json).expect("valid diagnostics JSON");
         assert_eq!(payload["entries"][0]["source"], "abi.render-config.msaa");
         assert_eq!(document["runtime"]["renderer_warning_count"].as_integer(), Some(1));
+    }
+
+    #[test]
+    fn output_scoped_status_round_trips_named_output_source_and_playlist_cursor() {
+        let snapshot = RuntimeStatusSnapshot {
+            output_name: "DP-1".to_string(),
+            output_source: "/wallpapers/42".to_string(),
+            output_playlist_active: Some("Focus".to_string()),
+            output_playlist_index: Some(3),
+            ..RuntimeStatusSnapshot::default()
+        };
+
+        let rendered = snapshot.render_output_toml("DP-1");
+        let document = toml::from_str::<toml::Value>(&rendered).expect("valid output status TOML");
+        let runtime = &document["output_runtime"]["DP-1"]["runtime"];
+        assert_eq!(runtime["output_name"].as_str(), Some("DP-1"));
+        assert_eq!(runtime["source"].as_str(), Some("/wallpapers/42"));
+        assert_eq!(runtime["playlist_active"].as_str(), Some("Focus"));
+        assert_eq!(runtime["playlist_index"].as_integer(), Some(3));
     }
 }

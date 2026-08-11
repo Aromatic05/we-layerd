@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::Path,
     path::PathBuf,
@@ -12,7 +13,10 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use tracing::{info, warn};
-use we_core::install_layout::{expand_tilde, resolve_renderer_library};
+use we_core::{
+    config::OutputBinding,
+    install_layout::{expand_tilde, resolve_renderer_library},
+};
 use we_renderer::RendererLibrary;
 
 use crate::{
@@ -24,7 +28,7 @@ use crate::{
     },
     config::Config,
     hooks::{self, WallpaperAppliedContext, WallpaperAppliedTrigger},
-    ipc::{self, ControlCommand, PlaylistCommand, RuntimeLoopExit},
+    ipc::{self, ControlCommand, OutputPlaylistAction, PlaylistCommand, RuntimeLoopExit},
     runtime::{
         control::RuntimePhase,
         playlist::{self, AdvanceDirection, PlaylistRuntime, PlaylistSelection},
@@ -54,6 +58,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let playlist_runtime = Arc::new(Mutex::new(playlist_runtime));
 
     let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
+    let (output_playlist_tx, output_playlist_rx) = mpsc::channel::<ipc::OutputPlaylistRequest>();
     let desired_cfg = Arc::new(Mutex::new(cfg.clone()));
     let current_cfg = Arc::new(Mutex::new(cfg.clone()));
     let runtime_cfg_toml = Arc::new(Mutex::new(cfg.to_toml_pretty()?));
@@ -140,7 +145,41 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let runtime_state = runtime_state.clone();
             let playlist_runtime = playlist_runtime.clone();
             let playlist_state_path = playlist_state_path.clone();
+            let output_playlist_tx = output_playlist_tx.clone();
             move |command| {
+                if let PlaylistCommand::Output { output, action } = &command {
+                    if let OutputPlaylistAction::Play(name) = action {
+                        let mut next_cfg = desired_cfg
+                            .lock()
+                            .map_err(|_| anyhow!("failed to read desired output config"))?
+                            .clone();
+                        if !next_cfg.playlists.definitions.contains_key(name) {
+                            return Err(anyhow!("playlist '{name}' does not exist"));
+                        }
+                        next_cfg
+                            .outputs
+                            .insert(output.clone(), OutputBinding::playlist(name.clone()));
+                        schedule_config_reconfigure(
+                            next_cfg,
+                            &desired_cfg,
+                            &runtime_cfg_toml,
+                            &runtime_state,
+                            &playlist_tx,
+                        )?;
+                    }
+                    let (reply_tx, reply_rx) = mpsc::channel();
+                    output_playlist_tx
+                        .send(ipc::OutputPlaylistRequest {
+                            output: output.clone(),
+                            action: action.clone(),
+                            reply: reply_tx,
+                        })
+                        .context("failed to send output playlist command to runtime")?;
+                    return reply_rx
+                        .recv_timeout(Duration::from_secs(2))
+                        .map_err(|_| anyhow!("timed out waiting for output playlist command"))?
+                        .map_err(anyhow::Error::msg);
+                }
                 let now = Instant::now();
                 let (selection, active_name) = {
                     let mut runtime = playlist_runtime
@@ -170,6 +209,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                         PlaylistCommand::Stop => {
                             runtime.stop();
                             None
+                        }
+                        PlaylistCommand::Output { .. } => {
+                            unreachable!("output playlist commands are handled before global runtime mutation")
                         }
                     };
                     persist_playlist_runtime(playlist_state_path.as_deref(), &runtime);
@@ -258,10 +300,12 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
 
         let exit = match run_runtime_loop(
             &next_cfg,
+            desired_cfg.clone(),
             &shutdown_requested,
             &runtime_state,
             generation,
             &control_rx,
+            &output_playlist_rx,
         ) {
             Ok(exit) => exit,
             Err(err) => {
@@ -366,7 +410,11 @@ fn schedule_config_reconfigure(
         *guard = next_cfg.to_toml_pretty()?;
     }
     if let Ok(mut state) = runtime_state.lock() {
-        state.begin_switch(&next_cfg);
+        if resolve_backend(&next_cfg) == BackendKind::LayerShell {
+            state.live_reconfigure(&next_cfg);
+        } else {
+            state.begin_switch(&next_cfg);
+        }
     }
     control_tx
         .send(ControlCommand::Reconfigure)
@@ -380,7 +428,7 @@ struct RuntimeState {
     generation: u64,
     source: String,
     error: Option<String>,
-    runtime_status: Option<RuntimeStatusSnapshot>,
+    runtime_statuses: std::collections::BTreeMap<String, RuntimeStatusSnapshot>,
 }
 
 impl RuntimeState {
@@ -391,7 +439,7 @@ impl RuntimeState {
             generation: 0,
             source: cfg.renderer.source.clone(),
             error: None,
-            runtime_status: None,
+            runtime_statuses: Default::default(),
         }
     }
 
@@ -401,7 +449,7 @@ impl RuntimeState {
         self.phase = RuntimePhase::Starting;
         self.source = cfg.renderer.source.clone();
         self.error = None;
-        self.runtime_status = None;
+        self.runtime_statuses.clear();
         self.generation
     }
 
@@ -410,7 +458,14 @@ impl RuntimeState {
         self.phase = RuntimePhase::Starting;
         self.source = cfg.renderer.source.clone();
         self.error = None;
-        self.runtime_status = None;
+        self.runtime_statuses.clear();
+    }
+
+    fn live_reconfigure(&mut self, cfg: &Config) {
+        self.backend = resolve_backend(cfg);
+        self.source = cfg.renderer.source.clone();
+        self.error = None;
+        self.runtime_statuses.clear();
     }
 
     fn mark_running(&mut self, generation: u64) {
@@ -449,7 +504,11 @@ impl RuntimeState {
     }
 
     fn update_runtime_status(&mut self, status: RuntimeStatusSnapshot) {
-        self.runtime_status = Some(status);
+        if status.remove_output {
+            self.runtime_statuses.remove(&status.output_name);
+            return;
+        }
+        self.runtime_statuses.insert(status.output_name.clone(), status);
     }
 
     fn render_status_toml(&self) -> String {
@@ -457,15 +516,22 @@ impl RuntimeState {
             "[orchestrator]".to_string(),
             format!("backend = \"{}\"", backend_name(self.backend)),
             format!("phase = \"{}\"", self.phase.as_str()),
+            format!("multi_output = {}", self.backend == BackendKind::LayerShell),
             format!("generation = {}", self.generation),
             format!("source = {:?}", self.source),
         ];
         if let Some(error) = &self.error {
             lines.push(format!("error = {:?}", error));
         }
-        if let Some(status) = &self.runtime_status {
+        if self.runtime_statuses.len() == 1 {
+            let status = self.runtime_statuses.values().next().expect("one runtime status");
             lines.push(String::new());
             lines.push(status.render_toml());
+        } else if !self.runtime_statuses.is_empty() {
+            for (output_name, status) in &self.runtime_statuses {
+                lines.push(String::new());
+                lines.push(status.render_output_toml(output_name));
+            }
         }
         lines.join("\n")
     }
@@ -498,14 +564,13 @@ fn update_runtime_snapshot(
 
 fn run_runtime_loop(
     cfg: &Config,
-    shutdown_requested: &AtomicBool,
+    desired_cfg: Arc<Mutex<Config>>,
+    shutdown_requested: &Arc<AtomicBool>,
     runtime_state: &Arc<Mutex<RuntimeState>>,
     generation: u64,
     control_rx: &mpsc::Receiver<ControlCommand>,
+    output_playlist_rx: &mpsc::Receiver<ipc::OutputPlaylistRequest>,
 ) -> Result<RuntimeLoopExit> {
-    if cfg.renderer.source.trim().is_empty() {
-        return Err(anyhow!("renderer.source is required"));
-    }
     let mut cfg = cfg.clone();
     cfg.renderer.options_json = Some(we_core::config::merge_scene_source_options(
         cfg.renderer.options_json.as_deref(),
@@ -528,6 +593,13 @@ fn run_runtime_loop(
     }
 
     let backend = resolve_backend(&cfg);
+    if cfg.renderer.source.trim().is_empty()
+        && !(backend == BackendKind::LayerShell && !cfg.outputs.is_empty())
+    {
+        return Err(anyhow!(
+            "renderer.source is required when no per-output bindings are configured"
+        ));
+    }
 
     info!(
         backend = backend_name(backend),
@@ -542,21 +614,43 @@ fn run_runtime_loop(
     }
 
     let mut backend_impl = backend::create_backend(backend);
-    let mut hook_trigger = WallpaperAppliedTrigger::default();
+    let hook_cfg = desired_cfg.clone();
+    let mut hook_triggers = BTreeMap::<String, (String, WallpaperAppliedTrigger)>::new();
     let mut status_sink = |snapshot: RuntimeStatusSnapshot| {
-        let wallpaper_applied = hook_trigger.observe(&snapshot);
+        let output_key = snapshot.output_name.clone();
+        let source = if snapshot.output_source.is_empty() {
+            cfg.renderer.source.clone()
+        } else {
+            snapshot.output_source.clone()
+        };
+        let wallpaper_applied = if snapshot.remove_output {
+            hook_triggers.remove(&output_key);
+            false
+        } else {
+            let entry = hook_triggers
+                .entry(output_key)
+                .or_insert_with(|| (source.clone(), WallpaperAppliedTrigger::default()));
+            if entry.0 != source {
+                *entry = (source.clone(), WallpaperAppliedTrigger::default());
+            }
+            entry.1.observe(&snapshot)
+        };
         update_runtime_snapshot(runtime_state, snapshot);
         if wallpaper_applied {
-            hooks::spawn_wallpaper_applied(
-                cfg.hooks.wallpaper_applied.as_ref(),
-                WallpaperAppliedContext { source: &cfg.renderer.source, backend, generation },
-            );
+            if let Ok(current_cfg) = hook_cfg.lock() {
+                hooks::spawn_wallpaper_applied(
+                    current_cfg.hooks.wallpaper_applied.as_ref(),
+                    WallpaperAppliedContext { source: &source, backend, generation },
+                );
+            }
         }
     };
     backend_impl.run(BackendContext {
         cfg: &cfg,
-        shutdown_requested,
+        desired_cfg,
+        shutdown_requested: shutdown_requested.clone(),
         control_rx,
+        output_playlist_rx: Some(output_playlist_rx),
         status_sink: &mut status_sink,
     })
 }
@@ -643,11 +737,39 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
 
     let source_path = expand_tilde(&cfg.renderer.source);
     if cfg.renderer.source.trim().is_empty() {
-        lines.push("ERR renderer.source = empty".to_string());
+        if cfg.outputs.is_empty() {
+            lines.push("ERR renderer.source = empty".to_string());
+        } else {
+            lines.push(format!("OK renderer.source = per-output bindings ({})", cfg.outputs.len()));
+        }
     } else if source_path.is_dir() {
         lines.push(format!("OK renderer.source = {}", source_path.display()));
     } else {
         lines.push(format!("ERR renderer.source = missing {}", source_path.display()));
+    }
+
+    for (output, binding) in &cfg.outputs {
+        if binding.is_ambiguous() {
+            lines.push(format!(
+                "ERR output.{output} = wallpaper and playlist bindings are mutually exclusive"
+            ));
+            continue;
+        }
+        if let Some(source) = binding.source.as_deref() {
+            let source = expand_tilde(source);
+            if source.is_dir() {
+                lines.push(format!("OK output.{output}.source = {}", source.display()));
+            } else {
+                lines.push(format!("ERR output.{output}.source = missing {}", source.display()));
+            }
+        }
+        if let Some(playlist) = binding.playlist.as_deref() {
+            if cfg.playlists.definitions.contains_key(playlist) {
+                lines.push(format!("OK output.{output}.playlist = {playlist}"));
+            } else {
+                lines.push(format!("ERR output.{output}.playlist = missing {playlist}"));
+            }
+        }
     }
 
     if cfg.renderer.assets_path.trim().is_empty() {
@@ -826,7 +948,24 @@ mod tests {
         let status = state.render_status_toml();
 
         assert!(status.contains("phase = \"running\""));
+        assert!(status.contains("multi_output = true"));
         assert!(status.contains("source = \"/tmp/workshop/item\""));
+    }
+
+    #[test]
+    fn layer_shell_live_reconfigure_preserves_running_phase() {
+        let mut cfg = Config::default();
+        cfg.renderer.source = "/tmp/workshop/one".to_string();
+        let mut state = RuntimeState::new(&cfg);
+        let generation = state.begin_session(&cfg);
+        state.mark_running(generation);
+
+        let mut next = cfg.clone();
+        next.renderer.source = "/tmp/workshop/two".to_string();
+        state.live_reconfigure(&next);
+
+        assert_eq!(state.phase, RuntimePhase::Running);
+        assert_eq!(state.source, "/tmp/workshop/two");
     }
 
     #[test]
@@ -835,13 +974,18 @@ mod tests {
         cfg.renderer.source.clear();
         cfg.renderer.assets_path = "/tmp/assets".to_string();
         let state = std::sync::Arc::new(std::sync::Mutex::new(RuntimeState::new(&cfg)));
+        let desired = std::sync::Arc::new(std::sync::Mutex::new(cfg.clone()));
         let (_tx, rx) = std::sync::mpsc::channel();
-        let stop = AtomicBool::new(false);
+        let (_output_tx, output_rx) = std::sync::mpsc::channel();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
 
-        let err = super::run_runtime_loop(&cfg, &stop, &state, 1, &rx)
+        let err = super::run_runtime_loop(&cfg, desired, &stop, &state, 1, &rx, &output_rx)
             .expect_err("missing source should fail");
 
-        assert_eq!(err.to_string(), "renderer.source is required");
+        assert_eq!(
+            err.to_string(),
+            "renderer.source is required when no per-output bindings are configured"
+        );
     }
 
     #[test]
@@ -857,10 +1001,12 @@ mod tests {
         cfg.renderer.assets_path = "/tmp/assets".to_string();
         cfg.renderer.options_json = Some("{invalid".to_string());
         let state = std::sync::Arc::new(std::sync::Mutex::new(RuntimeState::new(&cfg)));
+        let desired = std::sync::Arc::new(std::sync::Mutex::new(cfg.clone()));
         let (_tx, rx) = std::sync::mpsc::channel();
-        let stop = AtomicBool::new(false);
+        let (_output_tx, output_rx) = std::sync::mpsc::channel();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
 
-        let err = super::run_runtime_loop(&cfg, &stop, &state, 1, &rx)
+        let err = super::run_runtime_loop(&cfg, desired, &stop, &state, 1, &rx, &output_rx)
             .expect_err("invalid options_json should fail");
 
         assert!(err.to_string().contains("renderer.options_json must be valid JSON"));

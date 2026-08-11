@@ -17,6 +17,27 @@ we-layerd ctl reload
 we-layerd ctl status
 ```
 
+守护进程管理的播放列表在 `we-gui` 关闭后仍会继续推进：
+
+```bash
+we-layerd playlist play "Daily"
+we-layerd playlist next
+we-layerd playlist previous
+we-layerd playlist stop
+```
+
+layer-shell 下可以用 `--output` 只控制指定输出自己的播放列表运行时：
+
+```bash
+we-layerd playlist play "Daily" --output DP-1
+we-layerd playlist next --output DP-1
+we-layerd playlist previous --output DP-1
+we-layerd playlist stop --output DP-1
+```
+
+全局播放列表位置会在守护进程重启后恢复；per-output 播放列表各自维护独立的内存
+cursor 与计时器。
+
 其他命令：
 ```bash
 we-layerd doctor

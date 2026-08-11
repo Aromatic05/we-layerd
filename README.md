@@ -38,6 +38,8 @@ It supports compositors implementing the layer-shell protocol, including niri, H
 
 - Applies and switches wallpapers directly from `we-gui` without manually restarting the runtime.
 - Provides play, pause, resume, stop, and tray controls.
+- Supports named daemon-managed playlists with ordered, repeat, shuffle, manual, and per-entry timing controls.
+- Assigns different wallpapers or playlists to named Wayland outputs from the GUI.
 - Configures frame rate, playback speed, audio volume, and mute state per wallpaper.
 - Can follow the output resolution or use a fixed rendering resolution.
 - Supports cover, fit, stretch, and center scaling modes, plus 0°, 90°, 180°, and 270° rotation.
@@ -47,6 +49,8 @@ It supports compositors implementing the layer-shell protocol, including niri, H
 ### Wayland-native rendering
 
 - Presents wallpapers as desktop surfaces through layer-shell rather than ordinary application windows.
+- Runs each named layer-shell output in an isolated surface/renderer worker so one output can be reconfigured or fail without tearing down the others.
+- Reconciles output hotplug by stable `wl_output.name` identity.
 - Uses DMA-BUF presentation for a zero-copy path when the renderer and compositor share compatible formats and modifiers.
 - Falls back to shared-memory presentation when DMA-BUF is unavailable or unsuitable, including common hybrid-GPU configurations.
 - Handles output size, integer and fractional scaling, viewport cropping, and dynamic renderer resizing.

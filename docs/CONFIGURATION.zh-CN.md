@@ -16,7 +16,8 @@ assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 ```
 
 - `renderer.library_path`：留空表示自动查找，也可以显式指定 `libwallpaper-engine-renderer.so` 的路径
-- `renderer.source`：workshop 壁纸目录，不是视频文件，也不是 Wallpaper Engine 的 CLI 参数
+- `renderer.source`：单屏/默认回退使用的 workshop 壁纸目录。layer-shell 的输出绑定已经
+  覆盖所有需要运行的屏幕时可以留空；它不是视频文件，也不是 Wallpaper Engine 的 CLI 参数。
 - `renderer.assets_path`：Wallpaper Engine 的 `assets/` 目录
 
 ## 通用设置
@@ -63,6 +64,43 @@ muted = false
 - v4 feedback 运行中变化时会重新传入 renderer，并重新绑定输出或退回 SHM
 - `prefer_dmabuf` 决定是否优先 DMA-BUF，`allow_shm_fallback` 决定无兼容组合时是否允许退回 SHM
 
+## 多输出 layer-shell 运行时
+
+Wayland 输出使用协议版本 4 提供的稳定 `wl_output.name` 标识。每个输出拥有独立的
+layer surface、renderer session、buffer/presentation 状态以及播放列表 cursor/计时器。
+某一屏重配置或失败不会销毁其它输出 worker。
+
+```toml
+[renderer]
+# 未显式绑定的输出可以使用这个回退；也可以留空。
+source = "/path/to/Steam/steamapps/workshop/content/431960/1111111111"
+
+[outputs."DP-1"]
+wallpaper_id = "2222222222"
+source = "/path/to/Steam/steamapps/workshop/content/431960/2222222222"
+
+[outputs."HDMI-A-1"]
+playlist = "Daily"
+```
+
+一个输出只能绑定一张壁纸（`wallpaper_id` + `source`）或一个命名播放列表，不能同时
+绑定两者。`renderer.source` 为空时，没有显式绑定的输出不会启动 worker。显示器移除时
+只停止对应 worker，新显示器出现时也只启动新适用的 worker。无效配置或单屏运行失败会
+写入该输出的状态，不会停止健康屏幕。
+
+每个输出的播放列表状态相互独立，可单独控制：
+
+```bash
+we-layerd playlist play Daily --output DP-1
+we-layerd playlist next --output DP-1
+we-layerd playlist previous --output DP-1
+we-layerd playlist stop --output DP-1
+```
+
+只有一个 output worker 时，`we-layerd ctl status` 继续输出兼容的 `[runtime]` /
+`[presentation]`；多屏时使用 `[output_runtime."<name>".runtime]` 与
+`[output_runtime."<name>".presentation]` 分别报告 source、播放列表 cursor 和呈现状态。
+
 ## 壁纸应用 Hook
 
 可以配置一个通用命令 Hook，用于接入 DMS/Matugen 等主题生成器，而不让 `we-layerd`
@@ -74,9 +112,10 @@ command = "~/.local/bin/we-theme-sync"
 args = []
 ```
 
-每次成功启动、切换壁纸或 reload 后，首帧提交成功时会异步启动一次该命令。Hook
-启动失败或退出码非零只会写入日志，不会中止壁纸运行。`command` 会被直接执行，
-不会经过 Shell；管道、重定向等 Shell 语法应写进单独的可执行脚本。
+每个输出成功启动或切换壁纸后，首帧提交成功时都会独立异步启动一次该命令。例如
+DP-1 的首帧不会抑制 HDMI-A-1 的 Hook。Hook 启动失败或退出码非零只会写入日志，
+不会中止壁纸运行。`command` 会被直接执行，不会经过 Shell；管道、重定向等 Shell
+语法应写进单独的可执行脚本。
 
 Hook 会继承守护进程环境，并额外收到：
 
@@ -97,7 +136,8 @@ Hook 会继承守护进程环境，并额外收到：
 
 `we-gui` 现在只生成 renderer-native 配置：
 
-- 将 `renderer.source` 写成选中的 workshop 壁纸目录
+- 旧单屏模式下将 `renderer.source` 写成选中的 workshop 壁纸目录
+- 多输出模式下只更新壁纸 profile 和 `[outputs]` 绑定，并保留全局 `renderer.source` 回退
 - 从 Wallpaper Engine 安装目录推导 `renderer.assets_path`
 - 合并 scene 用户属性和可选的音频循环覆盖，同时保留其它 `renderer.options_json` 字段
 - 生成所选壁纸配置时保留 `hooks` 配置

@@ -119,6 +119,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             playlist_entry_duration_inputs,
             runtime_playlist_active: None,
             runtime_playlist_index: None,
+            runtime_outputs: Default::default(),
             legacy_shuffle: LegacyShuffleMigration {
                 enabled: preferences.shuffle_enabled,
                 interval_ms: preferences.shuffle_interval_ms,

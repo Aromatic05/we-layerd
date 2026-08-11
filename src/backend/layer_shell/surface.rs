@@ -196,6 +196,21 @@ impl Dispatch<WlOutput, ()> for LayerShellState {
     }
 }
 
+impl Dispatch<WlOutput, u32> for LayerShellState {
+    fn event(
+        state: &mut Self,
+        _proxy: &WlOutput,
+        event: wl_output::Event,
+        global_name: &u32,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Name { name } = event {
+            state.discovered_output_names.insert(*global_name, name);
+        }
+    }
+}
+
 impl Dispatch<WpFractionalScaleV1, ()> for LayerShellState {
     fn event(
         state: &mut Self,
@@ -490,8 +505,9 @@ pub(super) fn init_wayland(
     _conn: &Connection,
     qh: &QueueHandle<LayerShellState>,
     state: &mut LayerShellState,
-    globals: &wayland_client::globals::GlobalList,
     compositor: WlCompositor,
+    selected_output: WlOutput,
+    output_count: u32,
     layer_shell: Option<ZwlrLayerShellV1>,
     shm: WlShm,
     dmabuf: Option<ZwpLinuxDmabufV1>,
@@ -519,21 +535,8 @@ pub(super) fn init_wayland(
         ));
     }
 
-    let output_globals: Vec<_> = globals
-        .contents()
-        .clone_list()
-        .into_iter()
-        .filter(|g| g.interface == "wl_output")
-        .collect();
-    state.output_count = output_globals.len() as u32;
-    if let Some(first_output) = output_globals.first() {
-        let version = first_output.version.min(4);
-        state.objects.output = Some(globals.registry().bind(first_output.name, version, qh, ()));
-    }
-
-    if state.output_count > 1 {
-        tracing::info!("compositor exposed {} outputs, using the first one", state.output_count);
-    }
+    state.output_count = output_count;
+    state.objects.output = Some(selected_output);
 
     state.objects.surface = Some(compositor.create_surface(qh, ()));
     let surface = state.objects.surface.as_ref().unwrap();

@@ -61,11 +61,28 @@ pub enum ControlAction {
 #[derive(Debug, Clone, Subcommand)]
 pub enum PlaylistAction {
     /// Start a named playlist
-    Play { name: String },
+    Play {
+        name: String,
+        /// Restrict the action to one Wayland output
+        #[arg(long)]
+        output: Option<String>,
+    },
     /// Advance to the next playable entry
-    Next,
+    Next {
+        /// Restrict the action to one Wayland output
+        #[arg(long)]
+        output: Option<String>,
+    },
     /// Return to the previous playable entry
-    Previous,
+    Previous {
+        /// Restrict the action to one Wayland output
+        #[arg(long)]
+        output: Option<String>,
+    },
     /// Stop playlist progression while leaving the current wallpaper running
-    Stop,
+    Stop {
+        /// Restrict the action to one Wayland output
+        #[arg(long)]
+        output: Option<String>,
+    },
 }

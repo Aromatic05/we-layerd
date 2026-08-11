@@ -74,8 +74,11 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                         .find(|entry| entry.id == item.wallpaper_id)
                         .map(|entry| entry.title.as_str())
                         .unwrap_or(item.wallpaper_id.as_str());
-                    let current = app.runtime_playlist_active.as_deref() == Some(name)
-                        && app.runtime_playlist_index == Some(index);
+                    let current = app.runtime_outputs.values().any(|runtime| {
+                        runtime.playlist_active.as_deref() == Some(name)
+                            && runtime.playlist_index == Some(index)
+                    }) || (app.runtime_playlist_active.as_deref() == Some(name)
+                        && app.runtime_playlist_index == Some(index));
                     let duration = app
                         .playlist_entry_duration_inputs
                         .get(index)
@@ -146,7 +149,27 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                 }
             }
 
-            let active_status = if app.runtime_playlist_active.as_deref() == Some(name) {
+            let output_statuses = app
+                .runtime_outputs
+                .iter()
+                .filter_map(|(output, runtime)| {
+                    (runtime.playlist_active.as_deref() == Some(name)).then(|| {
+                        runtime
+                            .playlist_index
+                            .map(|index| format!("{output}: {}", index + 1))
+                            .unwrap_or_else(|| output.clone())
+                    })
+                })
+                .collect::<Vec<_>>();
+            let active_status = if !output_statuses.is_empty() {
+                text(format!(
+                    "{} · {}",
+                    language.text(Text::ActivePlaylist),
+                    output_statuses.join(" · ")
+                ))
+                .size(12)
+                .color(Color::from_rgb8(174, 198, 255))
+            } else if app.runtime_playlist_active.as_deref() == Some(name) {
                 let current = app
                     .runtime_playlist_index
                     .map(|index| {
@@ -159,6 +182,17 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             } else {
                 text("").size(12)
             };
+
+            let mut output_targets = row!().spacing(6);
+            for output in &app.outputs {
+                let active = app.selected_outputs.contains(output);
+                let output_name = output.clone();
+                output_targets = output_targets.push(
+                    button(text(if active { format!("✓ {output}") } else { output.clone() }))
+                        .on_press(Message::ToggleOutput(output_name))
+                        .style(move |_theme, status| playlist_button_style(active, status)),
+                );
+            }
 
             column![
                 active_status,
@@ -194,6 +228,8 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                         .style(super::detail::outlined_button_style),
                 ]
                 .spacing(6),
+                text(language.text(Text::ApplyToDisplays)).size(13),
+                output_targets,
                 column![
                     row![
                         button(text(language.text(Text::PlayPlaylist)))
