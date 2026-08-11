@@ -16,6 +16,7 @@ use tracing::{info, warn};
 use we_core::{
     config::OutputBinding,
     install_layout::{expand_tilde, resolve_renderer_library},
+    profile::apply_profile_to_outputs,
 };
 use we_renderer::RendererLibrary;
 
@@ -28,7 +29,10 @@ use crate::{
     },
     config::Config,
     hooks::{self, WallpaperAppliedContext, WallpaperAppliedTrigger},
-    ipc::{self, ControlCommand, OutputPlaylistAction, PlaylistCommand, RuntimeLoopExit},
+    ipc::{
+        self, ControlCommand, OutputPlaylistAction, PlaylistCommand, ProfileCommand,
+        RuntimeLoopExit,
+    },
     runtime::{
         control::RuntimePhase,
         playlist::{self, AdvanceDirection, PlaylistRuntime, PlaylistSelection},
@@ -72,6 +76,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let command_tx = control_tx.clone();
     let switch_tx = control_tx.clone();
     let playlist_tx = control_tx.clone();
+    let persisted_config_path = config_path.map(Path::to_path_buf);
 
     let _control_server = ipc::ControlServer::start(
         control_tx,
@@ -146,19 +151,28 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let playlist_runtime = playlist_runtime.clone();
             let playlist_state_path = playlist_state_path.clone();
             let output_playlist_tx = output_playlist_tx.clone();
+            let persisted_config_path = persisted_config_path.clone();
             move |command| {
                 if let PlaylistCommand::Output { output, action } = &command {
                     if let OutputPlaylistAction::Play(name) = action {
-                        let mut next_cfg = desired_cfg
+                        let next_cfg = desired_cfg
                             .lock()
                             .map_err(|_| anyhow!("failed to read desired output config"))?
                             .clone();
-                        if !next_cfg.playlists.definitions.contains_key(name) {
-                            return Err(anyhow!("playlist '{name}' does not exist"));
+                        let playlist = next_cfg
+                            .playlists
+                            .definitions
+                            .get(name)
+                            .ok_or_else(|| anyhow!("playlist '{name}' does not exist"))?;
+                        if !playlist.items.iter().any(playlist_item_is_available) {
+                            return Err(anyhow!("playlist '{name}' has no playable item"));
                         }
-                        next_cfg
-                            .outputs
-                            .insert(output.clone(), OutputBinding::playlist(name.clone()));
+                        let next_cfg = persist_output_binding_change(
+                            next_cfg,
+                            output,
+                            OutputBinding::playlist(name.clone()),
+                            persisted_config_path.as_deref(),
+                        )?;
                         schedule_config_reconfigure(
                             next_cfg,
                             &desired_cfg,
@@ -175,16 +189,37 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                             reply: reply_tx,
                         })
                         .context("failed to send output playlist command to runtime")?;
-                    return reply_rx
+                    let persisted_binding = reply_rx
                         .recv_timeout(Duration::from_secs(2))
                         .map_err(|_| anyhow!("timed out waiting for output playlist command"))?
-                        .map_err(anyhow::Error::msg);
+                        .map_err(anyhow::Error::msg)?;
+                    if let Some(binding) = persisted_binding {
+                        let next_cfg = desired_cfg
+                            .lock()
+                            .map_err(|_| anyhow!("failed to update desired output config"))?
+                            .clone();
+                        let next_cfg = persist_output_binding_change(
+                            next_cfg,
+                            output,
+                            binding,
+                            persisted_config_path.as_deref(),
+                        )?;
+                        schedule_config_reconfigure(
+                            next_cfg,
+                            &desired_cfg,
+                            &runtime_cfg_toml,
+                            &runtime_state,
+                            &playlist_tx,
+                        )?;
+                    }
+                    return Ok(());
                 }
                 let now = Instant::now();
                 let (selection, active_name) = {
                     let mut runtime = playlist_runtime
                         .lock()
                         .map_err(|_| anyhow!("playlist runtime lock poisoned"))?;
+                    let previous_runtime = runtime.clone();
                     let selection = match &command {
                         PlaylistCommand::Play(name) => {
                             let first = runtime.play(name, now).map_err(anyhow::Error::msg)?;
@@ -214,12 +249,27 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                             unreachable!("output playlist commands are handled before global runtime mutation")
                         }
                     };
+                    if matches!(&command, PlaylistCommand::Play(_)) && selection.is_none() {
+                        *runtime = previous_runtime;
+                        return Err(anyhow!("playlist has no playable item"));
+                    }
+                    let active_name = runtime.active_name().map(str::to_string);
+                    if matches!(&command, PlaylistCommand::Play(_) | PlaylistCommand::Stop) {
+                        if let Err(error) = update_playlist_active_config(
+                            active_name.clone(),
+                            &desired_cfg,
+                            &runtime_cfg_toml,
+                            persisted_config_path.as_deref(),
+                        ) {
+                            *runtime = previous_runtime;
+                            return Err(error);
+                        }
+                    }
                     persist_playlist_runtime(playlist_state_path.as_deref(), &runtime);
-                    (selection, runtime.active_name().map(str::to_string))
+                    (selection, active_name)
                 };
 
                 if matches!(command, PlaylistCommand::Stop) {
-                    update_playlist_active_config(None, &desired_cfg, &runtime_cfg_toml)?;
                     return Ok(());
                 }
 
@@ -233,6 +283,46 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                     &runtime_state,
                     &playlist_tx,
                 )
+            }
+        },
+        {
+            let desired_cfg = desired_cfg.clone();
+            let runtime_cfg_toml = runtime_cfg_toml.clone();
+            let runtime_state = runtime_state.clone();
+            let profile_tx = switch_tx.clone();
+            let persisted_config_path = persisted_config_path.clone();
+            move |command| match command {
+                ProfileCommand::Apply(name) => {
+                    let mut next_cfg = desired_cfg
+                        .lock()
+                        .map_err(|_| anyhow!("failed to read desired profile config"))?
+                        .clone();
+                    let profiles = next_cfg.profiles.clone();
+                    let playlists = next_cfg.playlists.clone();
+                    apply_profile_to_outputs(
+                        &profiles,
+                        &name,
+                        &playlists,
+                        &mut next_cfg.outputs,
+                        |source| Path::new(source).join("project.json").is_file(),
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                    next_cfg.profiles.active = Some(name);
+                    if let Some(path) = persisted_config_path.as_deref() {
+                        we_core::config::save_profiles_and_outputs(
+                            path,
+                            &next_cfg.profiles,
+                            &next_cfg.outputs,
+                        )?;
+                    }
+                    schedule_config_reconfigure(
+                        next_cfg,
+                        &desired_cfg,
+                        &runtime_cfg_toml,
+                        &runtime_state,
+                        &profile_tx,
+                    )
+                }
             }
         },
     )?;
@@ -366,12 +456,16 @@ fn update_playlist_active_config(
     active_name: Option<String>,
     desired_cfg: &Arc<Mutex<Config>>,
     runtime_cfg_toml: &Arc<Mutex<String>>,
+    persisted_config_path: Option<&Path>,
 ) -> Result<()> {
     let mut next_cfg = desired_cfg
         .lock()
         .map_err(|_| anyhow!("failed to update desired playlist config"))?
         .clone();
     next_cfg.playlists.active = active_name;
+    if let Some(path) = persisted_config_path {
+        we_core::config::save_playlists(path, &next_cfg.playlists)?;
+    }
     if let Ok(mut guard) = desired_cfg.lock() {
         *guard = next_cfg.clone();
     }
@@ -379,6 +473,20 @@ fn update_playlist_active_config(
         *guard = next_cfg.to_toml_pretty()?;
     }
     Ok(())
+}
+
+fn persist_output_binding_change(
+    mut next_cfg: Config,
+    output: &str,
+    binding: OutputBinding,
+    persisted_config_path: Option<&Path>,
+) -> Result<Config> {
+    next_cfg.outputs.insert(output.to_string(), binding);
+    next_cfg.profiles.active = None;
+    if let Some(path) = persisted_config_path {
+        we_core::config::save_profiles_and_outputs(path, &next_cfg.profiles, &next_cfg.outputs)?;
+    }
+    Ok(next_cfg)
 }
 
 fn schedule_playlist_selection(
@@ -898,15 +1006,77 @@ fn install_runtime_ctrlc_handler(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
+    use std::{
+        fs,
+        sync::{atomic::AtomicBool, Arc, Mutex},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::{
-        handle_runtime_control_command, request_runtime_shutdown, RuntimePhase, RuntimeState,
+        handle_runtime_control_command, persist_output_binding_change, request_runtime_shutdown,
+        update_playlist_active_config, RuntimePhase, RuntimeState,
     };
     use crate::{
         config::Config,
         ipc::{ControlCommand, RuntimeLoopExit},
     };
+    use we_core::playlist::{Playlist, PlaylistConfig};
+
+    fn temp_config_path(label: &str) -> std::path::PathBuf {
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
+        std::env::temp_dir().join(format!("we-layerd-{label}-{}-{suffix}.toml", std::process::id()))
+    }
+
+    #[test]
+    fn playlist_stop_persists_inactive_state_for_the_next_daemon_start() {
+        let path = temp_config_path("playlist-stop");
+        let mut cfg = Config {
+            playlists: PlaylistConfig {
+                active: Some("Focus".to_string()),
+                ..PlaylistConfig::default()
+            },
+            ..Config::default()
+        };
+        cfg.playlists.definitions.insert("Focus".to_string(), Playlist::default());
+        fs::write(&path, cfg.to_toml_pretty().expect("serialize config")).expect("write config");
+
+        let desired = Arc::new(Mutex::new(cfg));
+        let runtime_toml = Arc::new(Mutex::new(String::new()));
+        update_playlist_active_config(None, &desired, &runtime_toml, Some(&path))
+            .expect("persist stopped playlist");
+
+        let reloaded = Config::load(Some(&path)).expect("reload persisted config");
+        assert_eq!(reloaded.playlists.active, None);
+        assert_eq!(desired.lock().expect("desired config").playlists.active, None);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn output_playlist_stop_persists_the_current_wallpaper_for_worker_recreation() {
+        let path = temp_config_path("output-playlist-stop");
+        let mut cfg = Config::default();
+        cfg.outputs.insert("DP-1".to_string(), we_core::config::OutputBinding::playlist("Focus"));
+        cfg.profiles.active = Some("Desk".to_string());
+        fs::write(&path, cfg.to_toml_pretty().expect("serialize config")).expect("write config");
+
+        persist_output_binding_change(
+            cfg,
+            "DP-1",
+            we_core::config::OutputBinding::wallpaper("two", "/wallpapers/two"),
+            Some(&path),
+        )
+        .expect("persist stopped output playlist");
+
+        let reloaded = Config::load(Some(&path)).expect("reload persisted config");
+        assert_eq!(
+            reloaded.outputs.get("DP-1"),
+            Some(&we_core::config::OutputBinding::wallpaper("two", "/wallpapers/two"))
+        );
+        assert_eq!(reloaded.profiles.active, None);
+
+        let _ = fs::remove_file(path);
+    }
 
     #[test]
     fn ctrlc_request_sends_single_stop() {

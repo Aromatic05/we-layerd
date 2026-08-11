@@ -9,7 +9,7 @@ use crate::{
         i18n::Text,
         ui_state::{Pane, Sidebar},
     },
-    ui::sidebar::{detail, playlist, settings},
+    ui::sidebar::{detail, playlist, profile, settings},
 };
 
 use super::{App, Message};
@@ -63,27 +63,29 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
             settings::build_settings_overlay(&app.ui_settings, app.language, &app.runtime_status)
         }
         Sidebar::Playlist => playlist::view(app),
+        Sidebar::Profile => profile::view(app),
         Sidebar::Detail => match app
             .selected_id
             .as_deref()
             .and_then(|id| app.entries.iter().find(|entry| entry.id == id))
         {
-            Some(entry) => detail::view(
+            Some(entry) => detail::view(detail::DetailViewState {
                 entry,
-                app.launch_settings
+                settings: app
+                    .launch_settings
                     .wallpapers
                     .get(&entry.id)
                     .expect("selected wallpaper must have a profile"),
-                &app.selected_schema,
-                &app.resolution_width,
-                &app.resolution_height,
-                app.detail_tab,
-                app.selected_wallpaper_is_running(),
-                app.playback_paused,
-                &app.outputs,
-                &app.selected_outputs,
-                app.language,
-            )
+                schema: &app.selected_schema,
+                resolution_width: &app.resolution_width,
+                resolution_height: &app.resolution_height,
+                active_tab: app.detail_tab,
+                is_running: app.selected_wallpaper_is_running(),
+                is_paused: app.playback_paused,
+                outputs: &app.outputs,
+                selected_outputs: &app.selected_outputs,
+                language: app.language,
+            })
             .map(Message::Detail),
             None => {
                 container(text(app.language.text(Text::SelectWallpaperDetails))).padding(24).into()

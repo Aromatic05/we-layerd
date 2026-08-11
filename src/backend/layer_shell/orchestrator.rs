@@ -27,7 +27,6 @@ static WORKER_INSTANCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputSpec {
-    pub(crate) worker_id: String,
     pub(crate) output_name: String,
     pub(crate) config: Config,
     pub(crate) binding: OutputBinding,
@@ -47,6 +46,7 @@ pub(crate) enum OutputAction {
     Stop(String),
 }
 
+#[cfg(test)]
 pub(crate) fn build_output_specs(
     base: &Config,
     discovered_outputs: &[String],
@@ -110,18 +110,13 @@ fn build_output_spec(base: &Config, output_name: &str) -> Result<Option<OutputSp
     // output workers accidentally share one cursor.
     config.playlists.active = binding.playlist.clone();
     let fingerprint = fingerprint_output_config(&config, &binding)?;
-    Ok(Some(OutputSpec {
-        worker_id: output_name.to_string(),
-        output_name: output_name.to_string(),
-        config,
-        binding,
-        fingerprint,
-    }))
+    Ok(Some(OutputSpec { output_name: output_name.to_string(), config, binding, fingerprint }))
 }
 
 fn fingerprint_output_config(config: &Config, binding: &OutputBinding) -> Result<String> {
     let mut effective = config.clone();
     effective.outputs.clear();
+    effective.profiles = Default::default();
     effective.gnome = Default::default();
     effective.hooks = Default::default();
 
@@ -197,6 +192,12 @@ struct OutputWorker {
     retry_at: Option<Instant>,
 }
 
+#[derive(Debug, Clone)]
+struct FailedStartRetry {
+    fingerprint: String,
+    retry_at: Instant,
+}
+
 impl Drop for OutputWorker {
     fn drop(&mut self) {
         self.stop_scheduler.store(true, Ordering::Relaxed);
@@ -211,7 +212,7 @@ impl Drop for OutputWorker {
 }
 
 enum WorkerEvent {
-    Status { instance_id: u64, snapshot: RuntimeStatusSnapshot },
+    Status { instance_id: u64, snapshot: Box<RuntimeStatusSnapshot> },
     Exited { output: String, instance_id: u64, error: Option<String> },
 }
 
@@ -219,9 +220,10 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
     let (worker_event_tx, worker_event_rx) = mpsc::channel::<WorkerEvent>();
     let output_playlist_rx = ctx.output_playlist_rx.take();
     let mut workers = BTreeMap::<String, OutputWorker>::new();
+    let mut failed_start_retries = BTreeMap::<String, FailedStartRetry>::new();
     let mut last_discovery = Instant::now() - Duration::from_secs(2);
 
-    reconcile_live_workers(&mut ctx, &mut workers, &worker_event_tx)?;
+    reconcile_live_workers(&mut ctx, &mut workers, &mut failed_start_retries, &worker_event_tx)?;
 
     loop {
         if ctx.shutdown_requested.load(Ordering::Relaxed) {
@@ -252,10 +254,21 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                 }
                 ControlCommand::Reload => {
                     stop_all_workers(&mut workers);
-                    reconcile_live_workers(&mut ctx, &mut workers, &worker_event_tx)?;
+                    failed_start_retries.clear();
+                    reconcile_live_workers(
+                        &mut ctx,
+                        &mut workers,
+                        &mut failed_start_retries,
+                        &worker_event_tx,
+                    )?;
                 }
                 ControlCommand::Reconfigure => {
-                    reconcile_live_workers(&mut ctx, &mut workers, &worker_event_tx)?;
+                    reconcile_live_workers(
+                        &mut ctx,
+                        &mut workers,
+                        &mut failed_start_retries,
+                        &worker_event_tx,
+                    )?;
                 }
             }
         }
@@ -263,9 +276,12 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
         if let Some(output_playlist_rx) = output_playlist_rx {
             while let Ok(request) = output_playlist_rx.try_recv() {
                 if output_playlist_action_requires_reconcile(&request.action) {
-                    if let Err(error) =
-                        reconcile_live_workers(&mut ctx, &mut workers, &worker_event_tx)
-                    {
+                    if let Err(error) = reconcile_live_workers(
+                        &mut ctx,
+                        &mut workers,
+                        &mut failed_start_retries,
+                        &worker_event_tx,
+                    ) {
                         let _ = request.reply.send(Err(error.to_string()));
                         continue;
                     }
@@ -282,7 +298,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                         .get(&snapshot.output_name)
                         .is_some_and(|worker| worker.instance_id == instance_id);
                     if current_instance {
-                        (ctx.status_sink)(snapshot);
+                        (ctx.status_sink)(*snapshot);
                     }
                 }
                 WorkerEvent::Exited { output, instance_id, error } => {
@@ -326,7 +342,12 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
 
         if last_discovery.elapsed() >= Duration::from_secs(1) {
             last_discovery = Instant::now();
-            if let Err(error) = reconcile_live_workers(&mut ctx, &mut workers, &worker_event_tx) {
+            if let Err(error) = reconcile_live_workers(
+                &mut ctx,
+                &mut workers,
+                &mut failed_start_retries,
+                &worker_event_tx,
+            ) {
                 warn!(%error, "failed to reconcile layer-shell outputs; keeping existing workers");
             }
         }
@@ -338,6 +359,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
 fn reconcile_live_workers(
     ctx: &mut BackendContext<'_>,
     workers: &mut BTreeMap<String, OutputWorker>,
+    failed_start_retries: &mut BTreeMap<String, FailedStartRetry>,
     worker_event_tx: &mpsc::Sender<WorkerEvent>,
 ) -> Result<()> {
     let discovered = outputs::list_output_names()?;
@@ -348,48 +370,72 @@ fn reconcile_live_workers(
         .clone();
     let (desired, spec_errors) = build_output_specs_with_errors(&desired_config, &discovered);
     let now = Instant::now();
-    let current = workers
+    failed_start_retries.retain(|output, _| desired.contains_key(output));
+    let mut current = workers
         .iter()
         .filter(|(_, worker)| {
             worker.handle.is_some() || !failed_worker_retry_due(worker.retry_at, now)
         })
         .map(|(name, worker)| (name.clone(), worker.fingerprint.clone()))
         .collect::<BTreeMap<_, _>>();
+    apply_start_retry_backoff(&mut current, &desired, failed_start_retries, now);
 
     for action in reconcile_workers(&current, &desired) {
         match action {
             OutputAction::Stop(output) => {
+                failed_start_retries.remove(&output);
                 stop_worker(workers, &output);
                 (ctx.status_sink)(RuntimeStatusSnapshot::removed_output(output));
             }
             OutputAction::Restart(output) => {
                 stop_worker(workers, &output);
                 if let Some(spec) = desired.get(&output).cloned() {
+                    let failed_fingerprint = spec.fingerprint.clone();
                     match spawn_worker(
                         spec,
                         ctx.shutdown_requested.clone(),
                         worker_event_tx.clone(),
                     ) {
                         Ok(worker) => {
+                            failed_start_retries.remove(&output);
                             workers.insert(output, worker);
                         }
-                        Err(error) => report_output_error(ctx, &output, error.to_string()),
+                        Err(error) => {
+                            failed_start_retries.insert(
+                                output.clone(),
+                                FailedStartRetry {
+                                    fingerprint: failed_fingerprint,
+                                    retry_at: Instant::now() + Duration::from_secs(3),
+                                },
+                            );
+                            report_output_error(ctx, &output, error.to_string());
+                        }
                     }
                 }
             }
             OutputAction::Start(output) => {
                 if let Some(spec) = desired.get(&output).cloned() {
+                    let failed_fingerprint = spec.fingerprint.clone();
                     match spawn_worker(
                         spec,
                         ctx.shutdown_requested.clone(),
                         worker_event_tx.clone(),
                     ) {
                         Ok(worker) => {
+                            failed_start_retries.remove(&output);
                             workers.insert(output, worker);
                         }
                         Err(error) => {
                             if let Some(worker) = workers.get_mut(&output) {
                                 worker.retry_at = Some(Instant::now() + Duration::from_secs(3));
+                            } else {
+                                failed_start_retries.insert(
+                                    output.clone(),
+                                    FailedStartRetry {
+                                        fingerprint: failed_fingerprint,
+                                        retry_at: Instant::now() + Duration::from_secs(3),
+                                    },
+                                );
                             }
                             report_output_error(ctx, &output, error.to_string());
                         }
@@ -457,7 +503,8 @@ fn spawn_worker(
                                 runtime.current_selection().map(|selection| selection.index);
                         }
                     }
-                    let _ = worker_event_tx.send(WorkerEvent::Status { instance_id, snapshot });
+                    let _ = worker_event_tx
+                        .send(WorkerEvent::Status { instance_id, snapshot: Box::new(snapshot) });
                 };
                 let worker_context = BackendContext {
                     cfg: &config,
@@ -519,6 +566,24 @@ fn spawn_worker(
 
 fn failed_worker_retry_due(retry_at: Option<Instant>, now: Instant) -> bool {
     retry_at.is_some_and(|deadline| deadline <= now)
+}
+
+fn apply_start_retry_backoff(
+    current: &mut BTreeMap<String, String>,
+    desired: &BTreeMap<String, OutputSpec>,
+    retry_at: &BTreeMap<String, FailedStartRetry>,
+    now: Instant,
+) {
+    for (output, retry) in retry_at {
+        if retry.retry_at <= now {
+            continue;
+        }
+        if let Some(spec) = desired.get(output) {
+            if spec.fingerprint == retry.fingerprint {
+                current.insert(output.clone(), spec.fingerprint.clone());
+            }
+        }
+    }
 }
 
 fn output_playlist_action_requires_reconcile(action: &OutputPlaylistAction) -> bool {
@@ -609,7 +674,7 @@ fn spawn_playlist_scheduler(
 fn handle_output_playlist_request(
     request: &OutputPlaylistRequest,
     workers: &mut BTreeMap<String, OutputWorker>,
-) -> Result<()> {
+) -> Result<Option<OutputBinding>> {
     let worker = workers
         .get_mut(&request.output)
         .ok_or_else(|| anyhow::anyhow!("output '{}' has no running worker", request.output))?;
@@ -624,7 +689,7 @@ fn handle_output_playlist_request(
         .desired_cfg
         .lock()
         .map_err(|_| anyhow::anyhow!("output desired config lock poisoned"))?;
-    apply_output_playlist_action(
+    let persisted_binding = apply_output_playlist_action(
         runtime,
         &mut config,
         &request.action,
@@ -639,7 +704,7 @@ fn handle_output_playlist_request(
             format!("output '{}' runtime is not accepting commands", request.output)
         })?;
     }
-    Ok(())
+    Ok(persisted_binding)
 }
 
 fn apply_output_playlist_action<F>(
@@ -648,7 +713,7 @@ fn apply_output_playlist_action<F>(
     action: &OutputPlaylistAction,
     now: Instant,
     playable: F,
-) -> Result<()>
+) -> Result<Option<OutputBinding>>
 where
     F: Fn(&we_core::playlist::PlaylistItem) -> bool + Copy,
 {
@@ -672,15 +737,17 @@ where
             runtime.advance(AdvanceDirection::Previous, now, playable)
         }
         OutputPlaylistAction::Stop => {
-            runtime.stop();
-            config.playlists.active = None;
-            return Ok(());
+            let selection = runtime
+                .current_selection()
+                .ok_or_else(|| anyhow::anyhow!("playlist has no current wallpaper to preserve"))?;
+            return Ok(Some(OutputBinding::wallpaper(selection.wallpaper_id, selection.source)));
         }
     };
 
     let selection = selection.ok_or_else(|| anyhow::anyhow!("playlist has no playable item"))?;
     config.playlists.active = runtime.active_name().map(str::to_string);
-    playlist::apply_selection_to_config(config, &selection)
+    playlist::apply_selection_to_config(config, &selection)?;
+    Ok(None)
 }
 
 fn playlist_selection_is_available(selection: &PlaylistSelection) -> bool {
@@ -705,7 +772,7 @@ fn stop_all_workers(workers: &mut BTreeMap<String, OutputWorker>) {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use crate::config::Config;
     use crate::ipc::OutputPlaylistAction;
@@ -716,9 +783,9 @@ mod tests {
     };
 
     use super::{
-        apply_output_playlist_action, build_output_specs, build_output_specs_with_errors,
-        failed_worker_retry_due, output_playlist_action_requires_reconcile, reconcile_workers,
-        OutputAction,
+        apply_output_playlist_action, apply_start_retry_backoff, build_output_specs,
+        build_output_specs_with_errors, output_playlist_action_requires_reconcile,
+        reconcile_workers, FailedStartRetry, OutputAction,
     };
 
     #[test]
@@ -729,7 +796,8 @@ mod tests {
             .expect("output specs");
 
         assert_eq!(specs.keys().cloned().collect::<Vec<_>>(), vec!["DP-1", "HDMI-A-1"]);
-        assert_ne!(specs["DP-1"].worker_id, specs["HDMI-A-1"].worker_id);
+        assert_eq!(specs["DP-1"].output_name, "DP-1");
+        assert_eq!(specs["HDMI-A-1"].output_name, "HDMI-A-1");
     }
 
     #[test]
@@ -805,7 +873,8 @@ mod tests {
 
         assert_eq!(specs["DP-1"].playlist_name(), Some("Focus"));
         assert_eq!(specs["HDMI-A-1"].playlist_name(), Some("Ambient"));
-        assert_ne!(specs["DP-1"].worker_id, specs["HDMI-A-1"].worker_id);
+        assert_eq!(specs["DP-1"].output_name, "DP-1");
+        assert_eq!(specs["HDMI-A-1"].output_name, "HDMI-A-1");
     }
 
     #[test]
@@ -867,15 +936,48 @@ mod tests {
 
         assert!(specs.contains_key("DP-1"));
         assert!(!specs.contains_key("HDMI-A-1"));
-        assert!(errors["HDMI-A-1"].contains("both wallpaper and playlist"));
+        assert!(errors.contains_key("HDMI-A-1"));
     }
 
     #[test]
-    fn failed_worker_retries_only_after_backoff_deadline() {
+    fn synchronous_spawn_failures_are_suppressed_until_backoff_deadline() {
         let now = Instant::now();
-        assert!(!failed_worker_retry_due(Some(now + std::time::Duration::from_secs(3)), now));
-        assert!(failed_worker_retry_due(Some(now), now));
-        assert!(!failed_worker_retry_due(None, now));
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        let desired = build_output_specs(&config, &["DP-1".to_string()]).expect("output specs");
+        let retries = BTreeMap::from([(
+            "DP-1".to_string(),
+            FailedStartRetry {
+                fingerprint: desired["DP-1"].fingerprint.clone(),
+                retry_at: now + Duration::from_secs(3),
+            },
+        )]);
+
+        let mut before_deadline = BTreeMap::new();
+        apply_start_retry_backoff(&mut before_deadline, &desired, &retries, now);
+        assert!(reconcile_workers(&before_deadline, &desired).is_empty());
+
+        let mut at_deadline = BTreeMap::new();
+        apply_start_retry_backoff(
+            &mut at_deadline,
+            &desired,
+            &retries,
+            now + Duration::from_secs(3),
+        );
+        assert_eq!(
+            reconcile_workers(&at_deadline, &desired),
+            vec![OutputAction::Start("DP-1".to_string())]
+        );
+
+        config.renderer.source = "/wallpapers/fixed".to_string();
+        let changed =
+            build_output_specs(&config, &["DP-1".to_string()]).expect("changed output specs");
+        let mut after_config_change = BTreeMap::new();
+        apply_start_retry_backoff(&mut after_config_change, &changed, &retries, now);
+        assert_eq!(
+            reconcile_workers(&after_config_change, &changed),
+            vec![OutputAction::Start("DP-1".to_string())]
+        );
     }
 
     #[test]
@@ -889,8 +991,8 @@ mod tests {
 
     #[test]
     fn output_playlist_action_advances_or_stops_only_its_runtime_config() {
-        let mut playlists = PlaylistConfig::default();
-        playlists.active = Some("Focus".to_string());
+        let mut playlists =
+            PlaylistConfig { active: Some("Focus".to_string()), ..PlaylistConfig::default() };
         playlists.definitions.insert(
             "Focus".to_string(),
             Playlist {
@@ -912,32 +1014,42 @@ mod tests {
         let now = Instant::now();
         let mut runtime = PlaylistRuntime::new(playlists.clone(), 7);
         let first = runtime.ensure_started(now).expect("first playlist item");
-        let mut config = Config::default();
-        config.playlists = playlists;
+        let mut config = Config { playlists, ..Config::default() };
         super::playlist::apply_selection_to_config(&mut config, &first)
             .expect("apply first selection");
 
-        apply_output_playlist_action(
-            &mut runtime,
-            &mut config,
-            &OutputPlaylistAction::Next,
-            now,
-            |_| true,
-        )
-        .expect("advance output playlist");
+        assert_eq!(
+            apply_output_playlist_action(
+                &mut runtime,
+                &mut config,
+                &OutputPlaylistAction::Next,
+                now,
+                |_| true,
+            )
+            .expect("advance output playlist"),
+            None
+        );
         assert_eq!(config.renderer.source, "/wallpapers/two");
         assert_eq!(runtime.current_selection().expect("current item").wallpaper_id, "two");
 
         let source_before_stop = config.renderer.source.clone();
-        apply_output_playlist_action(
+        let durable_binding = apply_output_playlist_action(
             &mut runtime,
             &mut config,
             &OutputPlaylistAction::Stop,
             now,
             |_| true,
         )
-        .expect("stop output playlist");
-        assert_eq!(runtime.active_name(), None);
+        .expect("stop output playlist")
+        .expect("stop preserves the current wallpaper as a durable binding");
+        assert_eq!(runtime.active_name(), Some("Focus"));
         assert_eq!(config.renderer.source, source_before_stop);
+        assert_eq!(durable_binding, OutputBinding::wallpaper("two", "/wallpapers/two"));
+
+        config.outputs.insert("DP-1".to_string(), durable_binding);
+        let restarted = build_output_specs(&config, &["DP-1".to_string()])
+            .expect("rebuild output after daemon restart");
+        assert_eq!(restarted["DP-1"].playlist_name(), None);
+        assert_eq!(restarted["DP-1"].config.renderer.source, "/wallpapers/two");
     }
 }

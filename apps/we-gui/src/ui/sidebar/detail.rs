@@ -56,19 +56,34 @@ pub enum ResolutionMode {
     Fixed,
 }
 
-pub fn view<'a>(
-    entry: &'a WallpaperEntry,
-    settings: &'a WallpaperSettings,
-    schema: &'a UserPropertySchema,
-    resolution_width: &'a str,
-    resolution_height: &'a str,
-    active_tab: DetailTab,
-    is_running: bool,
-    is_paused: bool,
-    outputs: &'a [String],
-    selected_outputs: &'a BTreeSet<String>,
-    language: Language,
-) -> Element<'a, DetailMessage> {
+pub struct DetailViewState<'a> {
+    pub entry: &'a WallpaperEntry,
+    pub settings: &'a WallpaperSettings,
+    pub schema: &'a UserPropertySchema,
+    pub resolution_width: &'a str,
+    pub resolution_height: &'a str,
+    pub active_tab: DetailTab,
+    pub is_running: bool,
+    pub is_paused: bool,
+    pub outputs: &'a [String],
+    pub selected_outputs: &'a BTreeSet<String>,
+    pub language: Language,
+}
+
+pub fn view(state: DetailViewState<'_>) -> Element<'_, DetailMessage> {
+    let DetailViewState {
+        entry,
+        settings,
+        schema,
+        resolution_width,
+        resolution_height,
+        active_tab,
+        is_running,
+        is_paused,
+        outputs,
+        selected_outputs,
+        language,
+    } = state;
     let tabs = row![
         tab_button(
             language.text(Text::Actions),
@@ -232,6 +247,27 @@ fn actions_view<'a>(
         ]
         .spacing(10),
     );
+    let msaa_control: Element<'a, DetailMessage> = if supports_final_output_msaa(wallpaper_type) {
+        container(
+            pick_list(msaa_options, selected_msaa, |option| {
+                DetailMessage::MsaaChanged(option.value)
+            })
+            .padding([14, 10])
+            .width(Fill)
+            .style(md_pick_list_style)
+            .menu_style(md_menu_style),
+        )
+        .id("detail.msaa")
+        .into()
+    } else {
+        container(
+            text(language.text(Text::MsaaSceneOnly))
+                .size(12)
+                .color(Color::from_rgb8(170, 174, 184)),
+        )
+        .padding([10, 0])
+        .into()
+    };
     let presentation = section(
         language.text(Text::Display),
         column![
@@ -288,27 +324,7 @@ fn actions_view<'a>(
             )
             .id("detail.rotation"),
             field_label(language.text(Text::FinalOutputMsaa)),
-            if supports_final_output_msaa(wallpaper_type) {
-                container(
-                    pick_list(msaa_options, selected_msaa, |option| {
-                        DetailMessage::MsaaChanged(option.value)
-                    })
-                    .padding([14, 10])
-                    .width(Fill)
-                    .style(md_pick_list_style)
-                    .menu_style(md_menu_style),
-                )
-                .id("detail.msaa")
-                .into()
-            } else {
-                container(
-                    text(language.text(Text::MsaaSceneOnly))
-                        .size(12)
-                        .color(Color::from_rgb8(170, 174, 184)),
-                )
-                .padding([10, 0])
-                .into()
-            },
+            msaa_control,
         ]
         .spacing(10),
     );

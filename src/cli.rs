@@ -47,6 +47,11 @@ pub enum Command {
         #[command(subcommand)]
         action: PlaylistAction,
     },
+    /// Apply a saved multi-output profile
+    Profile {
+        #[command(subcommand)]
+        action: ProfileAction,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -85,4 +90,10 @@ pub enum PlaylistAction {
         #[arg(long)]
         output: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ProfileAction {
+    /// Apply a named saved output profile
+    Apply { name: String },
 }

@@ -73,6 +73,12 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
                 .collect()
         })
         .unwrap_or_default();
+    let profile_selected = launch_settings
+        .profiles
+        .active
+        .clone()
+        .or_else(|| launch_settings.profiles.definitions.keys().next().cloned());
+    let profile_name_input = profile_selected.clone().unwrap_or_default();
 
     (
         App {
@@ -120,6 +126,9 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             runtime_playlist_active: None,
             runtime_playlist_index: None,
             runtime_outputs: Default::default(),
+            profile_selected,
+            profile_new_name_input: String::new(),
+            profile_name_input,
             legacy_shuffle: LegacyShuffleMigration {
                 enabled: preferences.shuffle_enabled,
                 interval_ms: preferences.shuffle_interval_ms,

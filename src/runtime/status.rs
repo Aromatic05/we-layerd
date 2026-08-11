@@ -265,17 +265,19 @@ mod tests {
 
     #[test]
     fn renderer_diagnostics_are_valid_toml_and_preserve_json_payload() {
-        let mut snapshot = RuntimeStatusSnapshot::default();
-        snapshot.runtime = RuntimeDiagnostics {
-            renderer_diagnostics: Some(Arc::new(RendererDiagnostics {
-                version: 1,
-                entries: vec![DiagnosticEntry {
-                    severity: DiagnosticSeverity::Warning,
-                    source: "abi.render-config.msaa".to_string(),
-                    message: "scene only".to_string(),
-                }],
-            })),
-            ..RuntimeDiagnostics::default()
+        let snapshot = RuntimeStatusSnapshot {
+            runtime: RuntimeDiagnostics {
+                renderer_diagnostics: Some(Arc::new(RendererDiagnostics {
+                    version: 1,
+                    entries: vec![DiagnosticEntry {
+                        severity: DiagnosticSeverity::Warning,
+                        source: "abi.render-config.msaa".to_string(),
+                        message: "scene only".to_string(),
+                    }],
+                })),
+                ..RuntimeDiagnostics::default()
+            },
+            ..RuntimeStatusSnapshot::default()
         };
 
         let rendered = snapshot.render_toml();

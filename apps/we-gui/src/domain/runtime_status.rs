@@ -15,4 +15,6 @@ pub(crate) enum RuntimeStatus {
     PreferencesSaveFailed(String),
     PlaylistSaved,
     PlaylistError(String),
+    ProfileSaved,
+    ProfileError(String),
 }

@@ -1,7 +1,11 @@
 use std::{path::Path, time::Duration};
 
 use iced::{window, Task};
-use we_core::config::OutputBinding;
+use we_core::config::{load_launch_settings, OutputBinding};
+use we_core::profile::{
+    apply_profile_to_outputs, create_profile, delete_profile, rename_playlist_references,
+    rename_profile, save_current_to_profile,
+};
 use we_core::wallpaper::{
     properties::UserPropertySchema,
     settings::{inherited_final_output_msaa, WallpaperSettings},
@@ -247,6 +251,123 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::ProfilesPressed => {
+            app.sidebar = match app.sidebar {
+                Some(Sidebar::Profile) => None,
+                _ => Some(Sidebar::Profile),
+            };
+            if app.sidebar == Some(Sidebar::Profile) {
+                ensure_profile_selection(app);
+            }
+            Task::none()
+        }
+        Message::ProfileSelect(name) => {
+            if app.launch_settings.profiles.definitions.contains_key(&name) {
+                app.profile_selected = Some(name);
+                sync_profile_inputs(app);
+            }
+            Task::none()
+        }
+        Message::ProfileNewNameChanged(value) => {
+            app.profile_new_name_input = value;
+            Task::none()
+        }
+        Message::ProfileCreate => {
+            let name = app.profile_new_name_input.trim().to_string();
+            match create_profile(
+                &mut app.launch_settings.profiles,
+                &name,
+                &app.launch_settings.outputs,
+            ) {
+                Ok(()) => {
+                    app.launch_settings.profiles.active = Some(name.clone());
+                    app.profile_selected = Some(name);
+                    app.profile_new_name_input.clear();
+                    sync_profile_inputs(app);
+                    persist_profile_changes(app, true);
+                }
+                Err(error) => set_profile_error(app, error),
+            }
+            Task::none()
+        }
+        Message::ProfileNameChanged(value) => {
+            app.profile_name_input = value;
+            Task::none()
+        }
+        Message::ProfileRename => {
+            let Some(current) = app.profile_selected.clone() else {
+                return Task::none();
+            };
+            let next = app.profile_name_input.trim().to_string();
+            match rename_profile(&mut app.launch_settings.profiles, &current, &next) {
+                Ok(()) => {
+                    app.profile_selected = Some(next);
+                    sync_profile_inputs(app);
+                    persist_profile_changes(app, true);
+                }
+                Err(error) => set_profile_error(app, error),
+            }
+            Task::none()
+        }
+        Message::ProfileDelete => {
+            let Some(name) = app.profile_selected.clone() else {
+                return Task::none();
+            };
+            match delete_profile(&mut app.launch_settings.profiles, &name) {
+                Ok(()) => {
+                    app.profile_selected =
+                        app.launch_settings.profiles.definitions.keys().next().cloned();
+                    sync_profile_inputs(app);
+                    persist_profile_changes(app, true);
+                }
+                Err(error) => set_profile_error(app, error),
+            }
+            Task::none()
+        }
+        Message::ProfileSaveCurrent => {
+            let Some(name) = app.profile_selected.clone() else {
+                return Task::none();
+            };
+            match save_current_to_profile(
+                &mut app.launch_settings.profiles,
+                &name,
+                &app.launch_settings.outputs,
+            ) {
+                Ok(()) => {
+                    app.launch_settings.profiles.active = Some(name);
+                    persist_profile_changes(app, true);
+                }
+                Err(error) => set_profile_error(app, error),
+            }
+            Task::none()
+        }
+        Message::ProfileApply => {
+            let Some(name) = app.profile_selected.clone() else {
+                set_profile_error(app, "select a profile first".to_string());
+                return Task::none();
+            };
+            let profiles = app.launch_settings.profiles.clone();
+            let playlists = app.launch_settings.playlists.clone();
+            match apply_profile_to_outputs(
+                &profiles,
+                &name,
+                &playlists,
+                &mut app.launch_settings.outputs,
+                |source| Path::new(source).join("project.json").is_file(),
+            ) {
+                Ok(()) => {
+                    app.launch_settings.profiles.active = Some(name);
+                    if !persist_profile_changes(app, false) {
+                        return Task::none();
+                    }
+                    start_or_reconfigure_multi_output(app)
+                }
+                Err(error) => {
+                    set_profile_error(app, error);
+                    Task::none()
+                }
+            }
+        }
         Message::PlaylistSelect(name) => {
             if app.launch_settings.playlists.definitions.contains_key(&name) {
                 app.playlist_selected = Some(name);
@@ -267,7 +388,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.playlist_new_name_input.clear();
                     sync_playlist_editor_inputs(app);
                     sync_selected_outputs_for_playlist(app);
-                    persist_playlist_changes(app);
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -296,13 +417,15 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                             binding.playlist = Some(next.clone());
                         }
                     }
+                    rename_playlist_references(&mut app.launch_settings.profiles, &current, &next);
                     app.playlist_selected = Some(next.clone());
                     sync_playlist_editor_inputs(app);
                     sync_selected_outputs_for_playlist(app);
-                    if persist_playlist_changes_and_reload_if(app, was_running) && was_running {
-                        if app.launch_settings.playlists.active.as_deref() == Some(next.as_str()) {
-                            app.runtime_playlist_active = Some(next);
-                        }
+                    if persist_playlist_changes_and_reload(app)
+                        && was_running
+                        && app.launch_settings.playlists.active.as_deref() == Some(next.as_str())
+                    {
+                        app.runtime_playlist_active = Some(next);
                     }
                 }
                 Err(error) => set_playlist_error(app, error),
@@ -313,11 +436,6 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             let Some(name) = app.playlist_selected.clone() else {
                 return Task::none();
             };
-            let output_bound = app
-                .launch_settings
-                .outputs
-                .values()
-                .any(|binding| binding.playlist.as_deref() == Some(name.as_str()));
             let globally_running = match global_playlist_is_running(app, &name) {
                 Ok(value) => value,
                 Err(error) => {
@@ -341,6 +459,20 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             match delete_playlist(&mut app.launch_settings.playlists, &name) {
                 Ok(()) => {
+                    let active_profile_references_deleted =
+                        app.launch_settings
+                            .profiles
+                            .active
+                            .as_deref()
+                            .and_then(|active| app.launch_settings.profiles.definitions.get(active))
+                            .is_some_and(|profile| {
+                                profile.outputs.values().any(|binding| {
+                                    binding.playlist.as_deref() == Some(name.as_str())
+                                })
+                            });
+                    if active_profile_references_deleted {
+                        app.launch_settings.profiles.active = None;
+                    }
                     app.launch_settings
                         .outputs
                         .retain(|_, binding| binding.playlist.as_deref() != Some(name.as_str()));
@@ -348,17 +480,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                         app.launch_settings.playlists.definitions.keys().next().cloned();
                     sync_playlist_editor_inputs(app);
                     sync_selected_outputs_for_playlist(app);
-                    if persist_playlist_changes(app) && output_bound && runtime::daemon_is_running()
-                    {
-                        if let Err(error) = reload_running_config(app) {
-                            set_playlist_error(
-                                app,
-                                format!(
-                                    "playlist was deleted but output runtimes could not reload the binding change: {error}"
-                                ),
-                            );
-                        }
-                    }
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -370,7 +492,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             };
             match set_mode(&mut app.launch_settings.playlists, &name, mode) {
                 Ok(()) => {
-                    persist_playlist_changes_and_reload(app, Some(&name));
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -393,7 +515,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             };
             match set_default_duration_ms(&mut app.launch_settings.playlists, &name, duration_ms) {
                 Ok(()) => {
-                    persist_playlist_changes_and_reload(app, Some(&name));
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -427,7 +549,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 Some(duration_ms),
             ) {
                 Ok(()) => {
-                    persist_playlist_changes_and_reload(app, Some(&name));
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -440,7 +562,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             match set_entry_duration_ms(&mut app.launch_settings.playlists, &name, index, None) {
                 Ok(()) => {
                     sync_playlist_editor_inputs(app);
-                    persist_playlist_changes_and_reload(app, Some(&name));
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -453,7 +575,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             match move_entry(&mut app.launch_settings.playlists, &name, index, direction) {
                 Ok(_) => {
                     sync_playlist_editor_inputs(app);
-                    persist_playlist_changes_and_reload(app, Some(&name));
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -466,7 +588,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             match remove_entry(&mut app.launch_settings.playlists, &name, index) {
                 Ok(()) => {
                     sync_playlist_editor_inputs(app);
-                    persist_playlist_changes_and_reload(app, Some(&name));
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -481,7 +603,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             match add_wallpaper(&mut app.launch_settings.playlists, &name, &entry) {
                 Ok(()) => {
                     sync_playlist_editor_inputs(app);
-                    persist_playlist_changes_and_reload(app, Some(&name));
+                    persist_playlist_changes_and_reload(app);
                 }
                 Err(error) => set_playlist_error(app, error),
             }
@@ -740,9 +862,10 @@ fn migrate_legacy_shuffle_if_needed(app: &mut App) -> Task<Message> {
 }
 
 fn persist_playlist_changes(app: &mut App) -> bool {
-    match config::persist_playlists_and_outputs(
+    match config::persist_playlists_profiles_and_outputs(
         &app.config_path,
         &app.launch_settings.playlists,
+        &app.launch_settings.profiles,
         &app.launch_settings.outputs,
     ) {
         Ok(()) => {
@@ -757,40 +880,11 @@ fn persist_playlist_changes(app: &mut App) -> bool {
     }
 }
 
-fn persist_playlist_changes_and_reload(app: &mut App, edited_name: Option<&str>) -> bool {
+fn persist_playlist_changes_and_reload(app: &mut App) -> bool {
     if !persist_playlist_changes(app) {
         return false;
     }
-    let Some(name) = edited_name else {
-        return true;
-    };
-    let reload_running = match playlist_is_running(app, name) {
-        Ok(value) => value,
-        Err(error) => {
-            set_playlist_error(app, error);
-            return false;
-        }
-    };
-    if reload_running {
-        if let Err(error) = reload_running_config(app) {
-            set_playlist_error(
-                app,
-                format!("playlist was saved but the running daemon could not reload it: {error}"),
-            );
-            return false;
-        }
-    }
-    if reload_running {
-        app.runtime_playlist_active = Some(name.to_string());
-    }
-    true
-}
-
-fn persist_playlist_changes_and_reload_if(app: &mut App, reload_running: bool) -> bool {
-    if !persist_playlist_changes(app) {
-        return false;
-    }
-    if reload_running {
+    if runtime::daemon_is_running() {
         if let Err(error) = reload_running_config(app) {
             set_playlist_error(
                 app,
@@ -831,6 +925,60 @@ fn reload_running_config(app: &mut App) -> Result<(), String> {
 
 fn set_playlist_error(app: &mut App, error: String) {
     app.runtime_status = RuntimeStatus::PlaylistError(error);
+}
+
+fn persist_profile_changes(app: &mut App, reload_running_daemon: bool) -> bool {
+    match config::persist_profiles_and_outputs(
+        &app.config_path,
+        &app.launch_settings.profiles,
+        &app.launch_settings.outputs,
+    ) {
+        Ok(()) => {
+            if reload_running_daemon {
+                if let Err(error) = reload_running_config(app) {
+                    set_profile_error(
+                        app,
+                        format!(
+                            "profile was saved but the running daemon could not reload it: {error}"
+                        ),
+                    );
+                    return false;
+                }
+            }
+            app.runtime_status = RuntimeStatus::ProfileSaved;
+            true
+        }
+        Err(error) => {
+            app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+            eprintln!("failed to save output profiles: {error}");
+            false
+        }
+    }
+}
+
+fn set_profile_error(app: &mut App, error: String) {
+    app.runtime_status = RuntimeStatus::ProfileError(error);
+}
+
+fn ensure_profile_selection(app: &mut App) {
+    let selected_is_valid = app
+        .profile_selected
+        .as_deref()
+        .is_some_and(|name| app.launch_settings.profiles.definitions.contains_key(name));
+    if !selected_is_valid {
+        app.profile_selected = app
+            .launch_settings
+            .profiles
+            .active
+            .clone()
+            .filter(|name| app.launch_settings.profiles.definitions.contains_key(name))
+            .or_else(|| app.launch_settings.profiles.definitions.keys().next().cloned());
+    }
+    sync_profile_inputs(app);
+}
+
+fn sync_profile_inputs(app: &mut App) {
+    app.profile_name_input = app.profile_selected.clone().unwrap_or_default();
 }
 
 fn ensure_playlist_selection(app: &mut App) {
@@ -942,6 +1090,7 @@ fn play_selected_playlist(app: &mut App) -> Task<Message> {
             set_playlist_error(app, "select at least one display for the playlist".to_string());
             return Task::none();
         }
+        app.launch_settings.profiles.active = None;
         let available_outputs = app.outputs.clone();
         let selected_outputs = app.selected_outputs.clone();
         app.launch_settings.outputs.retain(|output, binding| {
@@ -952,9 +1101,10 @@ fn play_selected_playlist(app: &mut App) -> Task<Message> {
         for output in app.selected_outputs.clone() {
             app.launch_settings.outputs.insert(output, OutputBinding::playlist(name.clone()));
         }
-        if let Err(error) = config::persist_playlists_and_outputs(
+        if let Err(error) = config::persist_playlists_profiles_and_outputs(
             &app.config_path,
             &app.launch_settings.playlists,
+            &app.launch_settings.profiles,
             &app.launch_settings.outputs,
         ) {
             app.runtime_status = RuntimeStatus::ConfigSaveFailed(error);
@@ -1126,6 +1276,24 @@ fn playlist_runtime_action(app: &mut App, action: &str) -> Task<Message> {
             .filter(|output| !runtime::send_output_playlist_action(output, action))
             .cloned()
             .collect::<Vec<_>>();
+        if action == "stop" {
+            match load_launch_settings(&app.config_path) {
+                Ok(settings) => {
+                    app.launch_settings.outputs = settings.outputs;
+                    app.launch_settings.profiles = settings.profiles;
+                    sync_selected_outputs_for_playlist(app);
+                }
+                Err(error) => {
+                    set_playlist_error(
+                        app,
+                        format!(
+                            "playlist stopped but persisted output bindings could not be reloaded: {error}"
+                        ),
+                    );
+                    return Task::none();
+                }
+            }
+        }
         if !failed.is_empty() {
             set_playlist_error(
                 app,
@@ -1253,6 +1421,7 @@ fn bind_selected_wallpaper_outputs(app: &mut App) -> Result<(), String> {
     if app.selected_outputs.is_empty() {
         return Err("select at least one display before applying the wallpaper".to_string());
     }
+    app.launch_settings.profiles.active = None;
     let selected_id =
         app.selected_id.clone().ok_or_else(|| "select a wallpaper first".to_string())?;
     let entry = app

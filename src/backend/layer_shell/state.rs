@@ -296,6 +296,7 @@ impl LayerShellState {
         let output = OutputState::new(scale_mode);
         let presentation_geometry = output.geometry;
         Self {
+            output_name: String::new(),
             objects: WaylandObjects::default(),
             output,
             presentation_geometry,
@@ -317,6 +318,7 @@ impl LayerShellState {
             paused: false,
             stopping: false,
             pending_input_events: PendingInput::default(),
+            discovered_output_names: BTreeMap::new(),
         }
     }
 }

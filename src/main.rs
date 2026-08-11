@@ -9,8 +9,8 @@ mod runtime;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Command, ControlAction, PlaylistAction};
-use ipc::{ControlCommand, OutputPlaylistAction, PlaylistCommand};
+use cli::{Cli, Command, ControlAction, PlaylistAction, ProfileAction};
+use ipc::{ControlCommand, OutputPlaylistAction, PlaylistCommand, ProfileCommand};
 
 fn main() -> Result<()> {
     logging::init();
@@ -71,5 +71,10 @@ fn main() -> Result<()> {
             };
             ipc::send_playlist_command(&command)
         }
+        Command::Profile { action } => match action {
+            ProfileAction::Apply { name } => {
+                ipc::send_profile_command(&ProfileCommand::Apply(name))
+            }
+        },
     }
 }

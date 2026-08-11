@@ -152,13 +152,12 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             let output_statuses = app
                 .runtime_outputs
                 .iter()
-                .filter_map(|(output, runtime)| {
-                    (runtime.playlist_active.as_deref() == Some(name)).then(|| {
-                        runtime
-                            .playlist_index
-                            .map(|index| format!("{output}: {}", index + 1))
-                            .unwrap_or_else(|| output.clone())
-                    })
+                .filter(|(_, runtime)| runtime.playlist_active.as_deref() == Some(name))
+                .map(|(output, runtime)| {
+                    runtime
+                        .playlist_index
+                        .map(|index| format!("{output}: {}", index + 1))
+                        .unwrap_or_else(|| output.clone())
                 })
                 .collect::<Vec<_>>();
             let active_status = if !output_statuses.is_empty() {

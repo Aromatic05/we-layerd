@@ -13,6 +13,7 @@ use std::{
 use std::os::linux::net::SocketAddrExt;
 
 use anyhow::{anyhow, Context, Result};
+use we_core::config::OutputBinding;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlCommand {
@@ -62,11 +63,24 @@ pub enum OutputPlaylistAction {
     Stop,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileCommand {
+    Apply(String),
+}
+
+impl ProfileCommand {
+    fn request(&self) -> String {
+        match self {
+            Self::Apply(name) => format!("profile apply {name}"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct OutputPlaylistRequest {
     pub output: String,
     pub action: OutputPlaylistAction,
-    pub reply: std::sync::mpsc::Sender<std::result::Result<(), String>>,
+    pub reply: std::sync::mpsc::Sender<std::result::Result<Option<OutputBinding>, String>>,
 }
 
 impl PlaylistCommand {
@@ -103,6 +117,7 @@ enum ControlRequest {
     Status,
     SwitchConfig(PathBuf),
     Playlist(PlaylistCommand),
+    Profile(ProfileCommand),
 }
 
 impl ControlRequest {
@@ -121,6 +136,13 @@ impl ControlRequest {
                 return None;
             }
             return Some(Self::Playlist(PlaylistCommand::Play(name.to_string())));
+        }
+        if let Some(name) = trimmed.strip_prefix("profile apply ") {
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            return Some(Self::Profile(ProfileCommand::Apply(name.to_string())));
         }
         if let Some(rest) = trimmed.strip_prefix("playlist output ") {
             let (output, action) = rest.split_once(' ')?;
@@ -170,18 +192,20 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    pub fn start<F, H, S, P>(
+    pub fn start<F, H, S, P, R>(
         tx: Sender<ControlCommand>,
         status_provider: F,
         command_handler: H,
         switch_config_handler: S,
         playlist_handler: P,
+        profile_handler: R,
     ) -> Result<Self>
     where
         F: Fn() -> String + Send + Sync + 'static,
         H: Fn(ControlCommand) -> Result<bool> + Send + Sync + 'static,
         S: Fn(&Path) -> Result<()> + Send + Sync + 'static,
         P: Fn(PlaylistCommand) -> Result<()> + Send + Sync + 'static,
+        R: Fn(ProfileCommand) -> Result<()> + Send + Sync + 'static,
     {
         let instance_lock = acquire_instance_lock()?;
         let endpoint = default_endpoint()?;
@@ -191,6 +215,7 @@ impl ControlServer {
         let command_handler = std::sync::Arc::new(command_handler);
         let switch_config_handler = std::sync::Arc::new(switch_config_handler);
         let playlist_handler = std::sync::Arc::new(playlist_handler);
+        let profile_handler = std::sync::Arc::new(profile_handler);
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else {
@@ -218,6 +243,14 @@ impl ControlServer {
                         }
                     },
                     ControlRequest::Playlist(command) => match playlist_handler(command) {
+                        Ok(()) => {
+                            let _ = stream.write_all(b"OK\n");
+                        }
+                        Err(err) => {
+                            let _ = stream.write_all(format!("ERR {err}\n").as_bytes());
+                        }
+                    },
+                    ControlRequest::Profile(command) => match profile_handler(command) {
                         Ok(()) => {
                             let _ = stream.write_all(b"OK\n");
                         }
@@ -284,6 +317,14 @@ pub fn send_switch_config(config_path: &Path) -> Result<()> {
 }
 
 pub fn send_playlist_command(command: &PlaylistCommand) -> Result<()> {
+    let response = send_request(&command.request())?;
+    if response.trim_start().starts_with("ERR") {
+        return Err(anyhow!(response.trim().to_string()));
+    }
+    Ok(())
+}
+
+pub fn send_profile_command(command: &ProfileCommand) -> Result<()> {
     let response = send_request(&command.request())?;
     if response.trim_start().starts_with("ERR") {
         return Err(anyhow!(response.trim().to_string()));
@@ -459,7 +500,7 @@ fn abstract_socket_name() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlRequest, OutputPlaylistAction, PlaylistCommand};
+    use super::{ControlRequest, OutputPlaylistAction, PlaylistCommand, ProfileCommand};
 
     #[test]
     fn playlist_ipc_preserves_named_playlists_and_rejects_empty_names() {
@@ -511,5 +552,14 @@ mod tests {
             ControlRequest::parse("playlist next"),
             Some(ControlRequest::Playlist(PlaylistCommand::Next))
         );
+    }
+
+    #[test]
+    fn profile_ipc_preserves_named_profile_and_rejects_empty_names() {
+        assert_eq!(
+            ControlRequest::parse("profile apply Desk Setup"),
+            Some(ControlRequest::Profile(ProfileCommand::Apply("Desk Setup".to_string())))
+        );
+        assert_eq!(ControlRequest::parse("profile apply    "), None);
     }
 }
