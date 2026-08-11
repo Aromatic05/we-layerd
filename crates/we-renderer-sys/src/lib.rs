@@ -309,6 +309,14 @@ impl RendererLibrary {
         })
     }
 
+    pub fn supports_media_state(&self) -> bool {
+        self.we_session_set_media_state.is_some()
+    }
+
+    pub fn supports_audio_samples(&self) -> bool {
+        self.we_session_push_audio_samples.is_some()
+    }
+
     /// # Safety
     ///
     /// The caller must pass a valid cache path pointer or null and handle the returned pointer.

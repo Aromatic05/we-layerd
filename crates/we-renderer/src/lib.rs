@@ -260,6 +260,14 @@ impl RendererLibrary {
         Ok(Self { inner: Arc::new(inner) })
     }
 
+    pub fn supports_media_state(&self) -> bool {
+        self.inner.supports_media_state()
+    }
+
+    pub fn supports_audio_samples(&self) -> bool {
+        self.inner.supports_audio_samples()
+    }
+
     pub fn create_session(&self, cache_path: Option<&Path>) -> Result<Session, Error> {
         let cache_path = match cache_path {
             Some(path) => Some(

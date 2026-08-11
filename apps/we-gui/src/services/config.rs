@@ -3,8 +3,9 @@ use std::path::Path;
 use we_core::{
     config::{
         build_config_for_wallpaper, save_config, save_force_scene_audio_loop,
-        save_playlists_profiles_and_outputs, save_profiles_and_outputs, save_wallpapers,
-        save_wallpapers_playlists_profiles_and_outputs, LaunchSettings, OutputBinding,
+        save_integrations_and_rules, save_playlists_profiles_and_outputs,
+        save_profiles_and_outputs, save_wallpapers, save_wallpapers_playlists_profiles_and_outputs,
+        IntegrationsConfig, LaunchSettings, OutputBinding, RuntimeRulesConfig,
     },
     playlist::PlaylistConfig,
     profile::ProfileConfig,
@@ -26,6 +27,14 @@ pub(crate) fn persist_force_scene_audio_loop(
     enabled: bool,
 ) -> Result<(), String> {
     save_force_scene_audio_loop(config_path, enabled).map_err(|error| error.to_string())
+}
+
+pub(crate) fn persist_integrations_and_rules(
+    config_path: &Path,
+    integrations: &IntegrationsConfig,
+    rules: &RuntimeRulesConfig,
+) -> Result<(), String> {
+    save_integrations_and_rules(config_path, integrations, rules).map_err(|error| error.to_string())
 }
 
 pub(crate) fn persist_wallpapers(

@@ -1,7 +1,10 @@
 use std::{os::fd::RawFd, path::Path};
 
 use anyhow::{Context, Result};
-use we_renderer::{Frame, RenderConfig, RendererDiagnostics, RendererLibrary, Session, Source};
+use we_renderer::{
+    Frame, MediaState, RenderConfig, RendererDiagnostics, RendererLibrary, RuntimeSettings,
+    Session, Source,
+};
 
 pub(crate) struct RendererSession {
     pub(crate) session: Session,
@@ -16,6 +19,14 @@ impl RendererSession {
         let session =
             library.create_session(cache_path).context("failed to create renderer session")?;
         Ok(Self { session, _library: library })
+    }
+
+    pub(crate) fn supports_media_state(&self) -> bool {
+        self._library.supports_media_state()
+    }
+
+    pub(crate) fn supports_audio_samples(&self) -> bool {
+        self._library.supports_audio_samples()
     }
 
     pub(crate) fn set_source(&mut self, source: Source) -> Result<()> {
@@ -94,5 +105,30 @@ impl RendererSession {
 
     pub(crate) fn diagnostics(&self) -> Result<RendererDiagnostics> {
         self.session.diagnostics().context("failed to read renderer diagnostics")
+    }
+
+    pub(crate) fn set_media_state(&mut self, media: &MediaState) -> Result<bool> {
+        match self.session.set_media_state(media) {
+            Ok(()) => Ok(true),
+            Err(we_renderer::Error::MediaUnavailable) => Ok(false),
+            Err(error) => Err(error).context("failed to update renderer media state"),
+        }
+    }
+
+    pub(crate) fn push_audio_samples(&mut self, samples: &[f32]) -> Result<bool> {
+        match self.session.push_audio_samples(samples) {
+            Ok(()) => Ok(true),
+            Err(we_renderer::Error::AudioSamplesUnavailable) => Ok(false),
+            Err(error) => Err(error).context("failed to update renderer audio spectrum"),
+        }
+    }
+
+    pub(crate) fn set_muted(&mut self, muted: bool) -> Result<()> {
+        self.session
+            .apply_runtime_settings(RuntimeSettings {
+                muted: Some(muted),
+                ..RuntimeSettings::default()
+            })
+            .context("failed to update renderer mute state")
     }
 }

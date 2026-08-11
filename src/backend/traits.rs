@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::{
     config::Config,
     ipc::{ControlCommand, OutputPlaylistRequest, RuntimeLoopExit},
-    runtime::status::RuntimeStatusSnapshot,
+    runtime::{integrations::HostIntegrations, status::RuntimeStatusSnapshot},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +36,7 @@ pub struct BackendContext<'a> {
     pub cfg: &'a Config,
     pub desired_cfg: Arc<Mutex<Config>>,
     pub shutdown_requested: Arc<AtomicBool>,
+    pub host_integrations: HostIntegrations,
     pub control_rx: &'a mpsc::Receiver<ControlCommand>,
     pub output_playlist_rx: Option<&'a mpsc::Receiver<OutputPlaylistRequest>>,
     pub status_sink: &'a mut dyn FnMut(RuntimeStatusSnapshot),

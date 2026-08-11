@@ -15,6 +15,12 @@ pub(crate) fn sync_from_ui(ui_settings: &UiSettings, launch_settings: &mut Launc
     launch_settings.force_scene_audio_loop = ui_settings.force_scene_audio_loop;
     launch_settings.show_fps = ui_settings.show_fps;
     launch_settings.scale_mode = ScaleMode::from(ui_settings.scale_mode);
+    launch_settings.integrations.media = ui_settings.media_integration;
+    launch_settings.integrations.audio_spectrum = ui_settings.audio_spectrum;
+    launch_settings.integrations.audio_source = ui_settings.audio_source.clone();
+    launch_settings.rules.focused = ui_settings.rule_focused;
+    launch_settings.rules.maximized = ui_settings.rule_maximized;
+    launch_settings.rules.fullscreen = ui_settings.rule_fullscreen;
 
     if let Ok(v) = ui_settings.fps_limit.parse::<u32>() {
         launch_settings.fps_limit = v.clamp(1, 360);

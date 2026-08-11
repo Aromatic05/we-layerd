@@ -50,6 +50,12 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         fps_limit: launch_settings.fps_limit.to_string(),
         show_fps: launch_settings.show_fps,
         scale_mode: ScaleModeOption::from(launch_settings.scale_mode),
+        media_integration: launch_settings.integrations.media,
+        audio_spectrum: launch_settings.integrations.audio_spectrum,
+        audio_source: launch_settings.integrations.audio_source.clone(),
+        rule_focused: launch_settings.rules.focused,
+        rule_maximized: launch_settings.rules.maximized,
+        rule_fullscreen: launch_settings.rules.fullscreen,
     };
     let playlist_selected = launch_settings
         .playlists

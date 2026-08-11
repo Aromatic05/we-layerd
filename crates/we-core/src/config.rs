@@ -33,6 +33,10 @@ pub struct AppConfig {
     pub outputs: BTreeMap<String, OutputBinding>,
     #[serde(default)]
     pub profiles: ProfileConfig,
+    #[serde(default)]
+    pub integrations: IntegrationsConfig,
+    #[serde(default)]
+    pub rules: RuntimeRulesConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -96,6 +100,39 @@ pub struct GeneralConfig {
     pub scale_mode: ScaleMode,
     #[serde(default)]
     pub force_scene_audio_loop: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IntegrationsConfig {
+    #[serde(default = "default_media_integration")]
+    pub media: bool,
+    #[serde(default)]
+    pub audio_spectrum: bool,
+    #[serde(default = "default_audio_source")]
+    pub audio_source: String,
+    #[serde(default = "default_audio_sample_rate")]
+    pub audio_sample_rate: u32,
+    #[serde(default = "default_audio_update_hz")]
+    pub audio_update_hz: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeRuleAction {
+    #[default]
+    Keep,
+    Mute,
+    Pause,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeRulesConfig {
+    #[serde(default)]
+    pub focused: RuntimeRuleAction,
+    #[serde(default)]
+    pub maximized: RuntimeRuleAction,
+    #[serde(default)]
+    pub fullscreen: RuntimeRuleAction,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -170,6 +207,8 @@ pub struct LaunchSettings {
     pub playlists: PlaylistConfig,
     pub outputs: BTreeMap<String, OutputBinding>,
     pub profiles: ProfileConfig,
+    pub integrations: IntegrationsConfig,
+    pub rules: RuntimeRulesConfig,
 }
 
 fn default_interactive() -> bool {
@@ -212,6 +251,22 @@ fn default_renderer_msaa_samples() -> u32 {
     1
 }
 
+fn default_media_integration() -> bool {
+    true
+}
+
+fn default_audio_source() -> String {
+    "@DEFAULT_MONITOR@".to_string()
+}
+
+fn default_audio_sample_rate() -> u32 {
+    48_000
+}
+
+fn default_audio_update_hz() -> u32 {
+    30
+}
+
 impl Default for RendererConfig {
     fn default() -> Self {
         Self {
@@ -231,6 +286,18 @@ impl Default for RendererConfig {
             render_height: None,
             fill_mode: WallpaperFillMode::Cover,
             rotation_degrees: 0,
+        }
+    }
+}
+
+impl Default for IntegrationsConfig {
+    fn default() -> Self {
+        Self {
+            media: default_media_integration(),
+            audio_spectrum: false,
+            audio_source: default_audio_source(),
+            audio_sample_rate: default_audio_sample_rate(),
+            audio_update_hz: default_audio_update_hz(),
         }
     }
 }
@@ -269,6 +336,8 @@ impl Default for LaunchSettings {
             playlists: PlaylistConfig::default(),
             outputs: BTreeMap::new(),
             profiles: ProfileConfig::default(),
+            integrations: IntegrationsConfig::default(),
+            rules: RuntimeRulesConfig::default(),
         }
     }
 }
@@ -290,6 +359,8 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.playlists = settings.playlists.clone();
     cfg.outputs = settings.outputs.clone();
     cfg.profiles = settings.profiles.clone();
+    cfg.integrations = settings.integrations.clone();
+    cfg.rules = settings.rules;
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path =
         Path::new(&settings.assets_path).join("assets").display().to_string();
@@ -375,6 +446,8 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         playlists: cfg.playlists,
         outputs: cfg.outputs,
         profiles: cfg.profiles,
+        integrations: cfg.integrations,
+        rules: cfg.rules,
     })
 }
 
@@ -431,6 +504,26 @@ pub fn save_force_scene_audio_loop(path: &Path, enabled: bool) -> Result<()> {
     };
     general.insert("force_scene_audio_loop".to_string(), toml::Value::Boolean(enabled));
 
+    save_config_document(path, &document)
+}
+
+pub fn save_integrations_and_rules(
+    path: &Path,
+    integrations: &IntegrationsConfig,
+    rules: &RuntimeRulesConfig,
+) -> Result<()> {
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    root.insert(
+        "integrations".to_string(),
+        toml::Value::try_from(integrations).context("failed to serialize host integrations")?,
+    );
+    root.insert(
+        "rules".to_string(),
+        toml::Value::try_from(rules).context("failed to serialize runtime rules")?,
+    );
     save_config_document(path, &document)
 }
 
@@ -667,9 +760,10 @@ mod tests {
 
     use super::{
         build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
-        save_force_scene_audio_loop, save_outputs, save_playlists, save_profiles_and_outputs,
-        save_wallpapers_playlists_and_outputs, HookCommand, HooksConfig, LaunchSettings,
-        OutputBinding, ScaleMode,
+        save_force_scene_audio_loop, save_integrations_and_rules, save_outputs, save_playlists,
+        save_profiles_and_outputs, save_wallpapers_playlists_and_outputs, HookCommand, HooksConfig,
+        IntegrationsConfig, LaunchSettings, OutputBinding, RuntimeRuleAction, RuntimeRulesConfig,
+        ScaleMode,
     };
     use crate::playlist::{Playlist, PlaylistConfig, PlaylistItem, PlaylistMode};
     use crate::profile::{OutputProfile, ProfileConfig};
@@ -875,6 +969,90 @@ options_json = "{\"keep\":true}"
     fn launch_settings_default_to_auto_renderer_resolution() {
         let settings = LaunchSettings::default();
         assert!(settings.renderer_library_path.is_empty());
+        assert!(settings.integrations.media);
+        assert!(!settings.integrations.audio_spectrum);
+        assert_eq!(settings.integrations.audio_source, "@DEFAULT_MONITOR@");
+        assert_eq!(settings.rules.focused, RuntimeRuleAction::Keep);
+        assert_eq!(settings.rules.maximized, RuntimeRuleAction::Keep);
+        assert_eq!(settings.rules.fullscreen, RuntimeRuleAction::Keep);
+    }
+
+    #[test]
+    fn integration_and_runtime_rules_round_trip_through_launch_settings() {
+        let path = unique_temp_path("integrations-rules.toml");
+        fs::write(
+            &path,
+            r#"
+[renderer]
+source = "/tmp/workshop/content/431960/42"
+assets_path = "/tmp/wallpaper_engine/assets"
+
+[integrations]
+media = false
+audio_spectrum = true
+audio_source = "custom.monitor"
+audio_sample_rate = 44100
+audio_update_hz = 20
+
+[rules]
+focused = "mute"
+maximized = "pause"
+fullscreen = "pause"
+"#,
+        )
+        .expect("write integration config");
+
+        let settings = load_launch_settings(&path).expect("integration config should load");
+        assert!(!settings.integrations.media);
+        assert!(settings.integrations.audio_spectrum);
+        assert_eq!(settings.integrations.audio_source, "custom.monitor");
+        assert_eq!(settings.integrations.audio_sample_rate, 44_100);
+        assert_eq!(settings.integrations.audio_update_hz, 20);
+        assert_eq!(settings.rules.focused, RuntimeRuleAction::Mute);
+        assert_eq!(settings.rules.maximized, RuntimeRuleAction::Pause);
+        assert_eq!(settings.rules.fullscreen, RuntimeRuleAction::Pause);
+
+        let rebuilt =
+            build_config(&settings, Path::new("/tmp/workshop/content/431960/42/project.json"));
+        assert_eq!(rebuilt.integrations, settings.integrations);
+        assert_eq!(rebuilt.rules, settings.rules);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn integration_patch_preserves_renderer_and_unknown_sections() {
+        let path = unique_temp_path("integration-patch.toml");
+        fs::write(
+            &path,
+            "[renderer]\nsource = \"/keep/source\"\nassets_path = \"/assets\"\n\n[custom]\nkeep = 7\n",
+        )
+        .expect("write config");
+        let integrations = IntegrationsConfig {
+            media: false,
+            audio_spectrum: true,
+            audio_source: "monitor.test".to_string(),
+            audio_sample_rate: 48_000,
+            audio_update_hz: 24,
+        };
+        let rules = RuntimeRulesConfig {
+            focused: RuntimeRuleAction::Mute,
+            maximized: RuntimeRuleAction::Keep,
+            fullscreen: RuntimeRuleAction::Pause,
+        };
+
+        save_integrations_and_rules(&path, &integrations, &rules)
+            .expect("save integrations and rules");
+
+        let document = fs::read_to_string(&path).expect("read config");
+        let value = toml::from_str::<toml::Value>(&document).expect("valid TOML");
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/source"));
+        assert_eq!(value["custom"]["keep"].as_integer(), Some(7));
+        let loaded = load_launch_settings(&path).expect("reload settings");
+        assert_eq!(loaded.integrations, integrations);
+        assert_eq!(loaded.rules, rules);
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

@@ -73,6 +73,22 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ForceSceneAudioLoopDescription => {
             "将可见且自动开始播放的 single 场景音频改为循环；start-silent 音频保持不变。"
         }
+        Text::HostIntegrations => "主机集成",
+        Text::MediaIntegration => "向场景壁纸提供 MPRIS 媒体状态",
+        Text::MediaIntegrationDescription => "向兼容的 SceneScript 壁纸提供播放状态和曲目信息。",
+        Text::AudioSpectrum => "向壁纸提供桌面音频频谱",
+        Text::AudioSpectrumDescription => {
+            "采集所选 PulseAudio/PipeWire monitor，并向兼容壁纸发送 64 档双声道频谱。"
+        }
+        Text::AudioMonitorSource => "音频 monitor source",
+        Text::RuntimeRules => "应用规则",
+        Text::FocusedWindowRule => "窗口获得焦点时",
+        Text::MaximizedWindowRule => "窗口最大化时",
+        Text::FullscreenWindowRule => "窗口全屏时",
+        Text::RuleKeep => "保持运行",
+        Text::RuleMute => "静音壁纸",
+        Text::RulePause => "暂停壁纸",
+        Text::IntegrationRuntimeStatus => "集成运行状态",
         Text::ShowRealtimeFps => "显示实时 FPS",
         Text::PreferDmabuf => "优先使用 DMA-BUF 呈现",
         Text::AllowShmFallback => "允许回退到 SHM",

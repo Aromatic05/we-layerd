@@ -78,6 +78,39 @@ are collected outside the frame hot path, exposed by `we-layerd ctl status`, and
 the GUI Settings panel. Loading an older renderer library that lacks the diagnostics ABI does not
 prevent playback; status reports diagnostics as unavailable instead.
 
+## Host integrations and application rules
+
+```toml
+[integrations]
+media = true
+audio_spectrum = false
+audio_source = "@DEFAULT_MONITOR@"
+audio_sample_rate = 48000
+audio_update_hz = 30
+
+[rules]
+focused = "keep"
+maximized = "keep"
+fullscreen = "pause"
+```
+
+- `media` reads MPRIS players from the user session bus and forwards playback state plus track,
+  artist, album and genre metadata to compatible scene wallpapers. Playing players are preferred.
+- `audio_spectrum` captures stereo float PCM from a PulseAudio source and exports the renderer
+  contract `[left 64 bins][right 64 bins]`. PipeWire's PulseAudio compatibility works directly;
+  `@DEFAULT_MONITOR@` follows the current default sink monitor. This is opt-in because capture is
+  continuous. Scene and web wallpapers can consume it; video wallpapers do not receive it.
+- window rules use `keep`, `mute`, or `pause`, are evaluated per output, and rely on
+  `zwlr_foreign_toplevel_manager_v1` for focused/maximized/fullscreen state.
+- manual Pause/Resume and rule pause are independent. Removing a rule condition never resumes a
+  wallpaper that the user manually paused.
+- missing MPRIS/Pulse/foreign-toplevel capabilities are reported through status and do not stop
+  wallpaper playback.
+
+`we-layerd ctl status` includes `[integration_runtime]` with collector availability/errors. Output
+runtime diagnostics report media/audio renderer capability and current rule mute state. Collectors
+run outside the frame loop, and changing integration/rule settings does not recreate output workers.
+
 Current DMA-BUF scope:
 
 - the layer-shell backend reads linux-dmabuf v4 surface feedback and falls back to v3 global modifier events

@@ -1,3 +1,12 @@
+use std::collections::HashMap;
+
+use anyhow::{Context, Result};
+use we_renderer::{MediaPlaybackState as RendererMediaPlaybackState, MediaState};
+use zbus::{
+    blocking::{Connection, Proxy},
+    zvariant::OwnedValue,
+};
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum MediaPlaybackState {
     Playing,
@@ -12,10 +21,13 @@ pub(crate) struct MediaCandidate {
     pub(crate) playback: MediaPlaybackState,
     pub(crate) title: String,
     pub(crate) artist: String,
+    pub(crate) album_title: String,
+    pub(crate) album_artist: String,
+    pub(crate) genres: String,
 }
 
-pub(crate) fn choose_media_candidate(_candidates: &[MediaCandidate]) -> Option<MediaCandidate> {
-    let mut candidates = _candidates.to_vec();
+pub(crate) fn choose_media_candidate(candidates: &[MediaCandidate]) -> Option<MediaCandidate> {
+    let mut candidates = candidates.to_vec();
     candidates.sort_by(|left, right| {
         media_playback_rank(left.playback)
             .cmp(&media_playback_rank(right.playback))
@@ -48,6 +60,87 @@ impl MediaBridgeState {
     }
 }
 
+pub(crate) fn session_connection() -> Result<Connection> {
+    Connection::session().context("failed to connect to the session D-Bus for MPRIS")
+}
+
+pub(crate) fn read_mpris_candidates(connection: &Connection) -> Result<Vec<MediaCandidate>> {
+    let dbus = Proxy::new(
+        connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )
+    .context("failed to create D-Bus discovery proxy")?;
+    let names: Vec<String> = dbus.call("ListNames", &()).context("failed to list D-Bus names")?;
+    let mut candidates = Vec::new();
+    for bus_name in names.into_iter().filter(|name| name.starts_with("org.mpris.MediaPlayer2.")) {
+        let Ok(proxy) = Proxy::new(
+            connection,
+            bus_name.as_str(),
+            "/org/mpris/MediaPlayer2",
+            "org.mpris.MediaPlayer2.Player",
+        ) else {
+            continue;
+        };
+        let Ok(playback_status) = proxy.get_property::<String>("PlaybackStatus") else {
+            continue;
+        };
+        let metadata =
+            proxy.get_property::<HashMap<String, OwnedValue>>("Metadata").unwrap_or_default();
+        candidates.push(MediaCandidate {
+            bus_name: bus_name.clone(),
+            playback: match playback_status.as_str() {
+                "Playing" => MediaPlaybackState::Playing,
+                "Paused" => MediaPlaybackState::Paused,
+                _ => MediaPlaybackState::Stopped,
+            },
+            title: metadata_string(&metadata, "xesam:title"),
+            artist: metadata_strings(&metadata, "xesam:artist").join(", "),
+            album_title: metadata_string(&metadata, "xesam:album"),
+            album_artist: metadata_strings(&metadata, "xesam:albumArtist").join(", "),
+            genres: metadata_strings(&metadata, "xesam:genre").join(", "),
+        });
+    }
+    Ok(candidates)
+}
+
+pub(crate) fn to_renderer_state(candidate: Option<&MediaCandidate>) -> MediaState {
+    let Some(candidate) = candidate else {
+        return MediaState::default();
+    };
+    MediaState {
+        playback: match candidate.playback {
+            MediaPlaybackState::Playing => RendererMediaPlaybackState::Playing,
+            MediaPlaybackState::Paused => RendererMediaPlaybackState::Paused,
+            MediaPlaybackState::Stopped => RendererMediaPlaybackState::Stopped,
+        },
+        title: candidate.title.clone(),
+        artist: candidate.artist.clone(),
+        album_title: candidate.album_title.clone(),
+        album_artist: candidate.album_artist.clone(),
+        genres: candidate.genres.clone(),
+        content_type: "music".to_string(),
+        ..MediaState::default()
+    }
+}
+
+fn metadata_string(metadata: &HashMap<String, OwnedValue>, key: &str) -> String {
+    metadata
+        .get(key)
+        .and_then(|value| value.try_clone().ok())
+        .and_then(|value| String::try_from(value).ok())
+        .unwrap_or_default()
+}
+
+fn metadata_strings(metadata: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
+    metadata
+        .get(key)
+        .and_then(|value| value.try_clone().ok())
+        .and_then(|value| Vec::<String>::try_from(value).ok())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{choose_media_candidate, MediaBridgeState, MediaCandidate, MediaPlaybackState};
@@ -58,6 +151,9 @@ mod tests {
             playback,
             title: name.to_string(),
             artist: String::new(),
+            album_title: String::new(),
+            album_artist: String::new(),
+            genres: String::new(),
         }
     }
 

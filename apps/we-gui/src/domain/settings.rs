@@ -1,4 +1,4 @@
-use we_core::config::ScaleMode;
+use we_core::config::{RuntimeRuleAction, ScaleMode};
 
 #[derive(Debug, Clone)]
 pub(crate) struct UiSettings {
@@ -13,6 +13,12 @@ pub(crate) struct UiSettings {
     pub fps_limit: String,
     pub show_fps: bool,
     pub scale_mode: ScaleModeOption,
+    pub media_integration: bool,
+    pub audio_spectrum: bool,
+    pub audio_source: String,
+    pub rule_focused: RuntimeRuleAction,
+    pub rule_maximized: RuntimeRuleAction,
+    pub rule_fullscreen: RuntimeRuleAction,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

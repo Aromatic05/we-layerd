@@ -1,5 +1,12 @@
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
+use libpulse_binding::{
+    sample::{Format, Spec},
+    stream::Direction,
+};
+use libpulse_simple_binding::Simple;
+
 pub(crate) const AUDIO_SPECTRUM_BINS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,31 +51,80 @@ pub(crate) fn spectrum_from_interleaved_pcm(samples: &[f32], sample_rate: u32) -
     let nyquist = sample_rate as f32 * 0.5;
     for exported_bin in 0..AUDIO_SPECTRUM_BINS {
         let frequency = nyquist * exported_bin as f32 / AUDIO_SPECTRUM_BINS as f32;
-        let radians_per_sample = std::f32::consts::TAU * frequency / sample_rate as f32;
-        let mut left_re = 0.0_f32;
-        let mut left_im = 0.0_f32;
-        let mut right_re = 0.0_f32;
-        let mut right_im = 0.0_f32;
+        let omega = std::f32::consts::TAU * frequency / sample_rate as f32;
+        let coefficient = 2.0 * omega.cos();
+        let mut left_prev = 0.0_f32;
+        let mut left_prev2 = 0.0_f32;
+        let mut right_prev = 0.0_f32;
+        let mut right_prev2 = 0.0_f32;
 
         for (offset, weight) in window.iter().copied().enumerate() {
             let frame = start_frame + offset;
-            let angle = radians_per_sample * offset as f32;
-            let cos = angle.cos();
-            let sin = angle.sin();
             let left_sample = samples[frame * 2] * weight;
             let right_sample = samples[frame * 2 + 1] * weight;
-            left_re += left_sample * cos;
-            left_im -= left_sample * sin;
-            right_re += right_sample * cos;
-            right_im -= right_sample * sin;
+            let left_current = left_sample + coefficient * left_prev - left_prev2;
+            left_prev2 = left_prev;
+            left_prev = left_current;
+            let right_current = right_sample + coefficient * right_prev - right_prev2;
+            right_prev2 = right_prev;
+            right_prev = right_current;
         }
 
         let normalize = 2.0 / window_sum;
-        left[exported_bin] = (left_re.hypot(left_im) * normalize).clamp(0.0, 1.0);
-        right[exported_bin] = (right_re.hypot(right_im) * normalize).clamp(0.0, 1.0);
+        let left_power =
+            left_prev2 * left_prev2 + left_prev * left_prev - coefficient * left_prev * left_prev2;
+        let right_power = right_prev2 * right_prev2 + right_prev * right_prev
+            - coefficient * right_prev * right_prev2;
+        left[exported_bin] = (left_power.max(0.0).sqrt() * normalize).clamp(0.0, 1.0);
+        right[exported_bin] = (right_power.max(0.0).sqrt() * normalize).clamp(0.0, 1.0);
     }
 
     StereoSpectrum { left, right }
+}
+
+pub(crate) struct PulseAudioCapture {
+    simple: Simple,
+    sample_rate: u32,
+    frame_count: usize,
+    bytes: Vec<u8>,
+}
+
+impl PulseAudioCapture {
+    pub(crate) fn connect(source: &str, sample_rate: u32, update_hz: u32) -> Result<Self> {
+        let sample_rate = sample_rate.clamp(8_000, 192_000);
+        let update_hz = update_hz.clamp(5, 60);
+        let spec = Spec { format: Format::FLOAT32NE, channels: 2, rate: sample_rate };
+        if !spec.is_valid() {
+            anyhow::bail!("invalid PulseAudio sample specification");
+        }
+        let simple = Simple::new(
+            None,
+            "we-layerd",
+            Direction::Record,
+            Some(source),
+            "Wallpaper audio spectrum",
+            &spec,
+            None,
+            None,
+        )
+        .context("failed to open PulseAudio monitor source")?;
+        let frame_count = (sample_rate / update_hz).clamp(128, 4096) as usize;
+        Ok(Self {
+            simple,
+            sample_rate,
+            frame_count,
+            bytes: vec![0; frame_count * 2 * std::mem::size_of::<f32>()],
+        })
+    }
+
+    pub(crate) fn read_spectrum(&mut self) -> Result<Arc<[f32]>> {
+        self.simple.read(&mut self.bytes).context("failed to read PulseAudio monitor samples")?;
+        let mut samples = Vec::with_capacity(self.frame_count * 2);
+        for bytes in self.bytes.chunks_exact(4) {
+            samples.push(f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
+        }
+        Ok(spectrum_from_interleaved_pcm(&samples, self.sample_rate).flattened())
+    }
 }
 
 #[cfg(test)]

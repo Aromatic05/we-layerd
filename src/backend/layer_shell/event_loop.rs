@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use tracing::info;
+use tracing::{info, warn};
 use wayland_backend::client::WaylandError;
 use wayland_client::{
     globals::GlobalList,
@@ -18,7 +18,10 @@ use wayland_protocols::wp::{
     viewporter::client::wp_viewporter::WpViewporter,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
-use we_core::install_layout::{expand_tilde, resolve_renderer_library};
+use we_core::{
+    install_layout::{expand_tilde, resolve_renderer_library},
+    wallpaper::{wallpaper_type_from_source, WallpaperType},
+};
 use we_renderer::{FillMode, Frame, RenderConfig, Source};
 
 use crate::{
@@ -76,11 +79,86 @@ fn renderer_fill_mode(value: we_core::wallpaper::settings::WallpaperFillMode) ->
 }
 
 fn can_present_next_frame(state: &LayerShellState) -> bool {
-    !state.paused
+    !state.pause_state.effective()
         && !state.stopping
         && state.frame_callback.ready_for_next_frame
         && !state.frame_callback.pending
         && state.buffers.in_flight.len() < state.buffers.max_in_flight
+}
+
+fn apply_pause_state(state: &mut LayerShellState, previous: bool) {
+    let current = state.pause_state.effective();
+    if current == previous {
+        return;
+    }
+    if let Some(session) = state.session.as_mut() {
+        if current {
+            session.pause();
+        } else {
+            session.resume();
+            state.frame_callback.ready_for_next_frame = true;
+        }
+    }
+}
+
+fn apply_host_integrations(
+    state: &mut LayerShellState,
+    host: &crate::runtime::integrations::HostIntegrations,
+) {
+    let snapshot = host.snapshot_for_output(&state.output_name);
+
+    if snapshot.policy_generation != state.policy_generation {
+        let was_paused = state.pause_state.effective();
+        state.pause_state.set_rule(snapshot.policy.pause);
+        apply_pause_state(state, was_paused);
+        state.rule_muted = snapshot.policy.mute;
+        let desired_muted = state.configured_muted || state.rule_muted;
+        if desired_muted != state.applied_muted {
+            if let Some(session) = state.session.as_mut() {
+                if let Err(error) = session.set_muted(desired_muted) {
+                    warn!(output = %state.output_name, %error, "failed to apply rule mute state");
+                } else {
+                    state.applied_muted = desired_muted;
+                }
+            }
+        }
+        state.diagnostics.rule_muted = state.rule_muted;
+        state.policy_generation = snapshot.policy_generation;
+    }
+
+    if snapshot.media_generation != state.media_generation {
+        state.diagnostics.media_integration_supported =
+            matches!(state.wallpaper_type, WallpaperType::Scene);
+        if matches!(state.wallpaper_type, WallpaperType::Scene) {
+            if let Some(session) = state.session.as_mut() {
+                match session.set_media_state(&snapshot.media) {
+                    Ok(true) => {}
+                    Ok(false) => state.diagnostics.media_integration_supported = false,
+                    Err(error) => {
+                        warn!(output = %state.output_name, %error, "failed to inject media state")
+                    }
+                }
+            }
+        }
+        state.media_generation = snapshot.media_generation;
+    }
+
+    if snapshot.audio_generation != state.audio_generation {
+        state.diagnostics.audio_integration_supported =
+            matches!(state.wallpaper_type, WallpaperType::Scene | WallpaperType::Web);
+        if matches!(state.wallpaper_type, WallpaperType::Scene | WallpaperType::Web) {
+            if let Some(session) = state.session.as_mut() {
+                match session.push_audio_samples(&snapshot.audio) {
+                    Ok(true) => {}
+                    Ok(false) => state.diagnostics.audio_integration_supported = false,
+                    Err(error) => {
+                        warn!(output = %state.output_name, %error, "failed to inject audio spectrum")
+                    }
+                }
+            }
+        }
+        state.audio_generation = snapshot.audio_generation;
+    }
 }
 
 fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerShellState) -> i32 {
@@ -222,6 +300,7 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
     let cfg = ctx.cfg;
     let control_rx = ctx.control_rx;
     let status_sink = ctx.status_sink;
+    let host_integrations = ctx.host_integrations.clone();
 
     let conn = connection::connect_to_env()?;
     let (globals, mut event_queue) = registry::init_registry::<LayerShellState>(&conn)?;
@@ -245,6 +324,10 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
     let cache_path = expand_tilde(&cfg.renderer.cache_path);
     let source_path = expand_tilde(&cfg.renderer.source);
     let assets_path = expand_tilde(&cfg.renderer.assets_path);
+    let wallpaper_type = wallpaper_type_from_source(&source_path).unwrap_or_else(|error| {
+        warn!(source = %source_path.display(), %error, "could not determine wallpaper type for host integrations");
+        WallpaperType::Unknown
+    });
 
     if let Some(install_root) = option_env!("WE_LAYERD_RENDERER_INSTALL_ROOT") {
         std::env::set_var("WE_LAYERD_RENDERER_INSTALL_ROOT", install_root);
@@ -254,6 +337,11 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
 
     let library_path = resolve_renderer_library(&cfg.renderer.library_path)?;
     let mut session = RendererSession::create(&library_path, cache_path_arg)?;
+    let media_integration_supported =
+        matches!(wallpaper_type, WallpaperType::Scene) && session.supports_media_state();
+    let audio_integration_supported =
+        matches!(wallpaper_type, WallpaperType::Scene | WallpaperType::Web)
+            && session.supports_audio_samples();
 
     let (options_json_present, options_json_len, options_json_valid) =
         cfg.renderer.options_json_diagnostics();
@@ -278,6 +366,8 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
             prefer_dmabuf_configured: cfg.renderer.prefer_dmabuf,
             prefer_dmabuf_effective: cfg.renderer.prefer_dmabuf,
             allow_shm_fallback: cfg.renderer.allow_shm_fallback,
+            media_integration_supported,
+            audio_integration_supported,
             options_json: OptionsJsonDiagnostics {
                 present: options_json_present,
                 len: options_json_len,
@@ -295,7 +385,14 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
         interactive: cfg.general.interactive,
         render_resolution_follows_output: cfg.renderer.render_width.is_none()
             && cfg.renderer.render_height.is_none(),
-        paused: false,
+        pause_state: crate::runtime::rules::PauseState::default(),
+        configured_muted: cfg.renderer.muted,
+        rule_muted: false,
+        applied_muted: cfg.renderer.muted,
+        wallpaper_type,
+        media_generation: 0,
+        audio_generation: 0,
+        policy_generation: 0,
         stopping: false,
         pending_input_events: crate::runtime::input::PendingInput::default(),
         discovered_output_names: Default::default(),
@@ -409,6 +506,7 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
     session.play()?;
     let renderer_frame_fd = session.frame_ready_fd()?;
     state.session = Some(session);
+    apply_host_integrations(&mut state, &host_integrations);
     state.refresh_renderer_diagnostics();
     status_sink(state.snapshot());
 
@@ -437,18 +535,15 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
                     return Ok(exit);
                 }
                 ControlCommand::Pause => {
-                    if let Some(ref mut session) = state.session {
-                        session.pause();
-                    }
-                    state.paused = true;
+                    let was_paused = state.pause_state.effective();
+                    state.pause_state.set_manual(true);
+                    apply_pause_state(&mut state, was_paused);
                     status_sink(state.snapshot());
                 }
                 ControlCommand::Resume => {
-                    if let Some(ref mut session) = state.session {
-                        session.resume();
-                    }
-                    state.paused = false;
-                    state.frame_callback.ready_for_next_frame = true;
+                    let was_paused = state.pause_state.effective();
+                    state.pause_state.set_manual(false);
+                    apply_pause_state(&mut state, was_paused);
                     status_sink(state.snapshot());
                 }
                 ControlCommand::Reload => {
@@ -474,6 +569,8 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
             }
         }
 
+        apply_host_integrations(&mut state, &host_integrations);
+
         // Forward input events
         let input_events = state.pending_input_events.drain();
         if let Some(ref mut session) = state.session {
@@ -488,7 +585,7 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
         // Tick at the configured rate. The renderer eventfd signals when that work produces a frame.
         let now = Instant::now();
         let blocked_by_backpressure = state.buffers.in_flight.len() >= state.buffers.max_in_flight;
-        if blocked_by_backpressure && now >= next_tick_at && !state.paused {
+        if blocked_by_backpressure && now >= next_tick_at && !state.pause_state.effective() {
             state.frame_stats.skipped_by_backpressure =
                 state.frame_stats.skipped_by_backpressure.saturating_add(1);
         }
