@@ -176,7 +176,7 @@ fn build_wallpaper_grid<'a>(
     if layout.bottom_spacer > 0.0 {
         root = root.push(container(text("")).width(Fill).height(layout.bottom_spacer));
     }
-    container(root).padding(12).width(Fill).into()
+    container(root).padding([0, 12]).width(Fill).into()
 }
 
 fn make_wallpaper_card<'a>(

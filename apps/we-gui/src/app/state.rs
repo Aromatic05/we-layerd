@@ -14,6 +14,7 @@ use we_core::{
 use crate::{
     domain::{
         i18n::Language,
+        library_scan::LibraryScanScheduler,
         playlist_editor::{LegacyShuffleMigration, MoveDirection},
         runtime_status::RuntimeStatus,
         settings::{ScaleModeOption, UiSettings},
@@ -52,6 +53,7 @@ pub(crate) struct App {
     pub library_scroll_y: f32,
     pub library_viewport_width: f32,
     pub library_viewport_height: f32,
+    pub library_scan: LibraryScanScheduler,
     pub tray: Option<tray::TrayController>,
     pub main_window_id: Option<window::Id>,
     pub theme: Theme,
@@ -137,7 +139,7 @@ impl Drop for App {
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     AutoScan,
-    Scanned(Result<Vec<WallpaperEntry>, String>),
+    ScanCompleted(u64, Result<Vec<WallpaperEntry>, String>),
     GifLoaded(PathBuf, Result<Vec<GifFrame>, String>),
     GifTick,
     LibraryScrolled { offset_y: f32, viewport_width: f32, viewport_height: f32 },

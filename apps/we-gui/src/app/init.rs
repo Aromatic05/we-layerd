@@ -120,6 +120,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             library_scroll_y: 0.0,
             library_viewport_width: 860.0,
             library_viewport_height: 720.0,
+            library_scan: Default::default(),
             tray: tray::TrayController::new(language).ok(),
             main_window_id: None,
             theme: detect_system_theme(),

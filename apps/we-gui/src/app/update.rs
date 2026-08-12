@@ -14,6 +14,7 @@ use we_core::wallpaper::{
 use crate::{
     domain::{
         library_grid::{bounded_animation_candidates, grid_window},
+        library_scan::ScanRequest,
         playlist_editor::{
             self, add_wallpaper, create_playlist, delete_playlist, move_entry, remove_entry,
             rename_playlist, set_default_duration_ms, set_entry_duration_ms, set_mode,
@@ -36,24 +37,8 @@ const MAX_CONCURRENT_GIF_DECODES: usize = 2;
 
 pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
-        Message::AutoScan => Task::perform(
-            wallpaper_service::scan(app.ui_settings.workshop_path.clone()),
-            Message::Scanned,
-        ),
-        Message::Scanned(result) => match result {
-            Ok(entries) => {
-                app.entries = entries;
-                app.animated_previews.clear();
-                app.gif_preview_desired.clear();
-                app.gif_preview_failed.clear();
-                app.library_scroll_y = 0.0;
-                refresh_filtered_entries(app);
-                let previews = refresh_visible_gif_previews(app);
-                let migration = migrate_legacy_shuffle_if_needed(app);
-                Task::batch(vec![previews, migration])
-            }
-            Err(_err) => Task::none(),
-        },
+        Message::AutoScan => queue_library_scan(app, app.ui_settings.workshop_path.clone()),
+        Message::ScanCompleted(generation, result) => finish_library_scan(app, generation, result),
         Message::SelectWallpaper(index) => {
             if !select_wallpaper(app, index, true) {
                 return Task::none();
@@ -155,11 +140,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             app.ui_settings.workshop_path = value.clone();
             super::settings::sync(app);
             if Path::new(&value).is_dir() {
-                return Task::perform(
-                    wallpaper_service::scan(app.ui_settings.workshop_path.clone()),
-                    Message::Scanned,
-                );
+                return queue_library_scan(app, value);
             }
+            app.library_scan.invalidate();
             Task::none()
         }
         Message::RendererLibraryPathChanged(value) => {
@@ -201,10 +184,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             if let Some(path) = path {
                 app.ui_settings.workshop_path = path.display().to_string();
                 super::settings::sync(app);
-                return Task::perform(
-                    wallpaper_service::scan(app.ui_settings.workshop_path.clone()),
-                    Message::Scanned,
-                );
+                return queue_library_scan(app, app.ui_settings.workshop_path.clone());
             }
             Task::none()
         }
@@ -798,6 +778,56 @@ fn exit_application(app: &mut App) -> Task<Message> {
         eprintln!("failed to stop daemon while exiting we-gui");
     }
     iced::exit()
+}
+
+fn queue_library_scan(app: &mut App, workshop_path: String) -> Task<Message> {
+    match app.library_scan.request(workshop_path) {
+        Some(request) => start_library_scan(request),
+        None => Task::none(),
+    }
+}
+
+fn start_library_scan(request: ScanRequest) -> Task<Message> {
+    let generation = request.generation;
+    Task::perform(wallpaper_service::scan(request.workshop_path), move |result| {
+        Message::ScanCompleted(generation, result)
+    })
+}
+
+fn finish_library_scan(
+    app: &mut App,
+    generation: u64,
+    result: Result<Vec<we_core::wallpaper::WallpaperEntry>, String>,
+) -> Task<Message> {
+    let completion = app.library_scan.complete(generation);
+    let mut tasks = Vec::new();
+
+    if completion.accept_result {
+        if let Ok(entries) = result {
+            app.entries = entries;
+            app.animated_previews.clear();
+            app.gif_preview_desired.clear();
+            app.gif_preview_failed.clear();
+            app.library_scroll_y = 0.0;
+            refresh_filtered_entries(app);
+            tasks.push(refresh_visible_gif_previews(app));
+            tasks.push(migrate_legacy_shuffle_if_needed(app));
+            tasks.push(iced::widget::operation::scroll_to(
+                "library.scroll",
+                iced::widget::operation::AbsoluteOffset { x: 0.0, y: 0.0 },
+            ));
+        }
+    }
+
+    if let Some(next) = completion.next {
+        tasks.push(start_library_scan(next));
+    }
+
+    if tasks.is_empty() {
+        Task::none()
+    } else {
+        Task::batch(tasks)
+    }
 }
 
 fn refresh_filtered_entries(app: &mut App) {
