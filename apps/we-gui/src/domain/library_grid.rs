@@ -92,6 +92,14 @@ pub(crate) fn gif_tick_needed(animated_preview_count: usize) -> bool {
     animated_preview_count > 0
 }
 
+pub(crate) fn gif_result_is_current(
+    task_generation: u64,
+    current_generation: u64,
+    still_desired: bool,
+) -> bool {
+    still_desired && task_generation == current_generation
+}
+
 pub(crate) fn bounded_animation_candidates<T>(candidates: impl IntoIterator<Item = T>) -> Vec<T> {
     candidates.into_iter().take(MAX_ANIMATED_PREVIEWS).collect()
 }
@@ -99,7 +107,8 @@ pub(crate) fn bounded_animation_candidates<T>(candidates: impl IntoIterator<Item
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_animation_candidates, gif_tick_needed, grid_window, MAX_ANIMATED_PREVIEWS,
+        bounded_animation_candidates, gif_result_is_current, gif_tick_needed, grid_window,
+        MAX_ANIMATED_PREVIEWS,
     };
 
     #[test]
@@ -146,5 +155,12 @@ mod tests {
 
         assert_eq!(candidates.len(), MAX_ANIMATED_PREVIEWS);
         assert_eq!(candidates, (0..MAX_ANIMATED_PREVIEWS).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn gif_result_from_an_old_library_generation_is_never_accepted() {
+        assert!(!gif_result_is_current(4, 5, true));
+        assert!(!gif_result_is_current(5, 5, false));
+        assert!(gif_result_is_current(5, 5, true));
     }
 }

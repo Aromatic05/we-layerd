@@ -13,7 +13,7 @@ use we_core::wallpaper::{
 
 use crate::{
     domain::{
-        library_grid::{bounded_animation_candidates, grid_window},
+        library_grid::{bounded_animation_candidates, gif_result_is_current, grid_window},
         library_scan::ScanRequest,
         playlist_editor::{
             self, add_wallpaper, create_playlist, delete_playlist, move_entry, remove_entry,
@@ -45,18 +45,22 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::perform(runtime::fetch_status(), Message::StatusLoaded)
         }
-        Message::GifLoaded(path, result) => {
-            app.gif_preview_loading.remove(&path);
-            match result {
-                Ok(frames) if !frames.is_empty() && app.gif_preview_desired.contains(&path) => {
-                    app.animated_previews.insert(
-                        path.clone(),
-                        AnimatedPreview { frames, current: 0, elapsed: Duration::ZERO },
-                    );
-                    app.gif_preview_failed.remove(&path);
-                }
-                Ok(_) | Err(_) => {
-                    if app.gif_preview_desired.contains(&path) {
+        Message::GifLoaded { generation, path, result } => {
+            app.gif_preview_loading.remove(&(generation, path.clone()));
+            if gif_result_is_current(
+                generation,
+                app.gif_preview_generation,
+                app.gif_preview_desired.contains(&path),
+            ) {
+                match result {
+                    Ok(frames) if !frames.is_empty() => {
+                        app.animated_previews.insert(
+                            path.clone(),
+                            AnimatedPreview { frames, current: 0, elapsed: Duration::ZERO },
+                        );
+                        app.gif_preview_failed.remove(&path);
+                    }
+                    Ok(_) | Err(_) => {
                         app.gif_preview_failed.insert(path);
                     }
                 }
@@ -805,6 +809,7 @@ fn finish_library_scan(
     if completion.accept_result {
         if let Ok(entries) = result {
             app.entries = entries;
+            app.gif_preview_generation = app.gif_preview_generation.wrapping_add(1);
             app.animated_previews.clear();
             app.gif_preview_desired.clear();
             app.gif_preview_failed.clear();
@@ -881,12 +886,15 @@ fn schedule_desired_gif_previews(app: &mut App) -> Task<Message> {
         return Task::none();
     }
 
+    let generation = app.gif_preview_generation;
     let paths = app
         .gif_preview_desired
         .iter()
         .filter(|path| {
             !app.animated_previews.contains_key(*path)
-                && !app.gif_preview_loading.contains(*path)
+                && !app.gif_preview_loading.iter().any(|(loading_generation, loading_path)| {
+                    *loading_generation == generation && loading_path == *path
+                })
                 && !app.gif_preview_failed.contains(*path)
         })
         .take(available)
@@ -898,9 +906,9 @@ fn schedule_desired_gif_previews(app: &mut App) -> Task<Message> {
 
     let mut tasks = Vec::with_capacity(paths.len());
     for path in paths {
-        app.gif_preview_loading.insert(path.clone());
+        app.gif_preview_loading.insert((generation, path.clone()));
         tasks.push(Task::perform(wallpaper_service::decode_gif(path.clone()), move |result| {
-            Message::GifLoaded(path, result)
+            Message::GifLoaded { generation, path, result }
         }));
     }
     Task::batch(tasks)

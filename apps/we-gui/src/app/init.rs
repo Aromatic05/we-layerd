@@ -117,6 +117,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             gif_preview_desired: Default::default(),
             gif_preview_loading: Default::default(),
             gif_preview_failed: Default::default(),
+            gif_preview_generation: 0,
             library_scroll_y: 0.0,
             library_viewport_width: 860.0,
             library_viewport_height: 720.0,

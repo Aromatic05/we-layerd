@@ -17,6 +17,9 @@ const GIF_PREVIEW_MAX_HEIGHT: u32 = 270;
 const GIF_PREVIEW_MAX_SOURCE_DIMENSION: u32 = 8_192;
 const GIF_PREVIEW_DECODER_MAX_ALLOC: u64 = 128 * 1024 * 1024;
 const GIF_PREVIEW_DECODED_BUDGET: usize = 12 * 1024 * 1024;
+const GIF_PREVIEW_MAX_RETAINED_FRAMES: usize = 120;
+const GIF_PREVIEW_MAX_DECODED_FRAMES: usize = 600;
+const GIF_PREVIEW_MAX_DECODED_SOURCE_PIXELS: u64 = 512 * 1024 * 1024;
 
 pub async fn scan(workshop_path: String) -> Result<Vec<WallpaperEntry>, String> {
     let root = if workshop_path.trim().is_empty() {
@@ -41,9 +44,10 @@ pub async fn decode_gif(path: PathBuf) -> Result<Vec<GifFrame>, String> {
 
     let (source_width, source_height) = decoder.dimensions();
     let (target_width, target_height) = preview_dimensions(source_width, source_height);
-    let mut bounded = BoundedGifFrames::new(GIF_PREVIEW_DECODED_BUDGET);
+    let mut bounded =
+        BoundedGifFrames::new(GIF_PREVIEW_DECODED_BUDGET, GIF_PREVIEW_MAX_RETAINED_FRAMES);
 
-    for frame in decoder.into_frames() {
+    for frame in decoder.into_frames().take(max_gif_decode_frames(source_width, source_height)) {
         let frame = frame.map_err(|error| error.to_string())?;
         let (numerator, denominator) = frame.delay().numer_denom_ms();
         let delay = Duration::from_millis((numerator / denominator.max(1)).max(16).into());
@@ -80,8 +84,15 @@ fn preview_dimensions(width: u32, height: u32) -> (u32, u32) {
     )
 }
 
+fn max_gif_decode_frames(width: u32, height: u32) -> usize {
+    let source_pixels = u64::from(width.max(1)).saturating_mul(u64::from(height.max(1)));
+    let by_pixel_work = (GIF_PREVIEW_MAX_DECODED_SOURCE_PIXELS / source_pixels).max(1) as usize;
+    GIF_PREVIEW_MAX_DECODED_FRAMES.min(by_pixel_work)
+}
+
 struct BoundedGifFrames {
     max_bytes: usize,
+    max_frames: usize,
     frames: Vec<GifFrame>,
     retained_bytes: usize,
     stride: usize,
@@ -89,8 +100,15 @@ struct BoundedGifFrames {
 }
 
 impl BoundedGifFrames {
-    fn new(max_bytes: usize) -> Self {
-        Self { max_bytes, frames: Vec::new(), retained_bytes: 0, stride: 1, seen: 0 }
+    fn new(max_bytes: usize, max_frames: usize) -> Self {
+        Self {
+            max_bytes,
+            max_frames: max_frames.max(1),
+            frames: Vec::new(),
+            retained_bytes: 0,
+            stride: 1,
+            seen: 0,
+        }
     }
 
     fn push(&mut self, frame: GifFrame) {
@@ -111,7 +129,8 @@ impl BoundedGifFrames {
             return;
         }
 
-        while self.retained_bytes.saturating_add(frame_bytes) > self.max_bytes
+        while (self.retained_bytes.saturating_add(frame_bytes) > self.max_bytes
+            || self.frames.len() >= self.max_frames)
             && self.frames.len() > 1
         {
             self.compact_once();
@@ -119,6 +138,7 @@ impl BoundedGifFrames {
 
         if index % self.stride != 0
             || self.retained_bytes.saturating_add(frame_bytes) > self.max_bytes
+            || self.frames.len() >= self.max_frames
         {
             self.frames.last_mut().expect("retained frame").delay += frame.delay;
             return;
@@ -154,10 +174,14 @@ mod tests {
 
     use iced::widget::image;
 
-    use super::{BoundedGifFrames, GifFrame};
+    use super::{max_gif_decode_frames, BoundedGifFrames, GifFrame};
 
-    fn retain_frames_with_budget(frames: Vec<GifFrame>, budget_bytes: usize) -> Vec<GifFrame> {
-        let mut bounded = BoundedGifFrames::new(budget_bytes);
+    fn retain_frames_with_budget(
+        frames: Vec<GifFrame>,
+        budget_bytes: usize,
+        max_frames: usize,
+    ) -> Vec<GifFrame> {
+        let mut bounded = BoundedGifFrames::new(budget_bytes, max_frames);
         for frame in frames {
             bounded.push(frame);
         }
@@ -175,12 +199,36 @@ mod tests {
             .collect::<Vec<_>>();
         let expected_duration = frames.iter().map(|frame| frame.delay).sum::<Duration>();
 
-        let retained = retain_frames_with_budget(frames, 64);
+        let retained = retain_frames_with_budget(frames, 64, 120);
         let retained_bytes = retained.iter().map(|frame| frame.decoded_bytes).sum::<usize>();
         let retained_duration = retained.iter().map(|frame| frame.delay).sum::<Duration>();
 
         assert!(retained_bytes <= 64, "retained {retained_bytes} decoded bytes");
         assert_eq!(retained_duration, expected_duration);
         assert!(!retained.is_empty());
+    }
+
+    #[test]
+    fn gif_frame_count_is_bounded_even_when_frames_are_tiny() {
+        let frames = (0..1_000)
+            .map(|index| GifFrame {
+                handle: image::Handle::from_rgba(1, 1, vec![index as u8; 4]),
+                decoded_bytes: 4,
+                delay: Duration::from_millis(16),
+            })
+            .collect::<Vec<_>>();
+        let expected_duration = frames.iter().map(|frame| frame.delay).sum::<Duration>();
+
+        let retained = retain_frames_with_budget(frames, usize::MAX, 8);
+
+        assert!(retained.len() <= 8, "retained {} tiny frames", retained.len());
+        assert_eq!(retained.iter().map(|frame| frame.delay).sum::<Duration>(), expected_duration);
+    }
+
+    #[test]
+    fn gif_decode_work_is_reduced_for_large_source_frames() {
+        assert_eq!(max_gif_decode_frames(1, 1), 600);
+        assert!(max_gif_decode_frames(3_840, 2_160) <= 64);
+        assert!(max_gif_decode_frames(8_192, 8_192) <= 8);
     }
 }
