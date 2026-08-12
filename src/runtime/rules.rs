@@ -142,12 +142,26 @@ struct ForeignToplevelProbe {
     output_globals: BTreeMap<u32, u32>,
     output_names: BTreeMap<u32, String>,
     toplevels: BTreeMap<u32, ToplevelRecord>,
+    output_topology_changed: bool,
     finished: bool,
 }
 
 impl ForeignToplevelProbe {
     fn register_output_global(&mut self, global_name: u32, protocol_id: u32) {
         self.output_globals.insert(global_name, protocol_id);
+    }
+
+    fn note_output_global_added(&mut self) {
+        self.output_topology_changed = true;
+    }
+
+    fn output_topology_changed(&self) -> bool {
+        self.output_topology_changed
+    }
+
+    #[cfg(test)]
+    fn clear_output_topology_changed(&mut self) {
+        self.output_topology_changed = false;
     }
 
     fn record_output_name(&mut self, global_name: u32, protocol_id: u32, name: String) {
@@ -160,6 +174,7 @@ impl ForeignToplevelProbe {
         let Some(protocol_id) = self.output_globals.remove(&global_name) else {
             return;
         };
+        self.output_topology_changed = true;
         self.output_names.remove(&protocol_id);
         for toplevel in self.toplevels.values_mut() {
             toplevel.outputs.remove(&protocol_id);
@@ -229,6 +244,9 @@ impl ForeignToplevelMonitor {
         self.queue
             .dispatch_pending(&mut self.state)
             .context("failed to dispatch pending foreign-toplevel events")?;
+        if self.state.output_topology_changed() {
+            bail!("Wayland output topology changed");
+        }
         if self.state.finished {
             bail!("foreign-toplevel manager finished");
         }
@@ -253,6 +271,9 @@ impl ForeignToplevelMonitor {
                     self.queue
                         .dispatch_pending(&mut self.state)
                         .context("failed to dispatch foreign-toplevel events")?;
+                    if self.state.output_topology_changed() {
+                        bail!("Wayland output topology changed");
+                    }
                 } else {
                     drop(read_guard);
                 }
@@ -269,18 +290,17 @@ impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListConten
 {
     fn event(
         state: &mut Self,
-        proxy: &wl_registry::WlRegistry,
+        _proxy: &wl_registry::WlRegistry,
         event: wl_registry::Event,
         _data: &wayland_client::globals::GlobalListContents,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global { name, interface, version }
+            wl_registry::Event::Global { interface, version, .. }
                 if interface == "wl_output" && version >= 4 =>
             {
-                let output = proxy.bind::<wl_output::WlOutput, _, _>(name, 4, qh, name);
-                state.register_output_global(name, output.id().protocol_id());
+                state.note_output_global_added()
             }
             wl_registry::Event::GlobalRemove { name } => state.remove_output_global(name),
             _ => {}
@@ -405,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn output_hotplug_updates_names_and_removes_stale_toplevel_membership() {
+    fn output_hotplug_requires_monitor_reconnect_and_cleans_removed_membership() {
         let mut probe = ForeignToplevelProbe::default();
         probe.register_output_global(41, 401);
         probe.record_output_name(41, 401, "DP-1".to_string());
@@ -419,9 +439,15 @@ mod tests {
         );
         assert_eq!(probe.outputs(), vec!["DP-1".to_string()]);
         assert_eq!(probe.activities()[0].outputs, vec!["DP-1".to_string()]);
+        assert!(!probe.output_topology_changed());
+
+        probe.note_output_global_added();
+        assert!(probe.output_topology_changed());
+        probe.clear_output_topology_changed();
 
         probe.remove_output_global(41);
 
+        assert!(probe.output_topology_changed());
         assert!(probe.outputs().is_empty());
         assert!(probe.activities()[0].outputs.is_empty());
 
