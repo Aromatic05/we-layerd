@@ -88,6 +88,50 @@ pub(crate) fn spectrum_from_interleaved_pcm(samples: &[f32], sample_rate: u32) -
     StereoSpectrum { left, right }
 }
 
+fn append_recent_pcm_bytes(retained: &mut Vec<f32>, bytes: &[u8], max_samples: usize) {
+    if max_samples == 0 {
+        retained.clear();
+        return;
+    }
+
+    let chunks = bytes.chunks_exact(std::mem::size_of::<f32>());
+    let incoming_samples = chunks.len();
+    if incoming_samples >= max_samples {
+        retained.clear();
+        retained.extend(
+            chunks
+                .skip(incoming_samples - max_samples)
+                .map(|bytes| f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        );
+        return;
+    }
+
+    let overflow = retained.len().saturating_add(incoming_samples).saturating_sub(max_samples);
+    if overflow > 0 {
+        retained.drain(..overflow.min(retained.len()));
+    }
+    retained
+        .extend(chunks.map(|bytes| f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])));
+}
+
+fn append_recent_silence(retained: &mut Vec<f32>, incoming_samples: usize, max_samples: usize) {
+    if max_samples == 0 {
+        retained.clear();
+        return;
+    }
+    if incoming_samples >= max_samples {
+        retained.clear();
+        retained.resize(max_samples, 0.0);
+        return;
+    }
+
+    let overflow = retained.len().saturating_add(incoming_samples).saturating_sub(max_samples);
+    if overflow > 0 {
+        retained.drain(..overflow.min(retained.len()));
+    }
+    retained.resize(retained.len() + incoming_samples, 0.0);
+}
+
 pub(crate) struct PulseAudioCapture {
     // Keep the dependency objects in destruction order: stream -> context -> mainloop.
     stream: Stream,
@@ -142,7 +186,7 @@ impl PulseAudioCapture {
         let mut stream = Stream::new(&mut context, "Wallpaper audio spectrum", &spec, None)
             .context("failed to create PulseAudio record stream")?;
         let buffer_attr = BufferAttr {
-            maxlength: u32::MAX,
+            maxlength: fragment_bytes.saturating_mul(4),
             tlength: u32::MAX,
             prebuf: u32::MAX,
             minreq: u32::MAX,
@@ -195,34 +239,26 @@ impl PulseAudioCapture {
             _ => {}
         }
 
+        let required_samples = self.frame_count * 2;
         loop {
-            let fragment = match self.stream.peek().context("failed to peek PulseAudio samples")? {
+            match self.stream.peek().context("failed to peek PulseAudio samples")? {
                 PeekResult::Empty => break,
-                PeekResult::Hole(bytes) => {
-                    let samples = bytes / std::mem::size_of::<f32>();
-                    Some(vec![0.0_f32; samples])
-                }
-                PeekResult::Data(bytes) => Some(
-                    bytes
-                        .chunks_exact(std::mem::size_of::<f32>())
-                        .map(|bytes| f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-                        .collect::<Vec<_>>(),
+                PeekResult::Hole(bytes) => append_recent_silence(
+                    &mut self.samples,
+                    bytes / std::mem::size_of::<f32>(),
+                    required_samples,
                 ),
-            };
-            if let Some(fragment) = fragment {
-                self.samples.extend(fragment);
-                self.stream.discard().context("failed to consume PulseAudio samples")?;
+                PeekResult::Data(bytes) => {
+                    append_recent_pcm_bytes(&mut self.samples, bytes, required_samples)
+                }
             }
+            self.stream.discard().context("failed to consume PulseAudio samples")?;
         }
 
-        let required_samples = self.frame_count * 2;
         if self.samples.len() < required_samples {
             return Ok(None);
         }
-        if self.samples.len() > required_samples {
-            let keep_from = self.samples.len() - required_samples;
-            self.samples.drain(..keep_from);
-        }
+        debug_assert_eq!(self.samples.len(), required_samples);
         let spectrum = spectrum_from_interleaved_pcm(&self.samples, self.sample_rate).flattened();
         self.samples.clear();
         Ok(Some(spectrum))
@@ -268,7 +304,10 @@ fn drive_pulse_until(
 mod tests {
     use std::f32::consts::TAU;
 
-    use super::{spectrum_from_interleaved_pcm, AUDIO_SPECTRUM_BINS};
+    use super::{
+        append_recent_pcm_bytes, append_recent_silence, spectrum_from_interleaved_pcm,
+        AUDIO_SPECTRUM_BINS,
+    };
 
     fn stereo_sine(frequency_hz: f32, sample_rate: u32, frames: usize) -> Vec<f32> {
         (0..frames)
@@ -308,5 +347,18 @@ mod tests {
         assert!((3..=5).contains(&peak), "unexpected 1.5 kHz peak bin {peak}");
         assert!(spectrum.left[peak] > 0.5);
         assert!((spectrum.left[peak] - spectrum.right[peak]).abs() < 0.001);
+    }
+
+    #[test]
+    fn pulse_backlog_retains_only_the_latest_bounded_sample_window() {
+        let mut retained = vec![1.0_f32, 2.0];
+        let incoming =
+            (3_u32..=12).flat_map(|value| (value as f32).to_ne_bytes()).collect::<Vec<_>>();
+
+        append_recent_pcm_bytes(&mut retained, &incoming, 4);
+        assert_eq!(retained, vec![9.0, 10.0, 11.0, 12.0]);
+
+        append_recent_silence(&mut retained, 10_000, 4);
+        assert_eq!(retained, vec![0.0; 4]);
     }
 }
