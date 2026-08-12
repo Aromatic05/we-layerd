@@ -1,11 +1,13 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::{Context, Result};
 use we_renderer::{MediaPlaybackState as RendererMediaPlaybackState, MediaState};
 use zbus::{
-    blocking::{Connection, Proxy},
+    blocking::{connection::Builder as ConnectionBuilder, Connection, Proxy},
     zvariant::OwnedValue,
 };
+
+const MPRIS_METHOD_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum MediaPlaybackState {
@@ -61,10 +63,20 @@ impl MediaBridgeState {
 }
 
 pub(crate) fn session_connection() -> Result<Connection> {
-    Connection::session().context("failed to connect to the session D-Bus for MPRIS")
+    ConnectionBuilder::session()
+        .context("failed to resolve the session D-Bus for MPRIS")?
+        .method_timeout(MPRIS_METHOD_TIMEOUT)
+        .build()
+        .context("failed to connect to the session D-Bus for MPRIS")
 }
 
-pub(crate) fn read_mpris_candidates(connection: &Connection) -> Result<Vec<MediaCandidate>> {
+pub(crate) fn read_mpris_candidates_until(
+    connection: &Connection,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Option<Vec<MediaCandidate>>> {
+    if cancelled() {
+        return Ok(None);
+    }
     let dbus = Proxy::new(
         connection,
         "org.freedesktop.DBus",
@@ -73,8 +85,14 @@ pub(crate) fn read_mpris_candidates(connection: &Connection) -> Result<Vec<Media
     )
     .context("failed to create D-Bus discovery proxy")?;
     let names: Vec<String> = dbus.call("ListNames", &()).context("failed to list D-Bus names")?;
+    if cancelled() {
+        return Ok(None);
+    }
     let mut candidates = Vec::new();
     for bus_name in names.into_iter().filter(|name| name.starts_with("org.mpris.MediaPlayer2.")) {
+        if cancelled() {
+            return Ok(None);
+        }
         let Ok(proxy) = Proxy::new(
             connection,
             bus_name.as_str(),
@@ -86,6 +104,9 @@ pub(crate) fn read_mpris_candidates(connection: &Connection) -> Result<Vec<Media
         let Ok(playback_status) = proxy.get_property::<String>("PlaybackStatus") else {
             continue;
         };
+        if cancelled() {
+            return Ok(None);
+        }
         let metadata =
             proxy.get_property::<HashMap<String, OwnedValue>>("Metadata").unwrap_or_default();
         candidates.push(MediaCandidate {
@@ -102,7 +123,7 @@ pub(crate) fn read_mpris_candidates(connection: &Connection) -> Result<Vec<Media
             genres: metadata_strings(&metadata, "xesam:genre").join(", "),
         });
     }
-    Ok(candidates)
+    Ok(Some(candidates))
 }
 
 pub(crate) fn to_renderer_state(candidate: Option<&MediaCandidate>) -> MediaState {

@@ -1,11 +1,17 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use libpulse_binding::{
+    context::{Context as PulseContext, FlagSet as ContextFlagSet, State as ContextState},
+    def::BufferAttr,
+    mainloop::standard::{IterateResult, Mainloop},
     sample::{Format, Spec},
-    stream::Direction,
+    stream::{FlagSet as StreamFlagSet, PeekResult, State as StreamState, Stream},
 };
-use libpulse_simple_binding::Simple;
 
 pub(crate) const AUDIO_SPECTRUM_BINS: usize = 64;
 
@@ -83,47 +89,178 @@ pub(crate) fn spectrum_from_interleaved_pcm(samples: &[f32], sample_rate: u32) -
 }
 
 pub(crate) struct PulseAudioCapture {
-    simple: Simple,
+    // Keep the dependency objects in destruction order: stream -> context -> mainloop.
+    stream: Stream,
+    context: PulseContext,
+    mainloop: Mainloop,
     sample_rate: u32,
     frame_count: usize,
-    bytes: Vec<u8>,
+    samples: Vec<f32>,
 }
 
 impl PulseAudioCapture {
-    pub(crate) fn connect(source: &str, sample_rate: u32, update_hz: u32) -> Result<Self> {
+    pub(crate) fn connect(
+        source: &str,
+        sample_rate: u32,
+        update_hz: u32,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<Self>> {
+        if cancelled() {
+            return Ok(None);
+        }
         let sample_rate = sample_rate.clamp(8_000, 192_000);
         let update_hz = update_hz.clamp(5, 60);
         let spec = Spec { format: Format::FLOAT32NE, channels: 2, rate: sample_rate };
         if !spec.is_valid() {
             anyhow::bail!("invalid PulseAudio sample specification");
         }
-        let simple = Simple::new(
-            None,
-            "we-layerd",
-            Direction::Record,
-            Some(source),
-            "Wallpaper audio spectrum",
-            &spec,
-            None,
-            None,
-        )
-        .context("failed to open PulseAudio monitor source")?;
         let frame_count = (sample_rate / update_hz).clamp(128, 4096) as usize;
-        Ok(Self {
-            simple,
+        let fragment_bytes = frame_count
+            .checked_mul(2)
+            .and_then(|samples| samples.checked_mul(std::mem::size_of::<f32>()))
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .context("PulseAudio fragment size overflow")?;
+
+        let mut mainloop = Mainloop::new().context("failed to create PulseAudio mainloop")?;
+        let mut context = PulseContext::new(&mainloop, "we-layerd")
+            .context("failed to create PulseAudio context")?;
+        context
+            .connect(None, ContextFlagSet::NOFLAGS, None)
+            .context("failed to start PulseAudio context connection")?;
+        if !drive_pulse_until(&mut mainloop, Duration::from_secs(2), &mut cancelled, || {
+            match context.get_state() {
+                ContextState::Ready => Ok(true),
+                ContextState::Failed | ContextState::Terminated => {
+                    Err(anyhow::anyhow!("PulseAudio context failed: {}", context.errno()))
+                }
+                _ => Ok(false),
+            }
+        })? {
+            return Ok(None);
+        }
+
+        let mut stream = Stream::new(&mut context, "Wallpaper audio spectrum", &spec, None)
+            .context("failed to create PulseAudio record stream")?;
+        let buffer_attr = BufferAttr {
+            maxlength: u32::MAX,
+            tlength: u32::MAX,
+            prebuf: u32::MAX,
+            minreq: u32::MAX,
+            fragsize: fragment_bytes,
+        };
+        stream
+            .connect_record(Some(source), Some(&buffer_attr), StreamFlagSet::ADJUST_LATENCY)
+            .context("failed to connect PulseAudio monitor source")?;
+        if !drive_pulse_until(
+            &mut mainloop,
+            Duration::from_secs(2),
+            &mut cancelled,
+            || match stream.get_state() {
+                StreamState::Ready => Ok(true),
+                StreamState::Failed | StreamState::Terminated => {
+                    Err(anyhow::anyhow!("PulseAudio record stream failed"))
+                }
+                _ => Ok(false),
+            },
+        )? {
+            return Ok(None);
+        }
+
+        Ok(Some(Self {
+            stream,
+            context,
+            mainloop,
             sample_rate,
             frame_count,
-            bytes: vec![0; frame_count * 2 * std::mem::size_of::<f32>()],
-        })
+            samples: Vec::with_capacity(frame_count * 2),
+        }))
     }
 
-    pub(crate) fn read_spectrum(&mut self) -> Result<Arc<[f32]>> {
-        self.simple.read(&mut self.bytes).context("failed to read PulseAudio monitor samples")?;
-        let mut samples = Vec::with_capacity(self.frame_count * 2);
-        for bytes in self.bytes.chunks_exact(4) {
-            samples.push(f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
+    pub(crate) fn poll_spectrum(&mut self) -> Result<Option<Arc<[f32]>>> {
+        match self.mainloop.iterate(false) {
+            IterateResult::Success(_) => {}
+            IterateResult::Quit(_) => anyhow::bail!("PulseAudio mainloop quit"),
+            IterateResult::Err(error) => anyhow::bail!("PulseAudio mainloop failed: {error}"),
         }
-        Ok(spectrum_from_interleaved_pcm(&samples, self.sample_rate).flattened())
+        match self.context.get_state() {
+            ContextState::Failed | ContextState::Terminated => {
+                anyhow::bail!("PulseAudio context disconnected: {}", self.context.errno())
+            }
+            _ => {}
+        }
+        match self.stream.get_state() {
+            StreamState::Failed | StreamState::Terminated => {
+                anyhow::bail!("PulseAudio record stream disconnected")
+            }
+            _ => {}
+        }
+
+        loop {
+            let fragment = match self.stream.peek().context("failed to peek PulseAudio samples")? {
+                PeekResult::Empty => break,
+                PeekResult::Hole(bytes) => {
+                    let samples = bytes / std::mem::size_of::<f32>();
+                    Some(vec![0.0_f32; samples])
+                }
+                PeekResult::Data(bytes) => Some(
+                    bytes
+                        .chunks_exact(std::mem::size_of::<f32>())
+                        .map(|bytes| f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                        .collect::<Vec<_>>(),
+                ),
+            };
+            if let Some(fragment) = fragment {
+                self.samples.extend(fragment);
+                self.stream.discard().context("failed to consume PulseAudio samples")?;
+            }
+        }
+
+        let required_samples = self.frame_count * 2;
+        if self.samples.len() < required_samples {
+            return Ok(None);
+        }
+        if self.samples.len() > required_samples {
+            let keep_from = self.samples.len() - required_samples;
+            self.samples.drain(..keep_from);
+        }
+        let spectrum = spectrum_from_interleaved_pcm(&self.samples, self.sample_rate).flattened();
+        self.samples.clear();
+        Ok(Some(spectrum))
+    }
+}
+
+impl Drop for PulseAudioCapture {
+    fn drop(&mut self) {
+        let _ = self.stream.disconnect();
+        self.context.disconnect();
+    }
+}
+
+fn drive_pulse_until(
+    mainloop: &mut Mainloop,
+    timeout: Duration,
+    cancelled: &mut impl FnMut() -> bool,
+    mut ready: impl FnMut() -> Result<bool>,
+) -> Result<bool> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if cancelled() {
+            return Ok(false);
+        }
+        match mainloop.iterate(false) {
+            IterateResult::Success(_) => {}
+            IterateResult::Quit(_) => anyhow::bail!("PulseAudio mainloop quit during setup"),
+            IterateResult::Err(error) => {
+                anyhow::bail!("PulseAudio mainloop failed during setup: {error}")
+            }
+        }
+        if ready()? {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out while connecting PulseAudio capture");
+        }
+        thread::sleep(Duration::from_millis(5));
     }
 }
 

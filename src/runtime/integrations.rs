@@ -23,7 +23,7 @@ use super::{
 
 const INTEGRATION_SUPERVISOR_POLL: Duration = Duration::from_millis(50);
 const MEDIA_STALE_AFTER: Duration = Duration::from_secs(3);
-const AUDIO_STALE_AFTER: Duration = Duration::from_secs(2);
+const AUDIO_STALE_AFTER: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputIntegrationSnapshot {
@@ -255,12 +255,7 @@ struct MediaSupervisorState {
 }
 
 impl MediaSupervisorState {
-    fn reconcile(
-        &mut self,
-        enabled: bool,
-        _now: Instant,
-        shared: &HostIntegrations,
-    ) -> Option<u64> {
+    fn reconcile(&mut self, enabled: bool, now: Instant, shared: &HostIntegrations) -> Option<u64> {
         if self.enabled == enabled {
             return None;
         }
@@ -268,7 +263,7 @@ impl MediaSupervisorState {
         self.generation = self.generation.wrapping_add(1);
         self.enabled = enabled;
         self.available = false;
-        self.last_event_at = None;
+        self.last_event_at = enabled.then_some(now);
         self.bridge.update(false, &[]);
         if enabled {
             shared.update_media(true, false, None, MediaState::default(), None);
@@ -306,17 +301,19 @@ impl MediaSupervisorState {
         }
     }
 
-    fn expire_if_stale(&mut self, now: Instant, stale_after: Duration, shared: &HostIntegrations) {
-        let Some(last_event_at) = self.last_event_at else {
-            return;
-        };
-        if !self.enabled
-            || !self.available
-            || now.saturating_duration_since(last_event_at) <= stale_after
-        {
-            return;
+    fn expire_if_stale(
+        &mut self,
+        now: Instant,
+        stale_after: Duration,
+        shared: &HostIntegrations,
+    ) -> Option<u64> {
+        let last_event_at = self.last_event_at?;
+        if !self.enabled || now.saturating_duration_since(last_event_at) <= stale_after {
+            return None;
         }
 
+        self.generation = self.generation.wrapping_add(1);
+        self.last_event_at = Some(now);
         self.bridge.update(false, &[]);
         self.available = false;
         shared.update_media(
@@ -326,6 +323,7 @@ impl MediaSupervisorState {
             MediaState::default(),
             Some("MPRIS worker unresponsive".to_string()),
         );
+        Some(self.generation)
     }
 }
 
@@ -419,14 +417,22 @@ impl AudioSupervisorState {
         }
     }
 
-    fn expire_if_stale(&mut self, now: Instant, stale_after: Duration, shared: &HostIntegrations) {
+    fn expire_if_stale(
+        &mut self,
+        now: Instant,
+        stale_after: Duration,
+        shared: &HostIntegrations,
+    ) -> Option<(u64, AudioWorkerSpec)> {
         let (Some(spec), Some(last_event_at)) = (self.active.as_ref(), self.last_event_at) else {
-            return;
+            return None;
         };
-        if !self.available || now.saturating_duration_since(last_event_at) <= stale_after {
-            return;
+        if now.saturating_duration_since(last_event_at) <= stale_after {
+            return None;
         }
 
+        let spec = spec.clone();
+        self.generation = self.generation.wrapping_add(1);
+        self.last_event_at = Some(now);
         self.available = false;
         shared.update_audio(
             true,
@@ -435,6 +441,35 @@ impl AudioSupervisorState {
             None,
             Some("audio worker unresponsive".to_string()),
         );
+        Some((self.generation, spec))
+    }
+}
+
+struct IntegrationIoWorker {
+    cancel: Arc<AtomicBool>,
+    handle: thread::JoinHandle<()>,
+}
+
+impl IntegrationIoWorker {
+    fn retire(self, retired: &mut Vec<thread::JoinHandle<()>>) {
+        self.cancel.store(true, Ordering::Relaxed);
+        if self.handle.is_finished() {
+            let _ = self.handle.join();
+        } else {
+            retired.push(self.handle);
+        }
+    }
+}
+
+fn reap_finished_workers(retired: &mut Vec<thread::JoinHandle<()>>) {
+    let mut index = 0;
+    while index < retired.len() {
+        if retired[index].is_finished() {
+            let handle = retired.swap_remove(index);
+            let _ = handle.join();
+        } else {
+            index += 1;
+        }
     }
 }
 
@@ -460,9 +495,10 @@ fn spawn_media_io_worker(
     generation: u64,
     events: mpsc::Sender<MediaWorkerEvent>,
     shutdown: Arc<AtomicBool>,
-    cancel: Arc<AtomicBool>,
-) {
-    thread::Builder::new()
+) -> IntegrationIoWorker {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    let handle = thread::Builder::new()
         .name(format!("we-layerd-mpris-io-{generation}"))
         .spawn(move || {
             let mut connection = None;
@@ -488,12 +524,16 @@ fn spawn_media_io_worker(
                     }
                 }
 
-                let result = media::read_mpris_candidates(connection.as_ref().expect("connection"));
+                let result = media::read_mpris_candidates_until(
+                    connection.as_ref().expect("connection"),
+                    || blocking_worker_cancelled(&shutdown, &cancel),
+                );
                 if blocking_worker_cancelled(&shutdown, &cancel) {
                     return;
                 }
                 let event = match result {
-                    Ok(candidates) => MediaWorkerEvent::Candidates { generation, candidates },
+                    Ok(Some(candidates)) => MediaWorkerEvent::Candidates { generation, candidates },
+                    Ok(None) => return,
                     Err(error) => {
                         connection = None;
                         MediaWorkerEvent::Error { generation, error: error.to_string() }
@@ -507,6 +547,7 @@ fn spawn_media_io_worker(
             }
         })
         .expect("failed to spawn MPRIS I/O worker");
+    IntegrationIoWorker { cancel: worker_cancel, handle }
 }
 
 fn spawn_audio_io_worker(
@@ -514,9 +555,10 @@ fn spawn_audio_io_worker(
     spec: AudioWorkerSpec,
     events: mpsc::Sender<AudioWorkerEvent>,
     shutdown: Arc<AtomicBool>,
-    cancel: Arc<AtomicBool>,
-) {
-    thread::Builder::new()
+) -> IntegrationIoWorker {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    let handle = thread::Builder::new()
         .name(format!("we-layerd-audio-io-{generation}"))
         .spawn(move || {
             while !blocking_worker_cancelled(&shutdown, &cancel) {
@@ -524,8 +566,10 @@ fn spawn_audio_io_worker(
                     &spec.source,
                     spec.sample_rate,
                     spec.update_hz,
+                    || blocking_worker_cancelled(&shutdown, &cancel),
                 ) {
-                    Ok(capture) => capture,
+                    Ok(Some(capture)) => capture,
+                    Ok(None) => return,
                     Err(error) => {
                         if events
                             .send(AudioWorkerEvent::Error { generation, error: error.to_string() })
@@ -544,14 +588,20 @@ fn spawn_audio_io_worker(
                     if blocking_worker_cancelled(&shutdown, &cancel) {
                         return;
                     }
-                    match capture.read_spectrum() {
-                        Ok(samples) => {
+                    match capture.poll_spectrum() {
+                        Ok(Some(samples)) => {
                             if blocking_worker_cancelled(&shutdown, &cancel) {
                                 return;
                             }
                             if events
                                 .send(AudioWorkerEvent::Samples { generation, samples })
                                 .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Ok(None) => {
+                            if !blocking_worker_sleep(Duration::from_millis(5), &shutdown, &cancel)
                             {
                                 return;
                             }
@@ -577,6 +627,7 @@ fn spawn_audio_io_worker(
             }
         })
         .expect("failed to spawn audio spectrum I/O worker");
+    IntegrationIoWorker { cancel: worker_cancel, handle }
 }
 
 fn spawn_media_collector(
@@ -589,26 +640,22 @@ fn spawn_media_collector(
         .spawn(move || {
             let (event_tx, event_rx) = mpsc::channel::<MediaWorkerEvent>();
             let mut supervisor = MediaSupervisorState::default();
-            let mut worker_cancel: Option<Arc<AtomicBool>> = None;
+            let mut active_worker: Option<IntegrationIoWorker> = None;
+            let mut retired_workers = Vec::new();
             while !shutdown.load(Ordering::Relaxed) {
+                reap_finished_workers(&mut retired_workers);
                 let enabled =
                     desired_cfg.lock().map(|config| config.integrations.media).unwrap_or(false);
                 let previous_generation = supervisor.generation;
                 let start_generation = supervisor.reconcile(enabled, Instant::now(), &shared);
                 if supervisor.generation != previous_generation {
-                    if let Some(cancel) = worker_cancel.take() {
-                        cancel.store(true, Ordering::Relaxed);
+                    if let Some(worker) = active_worker.take() {
+                        worker.retire(&mut retired_workers);
                     }
                 }
                 if let Some(generation) = start_generation {
-                    let cancel = Arc::new(AtomicBool::new(false));
-                    spawn_media_io_worker(
-                        generation,
-                        event_tx.clone(),
-                        shutdown.clone(),
-                        cancel.clone(),
-                    );
-                    worker_cancel = Some(cancel);
+                    active_worker =
+                        Some(spawn_media_io_worker(generation, event_tx.clone(), shutdown.clone()));
                 }
 
                 if let Ok(event) = event_rx.recv_timeout(INTEGRATION_SUPERVISOR_POLL) {
@@ -617,11 +664,20 @@ fn spawn_media_collector(
                         supervisor.apply_event(event, Instant::now(), &shared);
                     }
                 }
-                supervisor.expire_if_stale(Instant::now(), MEDIA_STALE_AFTER, &shared);
+                if let Some(generation) =
+                    supervisor.expire_if_stale(Instant::now(), MEDIA_STALE_AFTER, &shared)
+                {
+                    if let Some(worker) = active_worker.take() {
+                        worker.retire(&mut retired_workers);
+                    }
+                    active_worker =
+                        Some(spawn_media_io_worker(generation, event_tx.clone(), shutdown.clone()));
+                }
             }
-            if let Some(cancel) = worker_cancel {
-                cancel.store(true, Ordering::Relaxed);
+            if let Some(worker) = active_worker {
+                worker.retire(&mut retired_workers);
             }
+            reap_finished_workers(&mut retired_workers);
         })
         .expect("failed to spawn MPRIS collector")
 }
@@ -636,8 +692,10 @@ fn spawn_audio_collector(
         .spawn(move || {
             let (event_tx, event_rx) = mpsc::channel::<AudioWorkerEvent>();
             let mut supervisor = AudioSupervisorState::default();
-            let mut worker_cancel: Option<Arc<AtomicBool>> = None;
+            let mut active_worker: Option<IntegrationIoWorker> = None;
+            let mut retired_workers = Vec::new();
             while !shutdown.load(Ordering::Relaxed) {
+                reap_finished_workers(&mut retired_workers);
                 let integration = desired_cfg
                     .lock()
                     .map(|config| config.integrations.clone())
@@ -645,20 +703,17 @@ fn spawn_audio_collector(
                 let previous_generation = supervisor.generation;
                 let start = supervisor.reconcile(&integration, Instant::now(), &shared);
                 if supervisor.generation != previous_generation {
-                    if let Some(cancel) = worker_cancel.take() {
-                        cancel.store(true, Ordering::Relaxed);
+                    if let Some(worker) = active_worker.take() {
+                        worker.retire(&mut retired_workers);
                     }
                 }
                 if let Some((generation, spec)) = start {
-                    let cancel = Arc::new(AtomicBool::new(false));
-                    spawn_audio_io_worker(
+                    active_worker = Some(spawn_audio_io_worker(
                         generation,
                         spec,
                         event_tx.clone(),
                         shutdown.clone(),
-                        cancel.clone(),
-                    );
-                    worker_cancel = Some(cancel);
+                    ));
                 }
 
                 if let Ok(event) = event_rx.recv_timeout(INTEGRATION_SUPERVISOR_POLL) {
@@ -667,11 +722,24 @@ fn spawn_audio_collector(
                         supervisor.apply_event(event, Instant::now(), &shared);
                     }
                 }
-                supervisor.expire_if_stale(Instant::now(), AUDIO_STALE_AFTER, &shared);
+                if let Some((generation, spec)) =
+                    supervisor.expire_if_stale(Instant::now(), AUDIO_STALE_AFTER, &shared)
+                {
+                    if let Some(worker) = active_worker.take() {
+                        worker.retire(&mut retired_workers);
+                    }
+                    active_worker = Some(spawn_audio_io_worker(
+                        generation,
+                        spec,
+                        event_tx.clone(),
+                        shutdown.clone(),
+                    ));
+                }
             }
-            if let Some(cancel) = worker_cancel {
-                cancel.store(true, Ordering::Relaxed);
+            if let Some(worker) = active_worker {
+                worker.retire(&mut retired_workers);
             }
+            reap_finished_workers(&mut retired_workers);
         })
         .expect("failed to spawn audio spectrum collector")
 }
@@ -865,7 +933,20 @@ mod tests {
             &host,
         );
         assert_eq!(host.snapshot_for_output("DP-1").media.title, "current");
-        supervisor.expire_if_stale(now + Duration::from_secs(10), Duration::from_secs(2), &host);
+        let third_generation = supervisor
+            .expire_if_stale(now + Duration::from_secs(10), Duration::from_secs(2), &host)
+            .expect("stale media worker must be replaced");
+        assert_ne!(second_generation, third_generation);
+        assert!(host.snapshot_for_output("DP-1").media.title.is_empty());
+
+        supervisor.apply_event(
+            MediaWorkerEvent::Candidates {
+                generation: second_generation,
+                candidates: vec![media_candidate("late")],
+            },
+            now + Duration::from_secs(10),
+            &host,
+        );
         assert!(host.snapshot_for_output("DP-1").media.title.is_empty());
     }
 
@@ -920,7 +1001,21 @@ mod tests {
             &host,
         );
         assert!(host.snapshot_for_output("DP-1").audio.iter().any(|sample| *sample > 0.0));
-        supervisor.expire_if_stale(now + Duration::from_secs(10), Duration::from_secs(2), &host);
+        let (third_generation, third_spec) = supervisor
+            .expire_if_stale(now + Duration::from_secs(10), Duration::from_secs(2), &host)
+            .expect("stale audio worker must be replaced");
+        assert_ne!(second_generation, third_generation);
+        assert_eq!(third_spec.source, "monitor-b");
+        assert!(host.snapshot_for_output("DP-1").audio.iter().all(|sample| *sample == 0.0));
+
+        supervisor.apply_event(
+            AudioWorkerEvent::Samples {
+                generation: second_generation,
+                samples: Arc::from(vec![0.8_f32; AUDIO_SPECTRUM_BINS * 2]),
+            },
+            now + Duration::from_secs(10),
+            &host,
+        );
         assert!(host.snapshot_for_output("DP-1").audio.iter().all(|sample| *sample == 0.0));
     }
 

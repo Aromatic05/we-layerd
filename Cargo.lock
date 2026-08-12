@@ -2708,27 +2708,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libpulse-simple-binding"
-version = "2.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7bebef0381c8e3e4b23cc24aaf36fab37472bece128de96f6a111efa464cfef"
-dependencies = [
- "libpulse-binding",
- "libpulse-simple-sys",
- "libpulse-sys",
-]
-
-[[package]]
-name = "libpulse-simple-sys"
-version = "1.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bd96888fe37ad270d16abf5e82cccca1424871cf6afa2861824d2a52758eebc"
-dependencies = [
- "libpulse-sys",
- "pkg-config",
-]
-
-[[package]]
 name = "libpulse-sys"
 version = "1.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5739,7 +5718,6 @@ dependencies = [
  "ctrlc",
  "libc",
  "libpulse-binding",
- "libpulse-simple-binding",
  "serde",
  "serde_json",
  "toml",
@@ -5751,7 +5729,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "we-core",
  "we-renderer",
- "zbus 4.4.0",
+ "zbus 5.16.0",
 ]
 
 [[package]]
