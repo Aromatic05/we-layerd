@@ -39,3 +39,35 @@ pub async fn decode_gif(path: PathBuf) -> Result<Vec<GifFrame>, String> {
             .collect()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::GifFrame;
+
+    fn retain_frames_with_budget(frames: Vec<GifFrame>, _budget_bytes: usize) -> Vec<GifFrame> {
+        frames
+    }
+
+    #[test]
+    fn gif_frame_budget_is_hard_and_preserves_total_animation_duration() {
+        let frames = (0..16)
+            .map(|index| GifFrame {
+                width: 2,
+                height: 2,
+                pixels: vec![index; 16],
+                delay: Duration::from_millis(20),
+            })
+            .collect::<Vec<_>>();
+        let expected_duration = frames.iter().map(|frame| frame.delay).sum::<Duration>();
+
+        let retained = retain_frames_with_budget(frames, 64);
+        let retained_bytes = retained.iter().map(|frame| frame.pixels.len()).sum::<usize>();
+        let retained_duration = retained.iter().map(|frame| frame.delay).sum::<Duration>();
+
+        assert!(retained_bytes <= 64, "retained {retained_bytes} decoded bytes");
+        assert_eq!(retained_duration, expected_duration);
+        assert!(!retained.is_empty());
+    }
+}

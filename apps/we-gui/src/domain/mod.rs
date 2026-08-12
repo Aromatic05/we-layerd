@@ -1,4 +1,5 @@
 pub mod i18n;
+pub mod library_grid;
 pub mod playlist_editor;
 pub mod runtime_status;
 pub mod settings;
