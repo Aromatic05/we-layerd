@@ -2,14 +2,15 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        mpsc, Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde::Serialize;
 use tracing::warn;
+use we_core::config::IntegrationsConfig;
 use we_renderer::MediaState;
 
 use crate::config::Config;
@@ -19,6 +20,10 @@ use super::{
     media::{self, MediaBridgeState},
     rules::{policies_for_outputs, ForeignToplevelMonitor, RuleSet, RuntimePolicy},
 };
+
+const INTEGRATION_SUPERVISOR_POLL: Duration = Duration::from_millis(50);
+const MEDIA_STALE_AFTER: Duration = Duration::from_secs(3);
+const AUDIO_STALE_AFTER: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputIntegrationSnapshot {
@@ -226,6 +231,354 @@ impl HostIntegrations {
     }
 }
 
+#[derive(Debug)]
+enum MediaWorkerEvent {
+    Candidates { generation: u64, candidates: Vec<media::MediaCandidate> },
+    Error { generation: u64, error: String },
+}
+
+impl MediaWorkerEvent {
+    fn generation(&self) -> u64 {
+        match self {
+            Self::Candidates { generation, .. } | Self::Error { generation, .. } => *generation,
+        }
+    }
+}
+
+#[derive(Default)]
+struct MediaSupervisorState {
+    generation: u64,
+    enabled: bool,
+    available: bool,
+    last_event_at: Option<Instant>,
+    bridge: MediaBridgeState,
+}
+
+impl MediaSupervisorState {
+    fn reconcile(
+        &mut self,
+        enabled: bool,
+        _now: Instant,
+        shared: &HostIntegrations,
+    ) -> Option<u64> {
+        if self.enabled == enabled {
+            return None;
+        }
+
+        self.generation = self.generation.wrapping_add(1);
+        self.enabled = enabled;
+        self.available = false;
+        self.last_event_at = None;
+        self.bridge.update(false, &[]);
+        if enabled {
+            shared.update_media(true, false, None, MediaState::default(), None);
+            Some(self.generation)
+        } else {
+            shared.update_media(false, false, None, MediaState::default(), None);
+            None
+        }
+    }
+
+    fn apply_event(&mut self, event: MediaWorkerEvent, now: Instant, shared: &HostIntegrations) {
+        if !self.enabled || event.generation() != self.generation {
+            return;
+        }
+
+        self.last_event_at = Some(now);
+        match event {
+            MediaWorkerEvent::Candidates { candidates, .. } => {
+                let selected = self.bridge.update(true, &candidates);
+                let player = selected.as_ref().map(|candidate| candidate.bus_name.clone());
+                self.available = true;
+                shared.update_media(
+                    true,
+                    true,
+                    player,
+                    media::to_renderer_state(selected.as_ref()),
+                    None,
+                );
+            }
+            MediaWorkerEvent::Error { error, .. } => {
+                self.bridge.update(false, &[]);
+                self.available = false;
+                shared.update_media(true, false, None, MediaState::default(), Some(error));
+            }
+        }
+    }
+
+    fn expire_if_stale(&mut self, now: Instant, stale_after: Duration, shared: &HostIntegrations) {
+        let Some(last_event_at) = self.last_event_at else {
+            return;
+        };
+        if !self.enabled
+            || !self.available
+            || now.saturating_duration_since(last_event_at) <= stale_after
+        {
+            return;
+        }
+
+        self.bridge.update(false, &[]);
+        self.available = false;
+        shared.update_media(
+            true,
+            false,
+            None,
+            MediaState::default(),
+            Some("MPRIS worker unresponsive".to_string()),
+        );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AudioWorkerSpec {
+    source: String,
+    sample_rate: u32,
+    update_hz: u32,
+}
+
+impl AudioWorkerSpec {
+    fn from_config(config: &IntegrationsConfig) -> Self {
+        Self {
+            source: config.audio_source.clone(),
+            sample_rate: config.audio_sample_rate.clamp(8_000, 192_000),
+            update_hz: config.audio_update_hz.clamp(5, 60),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum AudioWorkerEvent {
+    Samples { generation: u64, samples: Arc<[f32]> },
+    Error { generation: u64, error: String },
+}
+
+impl AudioWorkerEvent {
+    fn generation(&self) -> u64 {
+        match self {
+            Self::Samples { generation, .. } | Self::Error { generation, .. } => *generation,
+        }
+    }
+}
+
+#[derive(Default)]
+struct AudioSupervisorState {
+    generation: u64,
+    active: Option<AudioWorkerSpec>,
+    available: bool,
+    last_event_at: Option<Instant>,
+}
+
+impl AudioSupervisorState {
+    fn reconcile(
+        &mut self,
+        config: &IntegrationsConfig,
+        now: Instant,
+        shared: &HostIntegrations,
+    ) -> Option<(u64, AudioWorkerSpec)> {
+        if !config.audio_spectrum {
+            if self.active.take().is_some() {
+                self.generation = self.generation.wrapping_add(1);
+            }
+            self.available = false;
+            self.last_event_at = None;
+            shared.update_audio(false, false, config.audio_source.clone(), None, None);
+            return None;
+        }
+
+        let spec = AudioWorkerSpec::from_config(config);
+        if self.active.as_ref() == Some(&spec) {
+            return None;
+        }
+
+        self.generation = self.generation.wrapping_add(1);
+        self.active = Some(spec.clone());
+        self.available = false;
+        self.last_event_at = Some(now);
+        shared.update_audio(true, false, spec.source.clone(), None, None);
+        Some((self.generation, spec))
+    }
+
+    fn apply_event(&mut self, event: AudioWorkerEvent, now: Instant, shared: &HostIntegrations) {
+        if event.generation() != self.generation {
+            return;
+        }
+        let Some(spec) = self.active.as_ref() else {
+            return;
+        };
+        let source = spec.source.clone();
+        self.last_event_at = Some(now);
+        match event {
+            AudioWorkerEvent::Samples { samples, .. } => {
+                self.available = true;
+                shared.update_audio(true, true, source, Some(samples), None);
+            }
+            AudioWorkerEvent::Error { error, .. } => {
+                self.available = false;
+                shared.update_audio(true, false, source, None, Some(error));
+            }
+        }
+    }
+
+    fn expire_if_stale(&mut self, now: Instant, stale_after: Duration, shared: &HostIntegrations) {
+        let (Some(spec), Some(last_event_at)) = (self.active.as_ref(), self.last_event_at) else {
+            return;
+        };
+        if !self.available || now.saturating_duration_since(last_event_at) <= stale_after {
+            return;
+        }
+
+        self.available = false;
+        shared.update_audio(
+            true,
+            false,
+            spec.source.clone(),
+            None,
+            Some("audio worker unresponsive".to_string()),
+        );
+    }
+}
+
+fn blocking_worker_cancelled(shutdown: &AtomicBool, cancel: &AtomicBool) -> bool {
+    shutdown.load(Ordering::Relaxed) || cancel.load(Ordering::Relaxed)
+}
+
+fn blocking_worker_sleep(duration: Duration, shutdown: &AtomicBool, cancel: &AtomicBool) -> bool {
+    let deadline = Instant::now() + duration;
+    loop {
+        if blocking_worker_cancelled(shutdown, cancel) {
+            return false;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return true;
+        }
+        thread::sleep((deadline - now).min(Duration::from_millis(50)));
+    }
+}
+
+fn spawn_media_io_worker(
+    generation: u64,
+    events: mpsc::Sender<MediaWorkerEvent>,
+    shutdown: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+) {
+    thread::Builder::new()
+        .name(format!("we-layerd-mpris-io-{generation}"))
+        .spawn(move || {
+            let mut connection = None;
+            while !blocking_worker_cancelled(&shutdown, &cancel) {
+                if connection.is_none() {
+                    match media::session_connection() {
+                        Ok(value) => connection = Some(value),
+                        Err(error) => {
+                            if events
+                                .send(MediaWorkerEvent::Error {
+                                    generation,
+                                    error: error.to_string(),
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                            if !blocking_worker_sleep(Duration::from_secs(2), &shutdown, &cancel) {
+                                return;
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                let result = media::read_mpris_candidates(connection.as_ref().expect("connection"));
+                if blocking_worker_cancelled(&shutdown, &cancel) {
+                    return;
+                }
+                let event = match result {
+                    Ok(candidates) => MediaWorkerEvent::Candidates { generation, candidates },
+                    Err(error) => {
+                        connection = None;
+                        MediaWorkerEvent::Error { generation, error: error.to_string() }
+                    }
+                };
+                if events.send(event).is_err()
+                    || !blocking_worker_sleep(Duration::from_millis(500), &shutdown, &cancel)
+                {
+                    return;
+                }
+            }
+        })
+        .expect("failed to spawn MPRIS I/O worker");
+}
+
+fn spawn_audio_io_worker(
+    generation: u64,
+    spec: AudioWorkerSpec,
+    events: mpsc::Sender<AudioWorkerEvent>,
+    shutdown: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+) {
+    thread::Builder::new()
+        .name(format!("we-layerd-audio-io-{generation}"))
+        .spawn(move || {
+            while !blocking_worker_cancelled(&shutdown, &cancel) {
+                let mut capture = match PulseAudioCapture::connect(
+                    &spec.source,
+                    spec.sample_rate,
+                    spec.update_hz,
+                ) {
+                    Ok(capture) => capture,
+                    Err(error) => {
+                        if events
+                            .send(AudioWorkerEvent::Error { generation, error: error.to_string() })
+                            .is_err()
+                        {
+                            return;
+                        }
+                        if !blocking_worker_sleep(Duration::from_secs(2), &shutdown, &cancel) {
+                            return;
+                        }
+                        continue;
+                    }
+                };
+
+                loop {
+                    if blocking_worker_cancelled(&shutdown, &cancel) {
+                        return;
+                    }
+                    match capture.read_spectrum() {
+                        Ok(samples) => {
+                            if blocking_worker_cancelled(&shutdown, &cancel) {
+                                return;
+                            }
+                            if events
+                                .send(AudioWorkerEvent::Samples { generation, samples })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            if events
+                                .send(AudioWorkerEvent::Error {
+                                    generation,
+                                    error: error.to_string(),
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                if !blocking_worker_sleep(Duration::from_secs(1), &shutdown, &cancel) {
+                    return;
+                }
+            }
+        })
+        .expect("failed to spawn audio spectrum I/O worker");
+}
+
 fn spawn_media_collector(
     shared: HostIntegrations,
     desired_cfg: Arc<Mutex<Config>>,
@@ -234,61 +587,40 @@ fn spawn_media_collector(
     thread::Builder::new()
         .name("we-layerd-mpris".to_string())
         .spawn(move || {
-            let mut connection = None;
-            let mut bridge = MediaBridgeState::default();
+            let (event_tx, event_rx) = mpsc::channel::<MediaWorkerEvent>();
+            let mut supervisor = MediaSupervisorState::default();
+            let mut worker_cancel: Option<Arc<AtomicBool>> = None;
             while !shutdown.load(Ordering::Relaxed) {
                 let enabled =
                     desired_cfg.lock().map(|config| config.integrations.media).unwrap_or(false);
-                if !enabled {
-                    bridge.update(false, &[]);
-                    shared.update_media(false, false, None, MediaState::default(), None);
-                    thread::sleep(Duration::from_millis(500));
-                    continue;
+                let previous_generation = supervisor.generation;
+                let start_generation = supervisor.reconcile(enabled, Instant::now(), &shared);
+                if supervisor.generation != previous_generation {
+                    if let Some(cancel) = worker_cancel.take() {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                }
+                if let Some(generation) = start_generation {
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    spawn_media_io_worker(
+                        generation,
+                        event_tx.clone(),
+                        shutdown.clone(),
+                        cancel.clone(),
+                    );
+                    worker_cancel = Some(cancel);
                 }
 
-                if connection.is_none() {
-                    match media::session_connection() {
-                        Ok(value) => connection = Some(value),
-                        Err(error) => {
-                            shared.update_media(
-                                true,
-                                false,
-                                None,
-                                MediaState::default(),
-                                Some(error.to_string()),
-                            );
-                            thread::sleep(Duration::from_secs(2));
-                            continue;
-                        }
+                if let Ok(event) = event_rx.recv_timeout(INTEGRATION_SUPERVISOR_POLL) {
+                    supervisor.apply_event(event, Instant::now(), &shared);
+                    while let Ok(event) = event_rx.try_recv() {
+                        supervisor.apply_event(event, Instant::now(), &shared);
                     }
                 }
-
-                let result = media::read_mpris_candidates(connection.as_ref().expect("connection"));
-                match result {
-                    Ok(candidates) => {
-                        let selected = bridge.update(true, &candidates);
-                        let player = selected.as_ref().map(|candidate| candidate.bus_name.clone());
-                        shared.update_media(
-                            true,
-                            true,
-                            player,
-                            media::to_renderer_state(selected.as_ref()),
-                            None,
-                        );
-                    }
-                    Err(error) => {
-                        connection = None;
-                        bridge.update(false, &[]);
-                        shared.update_media(
-                            true,
-                            false,
-                            None,
-                            MediaState::default(),
-                            Some(error.to_string()),
-                        );
-                    }
-                }
-                thread::sleep(Duration::from_millis(500));
+                supervisor.expire_if_stale(Instant::now(), MEDIA_STALE_AFTER, &shared);
+            }
+            if let Some(cancel) = worker_cancel {
+                cancel.store(true, Ordering::Relaxed);
             }
         })
         .expect("failed to spawn MPRIS collector")
@@ -302,92 +634,43 @@ fn spawn_audio_collector(
     thread::Builder::new()
         .name("we-layerd-audio-spectrum".to_string())
         .spawn(move || {
-            let mut capture: Option<(String, u32, u32, PulseAudioCapture)> = None;
-            let zero: Arc<[f32]> = vec![0.0; AUDIO_SPECTRUM_BINS * 2].into();
-            let mut was_enabled = false;
+            let (event_tx, event_rx) = mpsc::channel::<AudioWorkerEvent>();
+            let mut supervisor = AudioSupervisorState::default();
+            let mut worker_cancel: Option<Arc<AtomicBool>> = None;
             while !shutdown.load(Ordering::Relaxed) {
                 let integration = desired_cfg
                     .lock()
                     .map(|config| config.integrations.clone())
                     .unwrap_or_default();
-                if !integration.audio_spectrum {
-                    capture = None;
-                    if was_enabled {
-                        shared.update_audio(
-                            false,
-                            false,
-                            integration.audio_source.clone(),
-                            Some(Arc::clone(&zero)),
-                            None,
-                        );
-                    } else {
-                        shared.update_audio(
-                            false,
-                            false,
-                            integration.audio_source.clone(),
-                            None,
-                            None,
-                        );
+                let previous_generation = supervisor.generation;
+                let start = supervisor.reconcile(&integration, Instant::now(), &shared);
+                if supervisor.generation != previous_generation {
+                    if let Some(cancel) = worker_cancel.take() {
+                        cancel.store(true, Ordering::Relaxed);
                     }
-                    was_enabled = false;
-                    thread::sleep(Duration::from_millis(250));
-                    continue;
                 }
-                was_enabled = true;
-
-                let needs_open = match capture.as_ref() {
-                    None => true,
-                    Some((source, rate, hz, _)) => {
-                        source != &integration.audio_source
-                            || *rate != integration.audio_sample_rate
-                            || *hz != integration.audio_update_hz
-                    }
-                };
-                if needs_open {
-                    capture = match PulseAudioCapture::connect(
-                        &integration.audio_source,
-                        integration.audio_sample_rate,
-                        integration.audio_update_hz,
-                    ) {
-                        Ok(value) => Some((
-                            integration.audio_source.clone(),
-                            integration.audio_sample_rate,
-                            integration.audio_update_hz,
-                            value,
-                        )),
-                        Err(error) => {
-                            shared.update_audio(
-                                true,
-                                false,
-                                integration.audio_source.clone(),
-                                None,
-                                Some(error.to_string()),
-                            );
-                            thread::sleep(Duration::from_secs(2));
-                            continue;
-                        }
-                    };
+                if let Some((generation, spec)) = start {
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    spawn_audio_io_worker(
+                        generation,
+                        spec,
+                        event_tx.clone(),
+                        shutdown.clone(),
+                        cancel.clone(),
+                    );
+                    worker_cancel = Some(cancel);
                 }
 
-                let Some((source, _, _, capture_stream)) = capture.as_mut() else {
-                    continue;
-                };
-                match capture_stream.read_spectrum() {
-                    Ok(samples) => {
-                        shared.update_audio(true, true, source.clone(), Some(samples), None);
-                    }
-                    Err(error) => {
-                        shared.update_audio(
-                            true,
-                            false,
-                            source.clone(),
-                            None,
-                            Some(error.to_string()),
-                        );
-                        capture = None;
-                        thread::sleep(Duration::from_secs(1));
+                if let Ok(event) = event_rx.recv_timeout(INTEGRATION_SUPERVISOR_POLL) {
+                    supervisor.apply_event(event, Instant::now(), &shared);
+                    while let Ok(event) = event_rx.try_recv() {
+                        supervisor.apply_event(event, Instant::now(), &shared);
                     }
                 }
+                supervisor.expire_if_stale(Instant::now(), AUDIO_STALE_AFTER, &shared);
+            }
+            if let Some(cancel) = worker_cancel {
+                cancel.store(true, Ordering::Relaxed);
             }
         })
         .expect("failed to spawn audio spectrum collector")
@@ -457,11 +740,30 @@ mod tests {
     use std::{
         sync::{atomic::AtomicBool, mpsc, Arc},
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
-    use super::{HostIntegrationRuntime, HostIntegrations, AUDIO_SPECTRUM_BINS};
-    use crate::runtime::rules::RuntimePolicy;
+    use super::{
+        AudioSupervisorState, AudioWorkerEvent, HostIntegrationRuntime, HostIntegrations,
+        MediaSupervisorState, MediaWorkerEvent, AUDIO_SPECTRUM_BINS,
+    };
+    use crate::runtime::{
+        media::{MediaCandidate, MediaPlaybackState},
+        rules::RuntimePolicy,
+    };
+    use we_core::config::IntegrationsConfig;
+
+    fn media_candidate(name: &str) -> MediaCandidate {
+        MediaCandidate {
+            bus_name: format!("org.mpris.MediaPlayer2.{name}"),
+            playback: MediaPlaybackState::Playing,
+            title: name.to_string(),
+            artist: String::new(),
+            album_title: String::new(),
+            album_artist: String::new(),
+            genres: String::new(),
+        }
+    }
 
     #[test]
     fn output_snapshot_uses_only_that_outputs_rule_policy() {
@@ -517,6 +819,109 @@ mod tests {
 
         assert!(after.audio.iter().all(|sample| *sample == 0.0));
         assert_ne!(after.audio_generation, before.audio_generation);
+    }
+
+    #[test]
+    fn media_reconfigure_clears_state_and_rejects_stale_worker_results() {
+        let host = HostIntegrations::default();
+        let mut supervisor = MediaSupervisorState::default();
+        let now = Instant::now();
+        let first_generation = supervisor
+            .reconcile(true, now, &host)
+            .expect("enabling media starts a worker generation");
+        supervisor.apply_event(
+            MediaWorkerEvent::Candidates {
+                generation: first_generation,
+                candidates: vec![media_candidate("old")],
+            },
+            now,
+            &host,
+        );
+        assert_eq!(host.snapshot_for_output("DP-1").media.title, "old");
+
+        assert!(supervisor.reconcile(false, now + Duration::from_millis(1), &host).is_none());
+        assert!(host.snapshot_for_output("DP-1").media.title.is_empty());
+        let second_generation = supervisor
+            .reconcile(true, now + Duration::from_millis(2), &host)
+            .expect("re-enabling media starts a fresh worker generation");
+        assert_ne!(first_generation, second_generation);
+
+        supervisor.apply_event(
+            MediaWorkerEvent::Candidates {
+                generation: first_generation,
+                candidates: vec![media_candidate("stale")],
+            },
+            now + Duration::from_millis(3),
+            &host,
+        );
+        assert!(host.snapshot_for_output("DP-1").media.title.is_empty());
+
+        supervisor.apply_event(
+            MediaWorkerEvent::Candidates {
+                generation: second_generation,
+                candidates: vec![media_candidate("current")],
+            },
+            now + Duration::from_millis(4),
+            &host,
+        );
+        assert_eq!(host.snapshot_for_output("DP-1").media.title, "current");
+        supervisor.expire_if_stale(now + Duration::from_secs(10), Duration::from_secs(2), &host);
+        assert!(host.snapshot_for_output("DP-1").media.title.is_empty());
+    }
+
+    #[test]
+    fn audio_reconfigure_clears_state_and_rejects_stale_worker_results() {
+        let host = HostIntegrations::default();
+        let mut supervisor = AudioSupervisorState::default();
+        let now = Instant::now();
+        let mut integration = IntegrationsConfig {
+            audio_spectrum: true,
+            audio_source: "monitor-a".to_string(),
+            ..IntegrationsConfig::default()
+        };
+        let (first_generation, first_spec) = supervisor
+            .reconcile(&integration, now, &host)
+            .expect("enabling audio starts a worker generation");
+        assert_eq!(first_spec.source, "monitor-a");
+        supervisor.apply_event(
+            AudioWorkerEvent::Samples {
+                generation: first_generation,
+                samples: Arc::from(vec![0.5_f32; AUDIO_SPECTRUM_BINS * 2]),
+            },
+            now,
+            &host,
+        );
+        assert!(host.snapshot_for_output("DP-1").audio.iter().any(|sample| *sample > 0.0));
+
+        integration.audio_source = "monitor-b".to_string();
+        let (second_generation, second_spec) = supervisor
+            .reconcile(&integration, now + Duration::from_millis(1), &host)
+            .expect("changing source starts a fresh worker generation");
+        assert_eq!(second_spec.source, "monitor-b");
+        assert_ne!(first_generation, second_generation);
+        assert!(host.snapshot_for_output("DP-1").audio.iter().all(|sample| *sample == 0.0));
+
+        supervisor.apply_event(
+            AudioWorkerEvent::Samples {
+                generation: first_generation,
+                samples: Arc::from(vec![0.9_f32; AUDIO_SPECTRUM_BINS * 2]),
+            },
+            now + Duration::from_millis(2),
+            &host,
+        );
+        assert!(host.snapshot_for_output("DP-1").audio.iter().all(|sample| *sample == 0.0));
+
+        supervisor.apply_event(
+            AudioWorkerEvent::Samples {
+                generation: second_generation,
+                samples: Arc::from(vec![0.25_f32; AUDIO_SPECTRUM_BINS * 2]),
+            },
+            now + Duration::from_millis(3),
+            &host,
+        );
+        assert!(host.snapshot_for_output("DP-1").audio.iter().any(|sample| *sample > 0.0));
+        supervisor.expire_if_stale(now + Duration::from_secs(10), Duration::from_secs(2), &host);
+        assert!(host.snapshot_for_output("DP-1").audio.iter().all(|sample| *sample == 0.0));
     }
 
     #[test]
