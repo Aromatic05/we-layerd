@@ -13,6 +13,7 @@ use we_core::wallpaper::{
 
 use crate::{
     domain::{
+        library_grid::{bounded_animation_candidates, grid_window},
         playlist_editor::{
             self, add_wallpaper, create_playlist, delete_playlist, move_entry, remove_entry,
             rename_playlist, set_default_duration_ms, set_entry_duration_ms, set_mode,
@@ -31,6 +32,8 @@ use super::{
     App, Message,
 };
 
+const MAX_CONCURRENT_GIF_DECODES: usize = 2;
+
 pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::AutoScan => Task::perform(
@@ -41,22 +44,13 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Ok(entries) => {
                 app.entries = entries;
                 app.animated_previews.clear();
-                let mut tasks = app
-                    .entries
-                    .iter()
-                    .filter_map(|entry| {
-                        let path = entry.preview.as_ref()?.clone();
-                        (path.extension().and_then(|ext| ext.to_str()) == Some("gif")).then(|| {
-                            Task::perform(
-                                wallpaper_service::decode_gif(path.clone()),
-                                move |result| Message::GifLoaded(path, result),
-                            )
-                        })
-                    })
-                    .collect::<Vec<_>>();
+                app.gif_preview_desired.clear();
+                app.gif_preview_failed.clear();
+                app.library_scroll_y = 0.0;
+                refresh_filtered_entries(app);
+                let previews = refresh_visible_gif_previews(app);
                 let migration = migrate_legacy_shuffle_if_needed(app);
-                tasks.push(migration);
-                Task::batch(tasks)
+                Task::batch(vec![previews, migration])
             }
             Err(_err) => Task::none(),
         },
@@ -67,15 +61,22 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::perform(runtime::fetch_status(), Message::StatusLoaded)
         }
         Message::GifLoaded(path, result) => {
-            if let Ok(frames) = result {
-                if !frames.is_empty() {
+            app.gif_preview_loading.remove(&path);
+            match result {
+                Ok(frames) if !frames.is_empty() && app.gif_preview_desired.contains(&path) => {
                     app.animated_previews.insert(
-                        path,
+                        path.clone(),
                         AnimatedPreview { frames, current: 0, elapsed: Duration::ZERO },
                     );
+                    app.gif_preview_failed.remove(&path);
+                }
+                Ok(_) | Err(_) => {
+                    if app.gif_preview_desired.contains(&path) {
+                        app.gif_preview_failed.insert(path);
+                    }
                 }
             }
-            Task::none()
+            schedule_desired_gif_previews(app)
         }
         Message::GifTick => {
             for preview in app.animated_previews.values_mut() {
@@ -86,6 +87,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 }
             }
             Task::none()
+        }
+        Message::LibraryScrolled { offset_y, viewport_width, viewport_height } => {
+            app.library_scroll_y = offset_y.max(0.0);
+            app.library_viewport_width = viewport_width.max(180.0);
+            app.library_viewport_height = viewport_height.max(1.0);
+            refresh_visible_gif_previews(app)
         }
         Message::Detail(message) => super::detail_update::update(app, message),
         Message::PlayPressed => play_selected(app, PlaybackStart::SwitchOrStart),
@@ -111,11 +118,27 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::SearchChanged(value) => {
             app.search_query = value;
-            Task::none()
+            app.library_scroll_y = 0.0;
+            refresh_filtered_entries(app);
+            Task::batch(vec![
+                refresh_visible_gif_previews(app),
+                iced::widget::operation::scroll_to(
+                    "library.scroll",
+                    iced::widget::operation::AbsoluteOffset { x: 0.0, y: 0.0 },
+                ),
+            ])
         }
         Message::TypeFilterSelected(value) => {
             app.type_filter = value;
-            Task::none()
+            app.library_scroll_y = 0.0;
+            refresh_filtered_entries(app);
+            Task::batch(vec![
+                refresh_visible_gif_previews(app),
+                iced::widget::operation::scroll_to(
+                    "library.scroll",
+                    iced::widget::operation::AbsoluteOffset { x: 0.0, y: 0.0 },
+                ),
+            ])
         }
         Message::PaneResized(event) => {
             app.panes.resize(event.split, event.ratio.clamp(0.45, 0.82));
@@ -769,6 +792,82 @@ fn exit_application(app: &mut App) -> Task<Message> {
         eprintln!("failed to stop daemon while exiting we-gui");
     }
     iced::exit()
+}
+
+fn refresh_filtered_entries(app: &mut App) {
+    let query = app.search_query.to_lowercase();
+    let type_filter = app.type_filter;
+    app.filtered_entry_indices.clear();
+    app.filtered_entry_indices.extend(
+        app.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                type_filter.map_or(true, |ty| entry.ty == ty)
+                    && (query.is_empty() || entry.title.to_lowercase().contains(&query))
+            })
+            .map(|(index, _)| index),
+    );
+}
+
+fn refresh_visible_gif_previews(app: &mut App) -> Task<Message> {
+    let layout = grid_window(
+        app.filtered_entry_indices.len(),
+        app.library_viewport_width,
+        app.library_scroll_y,
+        app.library_viewport_height,
+        app.playlist_selected.is_some(),
+    );
+    let desired = bounded_animation_candidates(
+        app.filtered_entry_indices[layout.start_item..layout.end_item]
+            .iter()
+            .filter_map(|index| app.entries.get(*index))
+            .filter_map(|entry| entry.preview.as_ref())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
+            })
+            .cloned(),
+    )
+    .into_iter()
+    .collect::<std::collections::HashSet<_>>();
+
+    app.gif_preview_desired = desired;
+    app.animated_previews.retain(|path, _| app.gif_preview_desired.contains(path));
+    app.gif_preview_failed.retain(|path| app.gif_preview_desired.contains(path));
+    schedule_desired_gif_previews(app)
+}
+
+fn schedule_desired_gif_previews(app: &mut App) -> Task<Message> {
+    let available = MAX_CONCURRENT_GIF_DECODES.saturating_sub(app.gif_preview_loading.len());
+    if available == 0 {
+        return Task::none();
+    }
+
+    let paths = app
+        .gif_preview_desired
+        .iter()
+        .filter(|path| {
+            !app.animated_previews.contains_key(*path)
+                && !app.gif_preview_loading.contains(*path)
+                && !app.gif_preview_failed.contains(*path)
+        })
+        .take(available)
+        .cloned()
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Task::none();
+    }
+
+    let mut tasks = Vec::with_capacity(paths.len());
+    for path in paths {
+        app.gif_preview_loading.insert(path.clone());
+        tasks.push(Task::perform(wallpaper_service::decode_gif(path.clone()), move |result| {
+            Message::GifLoaded(path, result)
+        }));
+    }
+    Task::batch(tasks)
 }
 
 fn status_value<'a>(status: &'a str, key: &str) -> Option<&'a str> {

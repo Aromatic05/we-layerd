@@ -11,31 +11,44 @@ use crate::{
     app::{App, Message},
     domain::{
         i18n::{Language, Text},
+        library_grid::{grid_window, GridWindow},
         ui_state::AnimatedPreview,
     },
 };
 
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
-    let matches = app.entries.iter().enumerate().filter(|(_, entry)| {
-        app.type_filter.map_or(true, |ty| entry.ty == ty)
-            && entry.title.to_lowercase().contains(&app.search_query.to_lowercase())
-    });
-    let entries = matches.collect::<Vec<_>>();
     let language = app.language;
+    let entries = &app.entries;
+    let filtered_entry_indices = &app.filtered_entry_indices;
+    let selected_id = app.selected_id.as_ref();
+    let animated_previews = &app.animated_previews;
+    let playlist_selected = app.playlist_selected.as_deref();
+    let scroll_y = app.library_scroll_y;
+    let viewport_height = app.library_viewport_height;
     let grid = responsive(move |size| {
-        if entries.is_empty() {
+        if filtered_entry_indices.is_empty() {
             return container(text(language.text(Text::NoMatchingWallpapers)).size(16))
                 .width(Fill)
                 .align_x(iced::alignment::Horizontal::Center)
                 .padding(32)
                 .into();
         }
-        build_wallpaper_grid(
-            entries.iter().copied(),
-            app.selected_id.as_ref(),
+        let layout = grid_window(
+            filtered_entry_indices.len(),
             size.width,
-            &app.animated_previews,
-            app.playlist_selected.as_deref(),
+            scroll_y,
+            viewport_height,
+            playlist_selected.is_some(),
+        );
+        build_wallpaper_grid(
+            filtered_entry_indices[layout.start_item..layout.end_item]
+                .iter()
+                .copied()
+                .filter_map(|index| entries.get(index).map(|entry| (index, entry))),
+            layout,
+            selected_id,
+            animated_previews,
+            playlist_selected,
             language,
         )
     });
@@ -107,7 +120,18 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             ]
             .spacing(12)
             .align_y(Vertical::Center),
-            scrollable(grid).width(Fill).height(Fill),
+            scrollable(grid)
+                .id("library.scroll")
+                .on_scroll(|viewport| {
+                    let bounds = viewport.bounds();
+                    Message::LibraryScrolled {
+                        offset_y: viewport.absolute_offset().y,
+                        viewport_width: bounds.width,
+                        viewport_height: bounds.height,
+                    }
+                })
+                .width(Fill)
+                .height(Fill),
         ]
         .spacing(16),
     )
@@ -120,36 +144,39 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 
 fn build_wallpaper_grid<'a>(
     entries: impl Iterator<Item = (usize, &'a WallpaperEntry)>,
+    layout: GridWindow,
     selected_id: Option<&String>,
-    width: f32,
     animated_previews: &'a std::collections::HashMap<std::path::PathBuf, AnimatedPreview>,
     playlist_selected: Option<&'a str>,
     language: Language,
 ) -> Element<'a, Message> {
     let spacing = 12.0;
-    let target_card_width = 360.0;
-    let cols = ((width + spacing) / (target_card_width + spacing)).floor().max(1.0) as usize;
-    let card_width = ((width - spacing * (cols.saturating_sub(1) as f32)) / cols as f32).max(180.0);
-    let mut root = column!().spacing(spacing).padding(spacing);
+    let mut root = column!().width(Fill);
+    if layout.top_spacer > 0.0 {
+        root = root.push(container(text("")).width(Fill).height(layout.top_spacer));
+    }
     let entries = entries.collect::<Vec<_>>();
 
-    for chunk in entries.chunks(cols) {
+    for chunk in entries.chunks(layout.cols) {
         let mut row = row!().spacing(spacing);
         for (index, entry) in chunk.iter() {
             let selected = selected_id.is_some_and(|id| id == &entry.id);
             row = row.push(make_wallpaper_card(
                 entry,
                 *index,
-                card_width,
+                layout.card_width,
                 selected,
                 animated_previews,
                 playlist_selected,
                 language,
             ));
         }
-        root = root.push(row);
+        root = root.push(container(row).width(Fill).height(layout.row_pitch));
     }
-    root.into()
+    if layout.bottom_spacer > 0.0 {
+        root = root.push(container(text("")).width(Fill).height(layout.bottom_spacer));
+    }
+    container(root).padding(12).width(Fill).into()
 }
 
 fn make_wallpaper_card<'a>(
@@ -165,10 +192,7 @@ fn make_wallpaper_card<'a>(
     let media: Element<'a, Message> = if let Some(path) = &entry.preview {
         let handle = animated_previews
             .get(path)
-            .map(|preview| {
-                let frame = &preview.frames[preview.current];
-                image::Handle::from_rgba(frame.width, frame.height, frame.pixels.clone())
-            })
+            .map(|preview| preview.frames[preview.current].handle.clone())
             .unwrap_or_else(|| image::Handle::from_path(path));
         image(handle).width(card_width).height(card_height).content_fit(ContentFit::Cover).into()
     } else {
