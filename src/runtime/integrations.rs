@@ -83,6 +83,7 @@ pub(crate) struct HostIntegrations {
 pub(crate) struct HostIntegrationRuntime {
     pub(crate) shared: HostIntegrations,
     handles: Vec<thread::JoinHandle<()>>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl HostIntegrationRuntime {
@@ -91,14 +92,21 @@ impl HostIntegrationRuntime {
         let handles = vec![
             spawn_media_collector(shared.clone(), desired_cfg.clone(), shutdown.clone()),
             spawn_audio_collector(shared.clone(), desired_cfg.clone(), shutdown.clone()),
-            spawn_rule_collector(shared.clone(), desired_cfg, shutdown),
+            spawn_rule_collector(shared.clone(), desired_cfg, shutdown.clone()),
         ];
-        Self { shared, handles }
+        Self { shared, handles, shutdown }
     }
 
-    pub(crate) fn join(self) {
+    pub(crate) fn shutdown(self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        // PulseAudio simple reads and blocking D-Bus calls are owned by external libraries and may
+        // not return promptly when their peer disappears. This runs only during daemon teardown:
+        // reap collectors that already finished and detach the rest so external I/O cannot hold
+        // the process exit path indefinitely.
         for handle in self.handles {
-            let _ = handle.join();
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
         }
     }
 }
@@ -183,7 +191,12 @@ impl HostIntegrations {
         error: Option<String>,
     ) {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(samples) = samples {
+        if !available {
+            if state.audio.iter().any(|sample| *sample != 0.0) {
+                state.audio = Arc::from(vec![0.0_f32; AUDIO_SPECTRUM_BINS * 2]);
+                state.audio_generation = state.audio_generation.wrapping_add(1);
+            }
+        } else if let Some(samples) = samples {
             if state.audio.as_ref() != samples.as_ref() {
                 state.audio = samples;
                 state.audio_generation = state.audio_generation.wrapping_add(1);
@@ -441,9 +454,13 @@ fn spawn_rule_collector(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        sync::{atomic::AtomicBool, mpsc, Arc},
+        thread,
+        time::Duration,
+    };
 
-    use super::{HostIntegrations, AUDIO_SPECTRUM_BINS};
+    use super::{HostIntegrationRuntime, HostIntegrations, AUDIO_SPECTRUM_BINS};
     use crate::runtime::rules::RuntimePolicy;
 
     #[test]
@@ -475,6 +492,60 @@ mod tests {
         assert!(!hdmi.policy.pause);
         assert!(hdmi.policy.mute);
         assert_eq!(dp.audio_generation, hdmi.audio_generation);
+    }
+
+    #[test]
+    fn unavailable_audio_replaces_previous_spectrum_with_silence() {
+        let host = HostIntegrations::default();
+        host.update_audio(
+            true,
+            true,
+            "monitor".to_string(),
+            Some(Arc::from(vec![0.5_f32; AUDIO_SPECTRUM_BINS * 2])),
+            None,
+        );
+        let before = host.snapshot_for_output("DP-1");
+
+        host.update_audio(
+            true,
+            false,
+            "monitor".to_string(),
+            None,
+            Some("capture disconnected".to_string()),
+        );
+        let after = host.snapshot_for_output("DP-1");
+
+        assert!(after.audio.iter().all(|sample| *sample == 0.0));
+        assert_ne!(after.audio_generation, before.audio_generation);
+    }
+
+    #[test]
+    fn host_runtime_shutdown_does_not_wait_for_a_blocked_collector() {
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let collector = thread::spawn(move || {
+            let _ = release_rx.recv();
+        });
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let runtime = HostIntegrationRuntime {
+            shared: HostIntegrations::default(),
+            handles: vec![collector],
+            shutdown: shutdown_requested.clone(),
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        let shutdown = thread::spawn(move || {
+            runtime.shutdown();
+            let _ = done_tx.send(());
+        });
+
+        let returned_without_collector = done_rx.recv_timeout(Duration::from_millis(500)).is_ok();
+        let _ = release_tx.send(());
+        let _ = shutdown.join();
+
+        assert!(
+            returned_without_collector,
+            "runtime shutdown must not depend on a blocking host collector returning"
+        );
+        assert!(shutdown_requested.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]

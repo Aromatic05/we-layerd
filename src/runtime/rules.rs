@@ -139,12 +139,33 @@ struct ToplevelRecord {
 
 #[derive(Default)]
 struct ForeignToplevelProbe {
+    output_globals: BTreeMap<u32, u32>,
     output_names: BTreeMap<u32, String>,
     toplevels: BTreeMap<u32, ToplevelRecord>,
     finished: bool,
 }
 
 impl ForeignToplevelProbe {
+    fn register_output_global(&mut self, global_name: u32, protocol_id: u32) {
+        self.output_globals.insert(global_name, protocol_id);
+    }
+
+    fn record_output_name(&mut self, global_name: u32, protocol_id: u32, name: String) {
+        if self.output_globals.get(&global_name) == Some(&protocol_id) {
+            self.output_names.insert(protocol_id, name);
+        }
+    }
+
+    fn remove_output_global(&mut self, global_name: u32) {
+        let Some(protocol_id) = self.output_globals.remove(&global_name) else {
+            return;
+        };
+        self.output_names.remove(&protocol_id);
+        for toplevel in self.toplevels.values_mut() {
+            toplevel.outputs.remove(&protocol_id);
+        }
+    }
+
     fn activities(&self) -> Vec<ToplevelActivity> {
         self.toplevels
             .values()
@@ -178,18 +199,24 @@ impl ForeignToplevelMonitor {
         let connection = connection::connect_to_env()?;
         let (globals, mut queue) = registry::init_registry::<ForeignToplevelProbe>(&connection)?;
         let qh = queue.handle();
+        let mut state = ForeignToplevelProbe::default();
         for global in globals
             .contents()
             .clone_list()
             .into_iter()
             .filter(|global| global.interface == "wl_output" && global.version >= 4)
         {
-            globals.registry().bind::<wl_output::WlOutput, _, _>(global.name, 4, &qh, ());
+            let output = globals.registry().bind::<wl_output::WlOutput, _, _>(
+                global.name,
+                4,
+                &qh,
+                global.name,
+            );
+            state.register_output_global(global.name, output.id().protocol_id());
         }
         let manager = globals
             .bind::<ZwlrForeignToplevelManagerV1, _, _>(&qh, 1..=3, ())
             .context("compositor does not expose wlr foreign-toplevel management")?;
-        let mut state = ForeignToplevelProbe::default();
         queue.roundtrip(&mut state).context("failed to read initial foreign-toplevel state")?;
         queue.roundtrip(&mut state).context("failed to finish initial foreign-toplevel state")?;
         Ok(Self { _connection: connection, queue, state, _manager: manager })
@@ -216,11 +243,19 @@ impl ForeignToplevelMonitor {
                 if error.kind() != std::io::ErrorKind::Interrupted {
                     return Err(error).context("failed to poll foreign-toplevel Wayland fd");
                 }
-            } else if result > 0 && (pollfd.revents & libc::POLLIN) != 0 {
-                read_guard.read().context("failed to read foreign-toplevel events")?;
-                self.queue
-                    .dispatch_pending(&mut self.state)
-                    .context("failed to dispatch foreign-toplevel events")?;
+            } else if result > 0 {
+                if let Some(reason) = foreign_toplevel_poll_disconnect(pollfd.revents) {
+                    drop(read_guard);
+                    bail!("foreign-toplevel Wayland fd disconnected: {reason}");
+                }
+                if (pollfd.revents & libc::POLLIN) != 0 {
+                    read_guard.read().context("failed to read foreign-toplevel events")?;
+                    self.queue
+                        .dispatch_pending(&mut self.state)
+                        .context("failed to dispatch foreign-toplevel events")?;
+                } else {
+                    drop(read_guard);
+                }
             } else {
                 drop(read_guard);
             }
@@ -233,27 +268,37 @@ impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListConten
     for ForeignToplevelProbe
 {
     fn event(
-        _state: &mut Self,
-        _proxy: &wl_registry::WlRegistry,
-        _event: wl_registry::Event,
+        state: &mut Self,
+        proxy: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
         _data: &wayland_client::globals::GlobalListContents,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
+        match event {
+            wl_registry::Event::Global { name, interface, version }
+                if interface == "wl_output" && version >= 4 =>
+            {
+                let output = proxy.bind::<wl_output::WlOutput, _, _>(name, 4, qh, name);
+                state.register_output_global(name, output.id().protocol_id());
+            }
+            wl_registry::Event::GlobalRemove { name } => state.remove_output_global(name),
+            _ => {}
+        }
     }
 }
 
-impl Dispatch<wl_output::WlOutput, ()> for ForeignToplevelProbe {
+impl Dispatch<wl_output::WlOutput, u32> for ForeignToplevelProbe {
     fn event(
         state: &mut Self,
         proxy: &wl_output::WlOutput,
         event: wl_output::Event,
-        _data: &(),
+        global_name: &u32,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
         if let wl_output::Event::Name { name } = event {
-            state.output_names.insert(proxy.id().protocol_id(), name);
+            state.record_output_name(*global_name, proxy.id().protocol_id(), name);
         }
     }
 }
@@ -333,17 +378,63 @@ fn decode_toplevel_states(raw: &[u8]) -> (bool, bool, bool) {
     (maximized, activated, fullscreen)
 }
 
+fn foreign_toplevel_poll_disconnect(revents: libc::c_short) -> Option<&'static str> {
+    if (revents & libc::POLLNVAL) != 0 {
+        Some("invalid fd")
+    } else if (revents & libc::POLLERR) != 0 {
+        Some("poll error")
+    } else if (revents & libc::POLLHUP) != 0 {
+        Some("hangup")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_toplevel_states, policies_for_outputs, PauseState, RuleAction, RuleSet,
-        RuntimePolicy, ToplevelActivity,
+        decode_toplevel_states, foreign_toplevel_poll_disconnect, policies_for_outputs,
+        ForeignToplevelProbe, PauseState, RuleAction, RuleSet, RuntimePolicy, ToplevelActivity,
+        ToplevelRecord,
     };
 
     #[test]
     fn foreign_toplevel_state_array_decodes_protocol_values() {
         let raw = [0_u32, 2, 3].into_iter().flat_map(u32::to_ne_bytes).collect::<Vec<_>>();
         assert_eq!(decode_toplevel_states(&raw), (true, true, true));
+    }
+
+    #[test]
+    fn output_hotplug_updates_names_and_removes_stale_toplevel_membership() {
+        let mut probe = ForeignToplevelProbe::default();
+        probe.register_output_global(41, 401);
+        probe.record_output_name(41, 401, "DP-1".to_string());
+        probe.toplevels.insert(
+            7,
+            ToplevelRecord {
+                outputs: [401].into_iter().collect(),
+                activated: true,
+                ..ToplevelRecord::default()
+            },
+        );
+        assert_eq!(probe.outputs(), vec!["DP-1".to_string()]);
+        assert_eq!(probe.activities()[0].outputs, vec!["DP-1".to_string()]);
+
+        probe.remove_output_global(41);
+
+        assert!(probe.outputs().is_empty());
+        assert!(probe.activities()[0].outputs.is_empty());
+
+        probe.record_output_name(41, 401, "stale".to_string());
+        assert!(probe.outputs().is_empty(), "events from a removed global must stay ignored");
+    }
+
+    #[test]
+    fn poll_hangup_error_and_invalid_fd_are_disconnects() {
+        for revents in [libc::POLLHUP, libc::POLLERR, libc::POLLNVAL] {
+            assert!(foreign_toplevel_poll_disconnect(revents).is_some());
+        }
+        assert!(foreign_toplevel_poll_disconnect(libc::POLLIN).is_none());
     }
 
     #[test]

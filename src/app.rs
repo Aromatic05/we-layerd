@@ -414,7 +414,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                 }
                 shutdown_requested.store(true, Ordering::Relaxed);
                 if let Some(runtime) = host_runtime.take() {
-                    runtime.join();
+                    runtime.shutdown();
                 }
                 return Err(err);
             }
@@ -436,7 +436,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     }
 
     if let Some(runtime) = host_runtime.take() {
-        runtime.join();
+        runtime.shutdown();
     }
 
     Ok(())
