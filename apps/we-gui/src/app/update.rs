@@ -1218,6 +1218,36 @@ fn sync_playlist_editor_inputs(app: &mut App) {
         .collect();
 }
 
+fn preferred_output_targets(
+    connected_outputs: &[String],
+    previous_targets: &std::collections::BTreeSet<String>,
+    is_already_bound: impl Fn(&str) -> bool,
+) -> std::collections::BTreeSet<String> {
+    let bound = connected_outputs
+        .iter()
+        .filter(|output| is_already_bound(output))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if !bound.is_empty() {
+        return bound;
+    }
+
+    let previous = previous_targets
+        .iter()
+        .filter(|output| connected_outputs.contains(output))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if !previous.is_empty() {
+        return previous;
+    }
+
+    if connected_outputs.len() == 1 {
+        return connected_outputs.iter().cloned().collect();
+    }
+
+    std::collections::BTreeSet::new()
+}
+
 fn sync_selected_outputs_for_wallpaper(app: &mut App) {
     let Some(wallpaper_id) = app.selected_id.as_deref() else {
         return;
@@ -1226,18 +1256,14 @@ fn sync_selected_outputs_for_wallpaper(app: &mut App) {
         app.selected_outputs = app.outputs.iter().cloned().collect();
         return;
     }
-    app.selected_outputs = app
-        .outputs
-        .iter()
-        .filter(|output| {
+    app.selected_outputs =
+        preferred_output_targets(&app.outputs, &app.selected_outputs, |output| {
             app.launch_settings
                 .outputs
-                .get(*output)
+                .get(output)
                 .and_then(|binding| binding.wallpaper_id.as_deref())
                 == Some(wallpaper_id)
-        })
-        .cloned()
-        .collect();
+        });
 }
 
 fn sync_selected_outputs_for_playlist(app: &mut App) {
@@ -1249,15 +1275,11 @@ fn sync_selected_outputs_for_playlist(app: &mut App) {
         app.selected_outputs = app.outputs.iter().cloned().collect();
         return;
     }
-    app.selected_outputs = app
-        .outputs
-        .iter()
-        .filter(|output| {
-            app.launch_settings.outputs.get(*output).and_then(|binding| binding.playlist.as_deref())
+    app.selected_outputs =
+        preferred_output_targets(&app.outputs, &app.selected_outputs, |output| {
+            app.launch_settings.outputs.get(output).and_then(|binding| binding.playlist.as_deref())
                 == Some(playlist_name)
-        })
-        .cloned()
-        .collect();
+        });
 }
 
 fn play_selected_playlist(app: &mut App) -> Task<Message> {
@@ -1768,10 +1790,48 @@ fn output_runtime_state(runtime: &toml::value::Table) -> OutputRuntimeState {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{
         daemon_status_supports_multi_output, effective_playback_start, parse_output_runtime_states,
-        playlist_stop_can_be_persisted, status_section_value, PlaybackStart,
+        playlist_stop_can_be_persisted, preferred_output_targets, status_section_value,
+        PlaybackStart,
     };
+
+    #[test]
+    fn unbound_wallpaper_keeps_the_previous_single_output_target() {
+        let connected = vec!["eDP-1".to_string()];
+        let previous = BTreeSet::from(["eDP-1".to_string()]);
+        let selected = preferred_output_targets(&connected, &previous, |_| false);
+
+        assert_eq!(selected, previous);
+    }
+
+    #[test]
+    fn unbound_wallpaper_defaults_to_the_only_connected_output_when_no_target_exists() {
+        let connected = vec!["eDP-1".to_string()];
+        let selected = preferred_output_targets(&connected, &BTreeSet::new(), |_| false);
+
+        assert_eq!(selected, BTreeSet::from(["eDP-1".to_string()]));
+    }
+
+    #[test]
+    fn existing_binding_wins_over_the_previous_target_selection() {
+        let connected = vec!["DP-1".to_string(), "HDMI-A-1".to_string()];
+        let previous = BTreeSet::from(["DP-1".to_string()]);
+        let selected =
+            preferred_output_targets(&connected, &previous, |output| output == "HDMI-A-1");
+
+        assert_eq!(selected, BTreeSet::from(["HDMI-A-1".to_string()]));
+    }
+
+    #[test]
+    fn multi_output_without_binding_or_previous_target_stays_explicit() {
+        let connected = vec!["DP-1".to_string(), "HDMI-A-1".to_string()];
+        let selected = preferred_output_targets(&connected, &BTreeSet::new(), |_| false);
+
+        assert!(selected.is_empty());
+    }
 
     #[test]
     fn appimage_restarts_an_unowned_daemon_before_first_playback() {
