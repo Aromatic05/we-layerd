@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     path::PathBuf,
     process::Child,
 };
@@ -14,6 +14,7 @@ use we_core::{
 use crate::{
     domain::{
         i18n::Language,
+        library_scan::LibraryScanScheduler,
         playlist_editor::{LegacyShuffleMigration, MoveDirection},
         runtime_status::RuntimeStatus,
         settings::{ScaleModeOption, UiSettings},
@@ -43,8 +44,17 @@ pub(crate) struct App {
     pub playback_running: bool,
     pub search_query: String,
     pub type_filter: Option<WallpaperType>,
+    pub filtered_entry_indices: Vec<usize>,
     pub panes: pane_grid::State<Pane>,
     pub animated_previews: HashMap<PathBuf, AnimatedPreview>,
+    pub gif_preview_desired: HashSet<PathBuf>,
+    pub gif_preview_loading: HashSet<(u64, PathBuf)>,
+    pub gif_preview_failed: HashSet<PathBuf>,
+    pub gif_preview_generation: u64,
+    pub library_scroll_y: f32,
+    pub library_viewport_width: f32,
+    pub library_viewport_height: f32,
+    pub library_scan: LibraryScanScheduler,
     pub tray: Option<tray::TrayController>,
     pub main_window_id: Option<window::Id>,
     pub theme: Theme,
@@ -130,9 +140,10 @@ impl Drop for App {
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     AutoScan,
-    Scanned(Result<Vec<WallpaperEntry>, String>),
-    GifLoaded(PathBuf, Result<Vec<GifFrame>, String>),
+    ScanCompleted(u64, Result<Vec<WallpaperEntry>, String>),
+    GifLoaded { generation: u64, path: PathBuf, result: Result<Vec<GifFrame>, String> },
     GifTick,
+    LibraryScrolled { offset_y: f32, viewport_width: f32, viewport_height: f32 },
     SelectWallpaper(usize),
     PlayPressed,
     StopPressed,

@@ -12,7 +12,7 @@ pub fn run() -> iced::Result {
     iced::daemon(init::initialize, update::update, view::daemon_view)
         .title("we-gui")
         .theme(|app: &App, _window| app.theme.clone())
-        .subscription(|_app| subscription::subscription())
+        .subscription(subscription::subscription)
         .run()
 }
 
@@ -130,10 +130,19 @@ mod tests {
             playback_running: false,
             search_query: String::new(),
             type_filter: None,
+            filtered_entry_indices: Vec::new(),
             panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(
                 Pane::Library,
             )),
             animated_previews: HashMap::new(),
+            gif_preview_desired: Default::default(),
+            gif_preview_loading: Default::default(),
+            gif_preview_failed: Default::default(),
+            gif_preview_generation: 0,
+            library_scroll_y: 0.0,
+            library_viewport_width: 860.0,
+            library_viewport_height: 720.0,
+            library_scan: Default::default(),
             tray: None,
             main_window_id: None,
             theme: Theme::Dark,
@@ -225,10 +234,19 @@ mod tests {
             playback_running: true,
             search_query: String::new(),
             type_filter: None,
+            filtered_entry_indices: Vec::new(),
             panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(
                 Pane::Library,
             )),
             animated_previews: HashMap::new(),
+            gif_preview_desired: Default::default(),
+            gif_preview_loading: Default::default(),
+            gif_preview_failed: Default::default(),
+            gif_preview_generation: 0,
+            library_scroll_y: 0.0,
+            library_viewport_width: 860.0,
+            library_viewport_height: 720.0,
+            library_scan: Default::default(),
             tray: None,
             main_window_id: None,
             theme: Theme::Dark,

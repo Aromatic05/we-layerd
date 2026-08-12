@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use iced::widget::image;
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Pane {
     Library,
@@ -16,9 +18,8 @@ pub(crate) enum Sidebar {
 
 #[derive(Debug, Clone)]
 pub(crate) struct GifFrame {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>,
+    pub handle: image::Handle,
+    pub decoded_bytes: usize,
     pub delay: Duration,
 }
 
