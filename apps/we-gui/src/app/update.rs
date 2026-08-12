@@ -141,8 +141,10 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             ])
         }
         Message::PaneResized(event) => {
-            app.panes.resize(event.split, event.ratio.clamp(0.45, 0.82));
-            Task::none()
+            let ratio = event.ratio.clamp(0.45, 0.82);
+            app.panes.resize(event.split, ratio);
+            app.library_viewport_width = (app.viewport_width * ratio).max(180.0);
+            refresh_visible_gif_previews(app)
         }
         Message::AssetsPathChanged(value) => {
             app.ui_settings.assets_path = value;
@@ -729,7 +731,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::WindowResized(size) => {
             app.viewport_width = size.width;
-            Task::none()
+            app.library_viewport_height = size.height.max(1.0);
+            if app.sidebar.is_none() {
+                app.library_viewport_width = size.width.max(180.0);
+            }
+            refresh_visible_gif_previews(app)
         }
         Message::WindowCloseRequested(id) => window::close(id),
         Message::WindowOpened(id) => {
