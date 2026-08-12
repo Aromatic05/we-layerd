@@ -11,6 +11,7 @@ use iced::{
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
     Background, Border, Color, Element, Fill, Theme,
 };
+use we_core::config::RuntimeRuleAction;
 
 pub fn build_settings_overlay<'a>(
     ui_settings: &'a UiSettings,
@@ -28,6 +29,17 @@ pub fn build_settings_overlay<'a>(
     ];
     let selected_scale =
         scale_options.iter().find(|option| option.value == ui_settings.scale_mode).cloned();
+    let rule_options = vec![
+        Localized::new(RuntimeRuleAction::Keep, language.text(Text::RuleKeep)),
+        Localized::new(RuntimeRuleAction::Mute, language.text(Text::RuleMute)),
+        Localized::new(RuntimeRuleAction::Pause, language.text(Text::RulePause)),
+    ];
+    let selected_focused_rule =
+        rule_options.iter().find(|option| option.value == ui_settings.rule_focused).cloned();
+    let selected_maximized_rule =
+        rule_options.iter().find(|option| option.value == ui_settings.rule_maximized).cloned();
+    let selected_fullscreen_rule =
+        rule_options.iter().find(|option| option.value == ui_settings.rule_fullscreen).cloned();
 
     let content = column![
         row![
@@ -159,6 +171,70 @@ pub fn build_settings_overlay<'a>(
                 .style(md_checkbox_style),
         )
         .id("settings.allow-shm-fallback"),
+        section_title(language.text(Text::HostIntegrations)),
+        container(
+            checkbox(ui_settings.media_integration)
+                .label(language.text(Text::MediaIntegration))
+                .on_toggle(Message::MediaIntegrationToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.integrations.media"),
+        text(language.text(Text::MediaIntegrationDescription)).size(12),
+        container(
+            checkbox(ui_settings.audio_spectrum)
+                .label(language.text(Text::AudioSpectrum))
+                .on_toggle(Message::AudioSpectrumToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.integrations.audio"),
+        text(language.text(Text::AudioSpectrumDescription)).size(12),
+        text(language.text(Text::AudioMonitorSource)).size(14),
+        row![
+            text_input("@DEFAULT_MONITOR@", &ui_settings.audio_source)
+                .id("settings.integrations.audio-source")
+                .on_input(Message::AudioSourceChanged)
+                .on_submit(Message::AudioSourceApply)
+                .padding([14, 10])
+                .style(md_text_input_style)
+                .width(Fill),
+            button(text(language.text(Text::Apply)).size(14))
+                .on_press(Message::AudioSourceApply)
+                .style(outlined_button_style),
+        ]
+        .spacing(10),
+        section_title(language.text(Text::RuntimeRules)),
+        text(language.text(Text::FocusedWindowRule)).size(14),
+        container(
+            pick_list(rule_options.clone(), selected_focused_rule, |option| {
+                Message::FocusedRuleSelected(option.value)
+            })
+            .padding([14, 10])
+            .style(md_pick_list_style)
+            .menu_style(md_menu_style),
+        )
+        .id("settings.rules.focused"),
+        text(language.text(Text::MaximizedWindowRule)).size(14),
+        container(
+            pick_list(rule_options.clone(), selected_maximized_rule, |option| {
+                Message::MaximizedRuleSelected(option.value)
+            })
+            .padding([14, 10])
+            .style(md_pick_list_style)
+            .menu_style(md_menu_style),
+        )
+        .id("settings.rules.maximized"),
+        text(language.text(Text::FullscreenWindowRule)).size(14),
+        container(
+            pick_list(rule_options, selected_fullscreen_rule, |option| {
+                Message::FullscreenRuleSelected(option.value)
+            })
+            .padding([14, 10])
+            .style(md_pick_list_style)
+            .menu_style(md_menu_style),
+        )
+        .id("settings.rules.fullscreen"),
+        section_title(language.text(Text::IntegrationRuntimeStatus)),
+        integration_runtime_view(runtime_status),
         section_title(language.text(Text::RendererDiagnostics)),
         renderer_diagnostics_view(runtime_status, language),
         section_title(language.text(Text::RuntimeStatus)),
@@ -188,6 +264,63 @@ pub fn build_settings_overlay<'a>(
     .padding(18)
     .style(settings_overlay_style)
     .into()
+}
+
+fn integration_runtime_view(runtime_status: &RuntimeStatus) -> Element<'_, Message> {
+    let RuntimeStatus::Raw(raw) = runtime_status else {
+        return container(text("Host integration status unavailable").size(13))
+            .padding(12)
+            .width(Fill)
+            .style(status_box_style)
+            .into();
+    };
+    let Ok(document) = toml::from_str::<toml::Value>(raw) else {
+        return container(text("Host integration status is not valid TOML").size(13))
+            .padding(12)
+            .width(Fill)
+            .style(status_box_style)
+            .into();
+    };
+    let Some(status) = document.get("integration_runtime").and_then(toml::Value::as_table) else {
+        return container(text("Running daemon does not expose host integration status").size(13))
+            .padding(12)
+            .width(Fill)
+            .style(status_box_style)
+            .into();
+    };
+
+    let bool_value = |key: &str| status.get(key).and_then(toml::Value::as_bool).unwrap_or(false);
+    let string_value = |key: &str| status.get(key).and_then(toml::Value::as_str).unwrap_or("");
+    let mut lines = column![
+        text(format!(
+            "MPRIS: enabled={} available={} player={}",
+            bool_value("media_enabled"),
+            bool_value("media_available"),
+            string_value("media_player")
+        ))
+        .size(13),
+        text(format!(
+            "Audio spectrum: enabled={} available={} source={}",
+            bool_value("audio_enabled"),
+            bool_value("audio_available"),
+            string_value("audio_source")
+        ))
+        .size(13),
+        text(format!(
+            "Window rules: enabled={} available={}",
+            bool_value("rules_enabled"),
+            bool_value("rules_available")
+        ))
+        .size(13),
+    ]
+    .spacing(4);
+    for key in ["media_error", "audio_error", "rules_error"] {
+        let error = string_value(key);
+        if !error.is_empty() {
+            lines = lines.push(text(format!("{key}: {error}")).size(12));
+        }
+    }
+    container(lines).padding(12).width(Fill).style(status_box_style).into()
 }
 
 fn renderer_diagnostics_view<'a>(

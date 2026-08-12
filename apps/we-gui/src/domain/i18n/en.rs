@@ -73,6 +73,24 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ForceSceneAudioLoopDescription => {
             "Loops visible, automatically started scene sounds authored as single; start-silent sounds are unchanged."
         }
+        Text::HostIntegrations => "Host integrations",
+        Text::MediaIntegration => "Expose MPRIS media state to scene wallpapers",
+        Text::MediaIntegrationDescription => {
+            "Shares playback state and track metadata with compatible SceneScript wallpapers."
+        }
+        Text::AudioSpectrum => "Expose desktop audio spectrum",
+        Text::AudioSpectrumDescription => {
+            "Captures the selected PulseAudio/PipeWire monitor and sends a 64-bin stereo spectrum to compatible wallpapers."
+        }
+        Text::AudioMonitorSource => "Audio monitor source",
+        Text::RuntimeRules => "Application rules",
+        Text::FocusedWindowRule => "Focused window",
+        Text::MaximizedWindowRule => "Maximized window",
+        Text::FullscreenWindowRule => "Fullscreen window",
+        Text::RuleKeep => "Keep running",
+        Text::RuleMute => "Mute wallpaper",
+        Text::RulePause => "Pause wallpaper",
+        Text::IntegrationRuntimeStatus => "Integration runtime status",
         Text::ShowRealtimeFps => "Show realtime FPS",
         Text::PreferDmabuf => "Prefer DMA-BUF presentation",
         Text::AllowShmFallback => "Allow SHM fallback",

@@ -23,6 +23,22 @@ options_json = '''
 }
 '''
 
+[integrations]
+# MPRIS playback state and track metadata are forwarded to compatible scene wallpapers.
+media = true
+# Desktop audio capture is opt-in because it runs continuously while enabled.
+audio_spectrum = false
+audio_source = "@DEFAULT_MONITOR@"
+audio_sample_rate = 48000
+audio_update_hz = 30
+
+[rules]
+# Window rules are per output when zwlr_foreign_toplevel_manager_v1 is available.
+# Values: "keep", "mute", "pause".
+focused = "keep"
+maximized = "keep"
+fullscreen = "keep"
+
 # Runs asynchronously after an output presents the first frame of a successful apply or switch.
 # [hooks.wallpaper_applied]
 # command = "~/.local/bin/we-theme-sync"

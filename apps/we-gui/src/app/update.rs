@@ -213,6 +213,40 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             super::settings::sync(app);
             Task::none()
         }
+        Message::MediaIntegrationToggled(value) => {
+            app.ui_settings.media_integration = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::AudioSpectrumToggled(value) => {
+            app.ui_settings.audio_spectrum = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::AudioSourceChanged(value) => {
+            app.ui_settings.audio_source = value;
+            super::settings::sync(app);
+            Task::none()
+        }
+        Message::AudioSourceApply => {
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::FocusedRuleSelected(value) => {
+            app.ui_settings.rule_focused = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::MaximizedRuleSelected(value) => {
+            app.ui_settings.rule_maximized = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::FullscreenRuleSelected(value) => {
+            app.ui_settings.rule_fullscreen = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
         Message::PreferDmabufToggled(value) => {
             app.ui_settings.prefer_dmabuf = value;
             super::settings::sync(app);
@@ -921,6 +955,26 @@ fn reload_running_config(app: &mut App) -> Result<(), String> {
     let child = runtime::restart(&app.config_path, &mut app.runtime_child)?;
     app.runtime_child = Some(child);
     Ok(())
+}
+
+fn persist_host_integration_settings(app: &mut App) -> bool {
+    super::settings::sync(app);
+    if let Err(error) = config::persist_integrations_and_rules(
+        &app.config_path,
+        &app.launch_settings.integrations,
+        &app.launch_settings.rules,
+    ) {
+        app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());
+        eprintln!("failed to save host integrations: {error}");
+        return false;
+    }
+    if let Err(error) = reload_running_config(app) {
+        app.runtime_status = RuntimeStatus::Unavailable(format!(
+            "integrations were saved but the running daemon could not reload them: {error}"
+        ));
+        return false;
+    }
+    true
 }
 
 fn set_playlist_error(app: &mut App, error: String) {

@@ -40,6 +40,9 @@ pub(crate) struct RuntimeDiagnostics {
     pub(crate) allow_shm_fallback: bool,
     pub(crate) nvidia_prime_offload_detected: bool,
     pub(crate) options_json: OptionsJsonDiagnostics,
+    pub(crate) media_integration_supported: bool,
+    pub(crate) audio_integration_supported: bool,
+    pub(crate) rule_muted: bool,
     pub(crate) renderer_diagnostics: Option<Arc<RendererDiagnostics>>,
     pub(crate) renderer_diagnostics_error: Option<Arc<str>>,
 }
@@ -161,6 +164,9 @@ impl RuntimeStatusSnapshot {
             format!("options_json_present = {}", self.runtime.options_json.present),
             format!("options_json_len = {}", self.runtime.options_json.len),
             format!("options_json_valid = {}", self.runtime.options_json.valid),
+            format!("media_integration_supported = {}", self.runtime.media_integration_supported),
+            format!("audio_integration_supported = {}", self.runtime.audio_integration_supported),
+            format!("rule_muted = {}", self.runtime.rule_muted),
             format!(
                 "renderer_diagnostic_count = {}",
                 self.runtime

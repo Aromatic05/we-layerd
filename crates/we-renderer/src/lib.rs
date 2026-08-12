@@ -8,8 +8,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use we_renderer_sys::{
-    self as sys, we_fill_mode_v1, we_frame_kind_v1, we_input_event_type_v2, we_render_config_v1,
-    we_runtime_settings_v1, we_session_t, we_source_v1, RendererLibrary as SysRendererLibrary,
+    self as sys, we_fill_mode_v1, we_frame_kind_v1, we_input_event_type_v2, we_media_state_v1,
+    we_render_config_v1, we_runtime_settings_v1, we_session_t, we_source_v1,
+    RendererLibrary as SysRendererLibrary,
 };
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,63 @@ pub struct RuntimeSettings {
     pub volume: Option<f32>,
     pub muted: Option<bool>,
     pub fill_mode: Option<FillMode>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MediaPlaybackState {
+    #[default]
+    Stopped,
+    Playing,
+    Paused,
+    Other,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MediaImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MediaState {
+    pub playback: MediaPlaybackState,
+    pub primary_color: [f32; 3],
+    pub secondary_color: [f32; 3],
+    pub tertiary_color: [f32; 3],
+    pub text_color: [f32; 3],
+    pub high_contrast_color: [f32; 3],
+    pub title: String,
+    pub artist: String,
+    pub album_title: String,
+    pub album_artist: String,
+    pub sub_title: String,
+    pub genres: String,
+    pub content_type: String,
+    pub thumbnail: Option<MediaImage>,
+    pub previous_thumbnail: Option<MediaImage>,
+}
+
+impl Default for MediaState {
+    fn default() -> Self {
+        Self {
+            playback: MediaPlaybackState::Stopped,
+            primary_color: [0.0, 0.0, 0.0],
+            secondary_color: [1.0, 1.0, 1.0],
+            tertiary_color: [1.0, 1.0, 1.0],
+            text_color: [1.0, 1.0, 1.0],
+            high_contrast_color: [1.0, 1.0, 1.0],
+            title: String::new(),
+            artist: String::new(),
+            album_title: String::new(),
+            album_artist: String::new(),
+            sub_title: String::new(),
+            genres: String::new(),
+            content_type: String::new(),
+            thumbnail: None,
+            previous_thumbnail: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,6 +198,20 @@ struct OwnedSourceState {
     options_json: Option<CString>,
 }
 
+#[derive(Debug)]
+struct EncodedMediaState {
+    raw: we_media_state_v1,
+    _title: CString,
+    _artist: CString,
+    _album_title: CString,
+    _album_artist: CString,
+    _sub_title: CString,
+    _genres: CString,
+    _content_type: CString,
+    _thumbnail: Option<Vec<u8>>,
+    _previous_thumbnail: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("{0}")]
@@ -170,12 +242,30 @@ pub enum Error {
     DiagnosticsJson(#[from] serde_json::Error),
     #[error("unsupported renderer diagnostics version {0}")]
     UnsupportedDiagnosticsVersion(u32),
+    #[error("renderer media metadata contains an interior NUL byte")]
+    InvalidMediaString,
+    #[error("renderer media image dimensions require {expected} RGBA bytes but received {actual}")]
+    InvalidMediaImageLength { expected: usize, actual: usize },
+    #[error("loaded renderer library does not expose media-state integration")]
+    MediaUnavailable,
+    #[error("loaded renderer library does not expose audio-spectrum integration")]
+    AudioSamplesUnavailable,
+    #[error("audio-spectrum payload must contain 1..=4096 finite samples")]
+    InvalidAudioSamples,
 }
 
 impl RendererLibrary {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
         let inner = SysRendererLibrary::load(path.as_ref().as_os_str())?;
         Ok(Self { inner: Arc::new(inner) })
+    }
+
+    pub fn supports_media_state(&self) -> bool {
+        self.inner.supports_media_state()
+    }
+
+    pub fn supports_audio_samples(&self) -> bool {
+        self.inner.supports_audio_samples()
     }
 
     pub fn create_session(&self, cache_path: Option<&Path>) -> Result<Session, Error> {
@@ -341,6 +431,32 @@ impl Session {
         )
     }
 
+    pub fn set_media_state(&mut self, state: &MediaState) -> Result<(), Error> {
+        let encoded = encode_media_state(state)?;
+        let Some(status) =
+            (unsafe { self.library.session_set_media_state(self.raw, &encoded.raw) })
+        else {
+            return Err(Error::MediaUnavailable);
+        };
+        self.check_status(status, "we_session_set_media_state")
+    }
+
+    pub fn push_audio_samples(&mut self, samples: &[f32]) -> Result<(), Error> {
+        if samples.is_empty()
+            || samples.len() > 4096
+            || !samples.iter().all(|value| value.is_finite())
+        {
+            return Err(Error::InvalidAudioSamples);
+        }
+        let count = u32::try_from(samples.len()).map_err(|_| Error::InvalidAudioSamples)?;
+        let Some(status) =
+            (unsafe { self.library.session_push_audio_samples(self.raw, samples.as_ptr(), count) })
+        else {
+            return Err(Error::AudioSamplesUnavailable);
+        };
+        self.check_status(status, "we_session_push_audio_samples")
+    }
+
     pub fn play(&mut self) -> Result<(), Error> {
         self.check_status(unsafe { self.library.session_play(self.raw) }, "we_session_play")
     }
@@ -453,6 +569,91 @@ impl Session {
             Err(Error::Status(status, op))
         }
     }
+}
+
+fn encode_media_state(state: &MediaState) -> Result<EncodedMediaState, Error> {
+    let title = CString::new(state.title.as_bytes()).map_err(|_| Error::InvalidMediaString)?;
+    let artist = CString::new(state.artist.as_bytes()).map_err(|_| Error::InvalidMediaString)?;
+    let album_title =
+        CString::new(state.album_title.as_bytes()).map_err(|_| Error::InvalidMediaString)?;
+    let album_artist =
+        CString::new(state.album_artist.as_bytes()).map_err(|_| Error::InvalidMediaString)?;
+    let sub_title =
+        CString::new(state.sub_title.as_bytes()).map_err(|_| Error::InvalidMediaString)?;
+    let genres = CString::new(state.genres.as_bytes()).map_err(|_| Error::InvalidMediaString)?;
+    let content_type =
+        CString::new(state.content_type.as_bytes()).map_err(|_| Error::InvalidMediaString)?;
+
+    let thumbnail = validate_media_image(state.thumbnail.as_ref())?;
+    let previous_thumbnail = validate_media_image(state.previous_thumbnail.as_ref())?;
+    let (thumbnail_width, thumbnail_height, thumbnail_rgba) = state
+        .thumbnail
+        .as_ref()
+        .zip(thumbnail.as_ref())
+        .map(|(image, bytes)| (image.width, image.height, bytes.as_ptr()))
+        .unwrap_or((0, 0, std::ptr::null()));
+    let (previous_thumbnail_width, previous_thumbnail_height, previous_thumbnail_rgba) = state
+        .previous_thumbnail
+        .as_ref()
+        .zip(previous_thumbnail.as_ref())
+        .map(|(image, bytes)| (image.width, image.height, bytes.as_ptr()))
+        .unwrap_or((0, 0, std::ptr::null()));
+
+    let raw = we_media_state_v1 {
+        size: std::mem::size_of::<we_media_state_v1>() as u32,
+        version: sys::WE_MEDIA_STATE_V1_VERSION,
+        playback_state: match state.playback {
+            MediaPlaybackState::Stopped => 0,
+            MediaPlaybackState::Playing => 1,
+            MediaPlaybackState::Paused => 2,
+            MediaPlaybackState::Other => 3,
+        },
+        has_thumbnail: state.thumbnail.is_some(),
+        primary_color: state.primary_color,
+        secondary_color: state.secondary_color,
+        tertiary_color: state.tertiary_color,
+        text_color: state.text_color,
+        high_contrast_color: state.high_contrast_color,
+        title: title.as_ptr(),
+        artist: artist.as_ptr(),
+        album_title: album_title.as_ptr(),
+        album_artist: album_artist.as_ptr(),
+        sub_title: sub_title.as_ptr(),
+        genres: genres.as_ptr(),
+        content_type: content_type.as_ptr(),
+        thumbnail_width,
+        thumbnail_height,
+        thumbnail_rgba,
+        previous_thumbnail_width,
+        previous_thumbnail_height,
+        previous_thumbnail_rgba,
+    };
+    Ok(EncodedMediaState {
+        raw,
+        _title: title,
+        _artist: artist,
+        _album_title: album_title,
+        _album_artist: album_artist,
+        _sub_title: sub_title,
+        _genres: genres,
+        _content_type: content_type,
+        _thumbnail: thumbnail,
+        _previous_thumbnail: previous_thumbnail,
+    })
+}
+
+fn validate_media_image(image: Option<&MediaImage>) -> Result<Option<Vec<u8>>, Error> {
+    let Some(image) = image else {
+        return Ok(None);
+    };
+    let expected = (image.width as usize)
+        .checked_mul(image.height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(Error::InvalidMediaImageLength { expected: usize::MAX, actual: image.rgba.len() })?;
+    if image.rgba.len() != expected {
+        return Err(Error::InvalidMediaImageLength { expected, actual: image.rgba.len() });
+    }
+    Ok(Some(image.rgba.clone()))
 }
 
 fn parse_diagnostics_json(bytes: &[u8]) -> Result<RendererDiagnostics, Error> {
@@ -596,8 +797,8 @@ mod tests {
     use std::os::fd::AsRawFd;
 
     use super::{
-        frame_from_raw, parse_diagnostics_json, to_raw_input_event, DiagnosticSeverity, Frame,
-        InputEvent,
+        encode_media_state, frame_from_raw, parse_diagnostics_json, to_raw_input_event,
+        DiagnosticSeverity, Frame, InputEvent, MediaImage, MediaPlaybackState, MediaState,
     };
     use we_renderer_sys::{we_dmabuf_plane_v1, we_frame_kind_v1, we_frame_v1};
 
@@ -712,5 +913,36 @@ mod tests {
         assert!(parse_diagnostics_json(br#"{"version":2,"entries":[]}"#).is_err());
         assert!(parse_diagnostics_json(b"not-json").is_err());
         assert!(parse_diagnostics_json(&[0xff, 0xfe]).is_err());
+    }
+
+    #[test]
+    fn media_state_encoding_preserves_abi_values_strings_and_thumbnail_bytes() {
+        let state = MediaState {
+            playback: MediaPlaybackState::Playing,
+            title: "Track".to_string(),
+            artist: "Artist".to_string(),
+            thumbnail: Some(MediaImage { width: 1, height: 1, rgba: vec![1, 2, 3, 4] }),
+            ..MediaState::default()
+        };
+        let encoded = encode_media_state(&state).expect("valid media state");
+        assert_eq!(encoded.raw.playback_state, 1);
+        assert!(encoded.raw.has_thumbnail);
+        assert_eq!(
+            unsafe { std::ffi::CStr::from_ptr(encoded.raw.title) }.to_str().unwrap(),
+            "Track"
+        );
+        assert_eq!(
+            unsafe { std::slice::from_raw_parts(encoded.raw.thumbnail_rgba, 4) },
+            &[1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn media_state_rejects_invalid_thumbnail_length_before_entering_ffi() {
+        let state = MediaState {
+            thumbnail: Some(MediaImage { width: 2, height: 2, rgba: vec![0; 4] }),
+            ..MediaState::default()
+        };
+        assert!(encode_media_state(&state).is_err());
     }
 }

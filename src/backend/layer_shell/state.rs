@@ -20,6 +20,7 @@ use wayland_protocols::wp::{
     viewporter::client::wp_viewport::WpViewport,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
+use we_core::wallpaper::WallpaperType;
 
 use crate::{
     backend::wayland_common::{
@@ -28,7 +29,7 @@ use crate::{
         output::{OutputState, PresentationGeometry},
     },
     runtime::status::{FrameStats, RuntimeDiagnostics, RuntimeStatusSnapshot},
-    runtime::{input::PendingInput, renderer_session::RendererSession},
+    runtime::{input::PendingInput, renderer_session::RendererSession, rules::PauseState},
 };
 
 pub(super) const MAX_IN_FLIGHT_BUFFERS: usize = 3;
@@ -104,7 +105,14 @@ pub(crate) struct LayerShellState {
     pub(super) session: Option<RendererSession>,
     pub(super) interactive: bool,
     pub(super) render_resolution_follows_output: bool,
-    pub(super) paused: bool,
+    pub(super) pause_state: PauseState,
+    pub(super) configured_muted: bool,
+    pub(super) rule_muted: bool,
+    pub(super) applied_muted: bool,
+    pub(super) wallpaper_type: WallpaperType,
+    pub(super) media_generation: u64,
+    pub(super) audio_generation: u64,
+    pub(super) policy_generation: u64,
     pub(super) stopping: bool,
     pub(super) pending_input_events: PendingInput,
     pub(super) discovered_output_names: BTreeMap<u32, String>,
@@ -238,7 +246,7 @@ impl LayerShellState {
                 output_scale: self.output.output_scale,
                 fractional_scale: self.output.render_scale_factor(),
                 scale_mode: self.output.scale_mode,
-                paused: self.paused,
+                paused: self.pause_state.effective(),
                 viewport_width: self.output.geometry.viewport_width,
                 viewport_height: self.output.geometry.viewport_height,
                 viewport_source: self
@@ -315,7 +323,14 @@ impl LayerShellState {
             session: None,
             interactive: false,
             render_resolution_follows_output: true,
-            paused: false,
+            pause_state: PauseState::default(),
+            configured_muted: false,
+            rule_muted: false,
+            applied_muted: false,
+            wallpaper_type: WallpaperType::Unknown,
+            media_generation: 0,
+            audio_generation: 0,
+            policy_generation: 0,
             stopping: false,
             pending_input_events: PendingInput::default(),
             discovered_output_names: BTreeMap::new(),

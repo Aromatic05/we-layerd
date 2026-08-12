@@ -119,6 +119,8 @@ fn fingerprint_output_config(config: &Config, binding: &OutputBinding) -> Result
     effective.profiles = Default::default();
     effective.gnome = Default::default();
     effective.hooks = Default::default();
+    effective.integrations = Default::default();
+    effective.rules = Default::default();
 
     if let Some(playlist_name) = binding.playlist.as_deref() {
         // This worker's source comes from its own playlist cursor. A daemon-wide fallback/global
@@ -394,6 +396,7 @@ fn reconcile_live_workers(
                     match spawn_worker(
                         spec,
                         ctx.shutdown_requested.clone(),
+                        ctx.host_integrations.clone(),
                         worker_event_tx.clone(),
                     ) {
                         Ok(worker) => {
@@ -419,6 +422,7 @@ fn reconcile_live_workers(
                     match spawn_worker(
                         spec,
                         ctx.shutdown_requested.clone(),
+                        ctx.host_integrations.clone(),
                         worker_event_tx.clone(),
                     ) {
                         Ok(worker) => {
@@ -463,6 +467,7 @@ fn report_output_error(ctx: &mut BackendContext<'_>, output: &str, error: String
 fn spawn_worker(
     spec: OutputSpec,
     shutdown_requested: Arc<AtomicBool>,
+    host_integrations: crate::runtime::integrations::HostIntegrations,
     worker_event_tx: mpsc::Sender<WorkerEvent>,
 ) -> Result<OutputWorker> {
     let output_name = spec.output_name.clone();
@@ -478,6 +483,7 @@ fn spawn_worker(
     let worker_playlist_runtime = playlist_runtime.clone();
     let worker_stop_scheduler = stop_scheduler.clone();
     let worker_shutdown = shutdown_requested.clone();
+    let worker_host_integrations = host_integrations.clone();
     let worker_output = output_name.clone();
     let handle = thread::Builder::new()
         .name(format!("we-layerd-output-{output_name}"))
@@ -510,6 +516,7 @@ fn spawn_worker(
                     cfg: &config,
                     desired_cfg: worker_desired_cfg.clone(),
                     shutdown_requested: worker_shutdown.clone(),
+                    host_integrations: worker_host_integrations.clone(),
                     control_rx: &control_rx,
                     output_playlist_rx: None,
                     status_sink: &mut sink,
@@ -896,6 +903,22 @@ mod tests {
         let first = build_output_specs(&config, &["DP-1".to_string()]).expect("first specs");
 
         config.renderer.source = "/wallpapers/global-b".to_string();
+        let second = build_output_specs(&config, &["DP-1".to_string()]).expect("second specs");
+
+        assert_eq!(first["DP-1"].fingerprint, second["DP-1"].fingerprint);
+    }
+
+    #[test]
+    fn host_integration_and_rule_changes_do_not_restart_output_workers() {
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/global".to_string();
+        let first = build_output_specs(&config, &["DP-1".to_string()]).expect("first specs");
+
+        config.integrations.media = false;
+        config.integrations.audio_spectrum = true;
+        config.integrations.audio_source = "custom.monitor".to_string();
+        config.rules.focused = we_core::config::RuntimeRuleAction::Mute;
+        config.rules.fullscreen = we_core::config::RuntimeRuleAction::Pause;
         let second = build_output_specs(&config, &["DP-1".to_string()]).expect("second specs");
 
         assert_eq!(first["DP-1"].fingerprint, second["DP-1"].fingerprint);

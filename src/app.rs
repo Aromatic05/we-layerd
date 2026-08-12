@@ -35,6 +35,7 @@ use crate::{
     },
     runtime::{
         control::RuntimePhase,
+        integrations::{HostIntegrationRuntime, HostIntegrations},
         playlist::{self, AdvanceDirection, PlaylistRuntime, PlaylistSelection},
         status::RuntimeStatusSnapshot,
     },
@@ -69,6 +70,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let runtime_state = Arc::new(Mutex::new(RuntimeState::new(&cfg)));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let scheduler_stop = Arc::new(AtomicBool::new(false));
+    let mut host_runtime =
+        Some(HostIntegrationRuntime::start(desired_cfg.clone(), shutdown_requested.clone()));
+    let host_integrations = host_runtime.as_ref().expect("host integration runtime").shared.clone();
     install_runtime_ctrlc_handler(control_tx.clone(), shutdown_requested.clone())?;
 
     let status_state = runtime_state.clone();
@@ -82,6 +86,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         control_tx,
         {
             let runtime_cfg_toml = runtime_cfg_toml.clone();
+            let status_integrations = host_integrations.clone();
             move || {
                 let mut status = runtime_cfg_toml
                     .lock()
@@ -95,6 +100,8 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                     status.push_str("\n\n");
                     status.push_str(&guard.render_status_toml());
                 }
+                status.push_str("\n\n");
+                status.push_str(&status_integrations.render_status_toml());
                 status
             }
         },
@@ -390,17 +397,24 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
 
         let exit = match run_runtime_loop(
             &next_cfg,
-            desired_cfg.clone(),
-            &shutdown_requested,
-            &runtime_state,
-            generation,
-            &control_rx,
-            &output_playlist_rx,
+            RuntimeLoopInputs {
+                desired_cfg: desired_cfg.clone(),
+                shutdown_requested: &shutdown_requested,
+                runtime_state: &runtime_state,
+                generation,
+                control_rx: &control_rx,
+                output_playlist_rx: &output_playlist_rx,
+                host_integrations: host_integrations.clone(),
+            },
         ) {
             Ok(exit) => exit,
             Err(err) => {
                 if let Ok(mut state) = runtime_state.lock() {
                     state.fail(generation, err.to_string());
+                }
+                shutdown_requested.store(true, Ordering::Relaxed);
+                if let Some(runtime) = host_runtime.take() {
+                    runtime.shutdown();
                 }
                 return Err(err);
             }
@@ -414,10 +428,15 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         match exit {
             RuntimeLoopExit::Stop => {
                 scheduler_stop.store(true, Ordering::Relaxed);
+                shutdown_requested.store(true, Ordering::Relaxed);
                 break;
             }
             RuntimeLoopExit::RestartCurrent | RuntimeLoopExit::Reconfigure => continue,
         }
+    }
+
+    if let Some(runtime) = host_runtime.take() {
+        runtime.shutdown();
     }
 
     Ok(())
@@ -670,15 +689,26 @@ fn update_runtime_snapshot(
     }
 }
 
-fn run_runtime_loop(
-    cfg: &Config,
+struct RuntimeLoopInputs<'a> {
     desired_cfg: Arc<Mutex<Config>>,
-    shutdown_requested: &Arc<AtomicBool>,
-    runtime_state: &Arc<Mutex<RuntimeState>>,
+    shutdown_requested: &'a Arc<AtomicBool>,
+    runtime_state: &'a Arc<Mutex<RuntimeState>>,
     generation: u64,
-    control_rx: &mpsc::Receiver<ControlCommand>,
-    output_playlist_rx: &mpsc::Receiver<ipc::OutputPlaylistRequest>,
-) -> Result<RuntimeLoopExit> {
+    control_rx: &'a mpsc::Receiver<ControlCommand>,
+    output_playlist_rx: &'a mpsc::Receiver<ipc::OutputPlaylistRequest>,
+    host_integrations: HostIntegrations,
+}
+
+fn run_runtime_loop(cfg: &Config, inputs: RuntimeLoopInputs<'_>) -> Result<RuntimeLoopExit> {
+    let RuntimeLoopInputs {
+        desired_cfg,
+        shutdown_requested,
+        runtime_state,
+        generation,
+        control_rx,
+        output_playlist_rx,
+        host_integrations,
+    } = inputs;
     let mut cfg = cfg.clone();
     cfg.renderer.options_json = Some(we_core::config::merge_scene_source_options(
         cfg.renderer.options_json.as_deref(),
@@ -757,6 +787,7 @@ fn run_runtime_loop(
         cfg: &cfg,
         desired_cfg,
         shutdown_requested: shutdown_requested.clone(),
+        host_integrations,
         control_rx,
         output_playlist_rx: Some(output_playlist_rx),
         status_sink: &mut status_sink,
@@ -1149,8 +1180,19 @@ mod tests {
         let (_output_tx, output_rx) = std::sync::mpsc::channel();
         let stop = std::sync::Arc::new(AtomicBool::new(false));
 
-        let err = super::run_runtime_loop(&cfg, desired, &stop, &state, 1, &rx, &output_rx)
-            .expect_err("missing source should fail");
+        let err = super::run_runtime_loop(
+            &cfg,
+            super::RuntimeLoopInputs {
+                desired_cfg: desired,
+                shutdown_requested: &stop,
+                runtime_state: &state,
+                generation: 1,
+                control_rx: &rx,
+                output_playlist_rx: &output_rx,
+                host_integrations: crate::runtime::integrations::HostIntegrations::default(),
+            },
+        )
+        .expect_err("missing source should fail");
 
         assert_eq!(
             err.to_string(),
@@ -1176,8 +1218,19 @@ mod tests {
         let (_output_tx, output_rx) = std::sync::mpsc::channel();
         let stop = std::sync::Arc::new(AtomicBool::new(false));
 
-        let err = super::run_runtime_loop(&cfg, desired, &stop, &state, 1, &rx, &output_rx)
-            .expect_err("invalid options_json should fail");
+        let err = super::run_runtime_loop(
+            &cfg,
+            super::RuntimeLoopInputs {
+                desired_cfg: desired,
+                shutdown_requested: &stop,
+                runtime_state: &state,
+                generation: 1,
+                control_rx: &rx,
+                output_playlist_rx: &output_rx,
+                host_integrations: crate::runtime::integrations::HostIntegrations::default(),
+            },
+        )
+        .expect_err("invalid options_json should fail");
 
         assert!(err.to_string().contains("renderer.options_json must be valid JSON"));
     }

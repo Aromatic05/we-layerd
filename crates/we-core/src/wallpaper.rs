@@ -85,6 +85,10 @@ fn parse_project_json(path: &Path) -> Result<ProjectJson> {
     Ok(parsed)
 }
 
+pub fn wallpaper_type_from_source(source: &Path) -> Result<WallpaperType> {
+    Ok(parse_type(&parse_project_json(&source.join("project.json"))?.r#type))
+}
+
 fn parse_type(value: &str) -> WallpaperType {
     match value.to_ascii_lowercase().as_str() {
         "video" => WallpaperType::Video,

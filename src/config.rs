@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use we_core::{
-    config::{HooksConfig, OutputBinding},
+    config::{HooksConfig, IntegrationsConfig, OutputBinding, RuntimeRulesConfig},
     playlist::PlaylistConfig,
     profile::ProfileConfig,
     wallpaper::settings::{WallpaperFillMode, WallpaperSettings},
@@ -29,6 +29,10 @@ pub struct Config {
     pub outputs: BTreeMap<String, OutputBinding>,
     #[serde(default)]
     pub profiles: ProfileConfig,
+    #[serde(default)]
+    pub integrations: IntegrationsConfig,
+    #[serde(default)]
+    pub rules: RuntimeRulesConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

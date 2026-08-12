@@ -480,7 +480,7 @@ pub(super) fn present_frame(
 
 pub(super) fn begin_stop_teardown(state: &mut LayerShellState) -> Result<()> {
     state.stopping = true;
-    state.paused = true;
+    state.pause_state.set_manual(true);
     state.frame_callback.pending = false;
     state.frame_callback.ready_for_next_frame = false;
     state.objects.frame_callback = None;

@@ -11,6 +11,7 @@ use thiserror::Error;
 pub const WE_SOURCE_V1_VERSION: u32 = 1;
 pub const WE_RENDER_CONFIG_V1_VERSION: u32 = 1;
 pub const WE_RUNTIME_SETTINGS_V1_VERSION: u32 = 1;
+pub const WE_MEDIA_STATE_V1_VERSION: u32 = 1;
 pub const WE_FRAME_V1_VERSION: u32 = 1;
 pub const WE_INPUT_EVENT_V2_VERSION: u32 = 2;
 
@@ -140,6 +141,33 @@ pub struct we_runtime_settings_v1 {
     pub fill_mode: we_fill_mode_v1,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct we_media_state_v1 {
+    pub size: u32,
+    pub version: u32,
+    pub playback_state: i32,
+    pub has_thumbnail: bool,
+    pub primary_color: [f32; 3],
+    pub secondary_color: [f32; 3],
+    pub tertiary_color: [f32; 3],
+    pub text_color: [f32; 3],
+    pub high_contrast_color: [f32; 3],
+    pub title: *const c_char,
+    pub artist: *const c_char,
+    pub album_title: *const c_char,
+    pub album_artist: *const c_char,
+    pub sub_title: *const c_char,
+    pub genres: *const c_char,
+    pub content_type: *const c_char,
+    pub thumbnail_width: u32,
+    pub thumbnail_height: u32,
+    pub thumbnail_rgba: *const u8,
+    pub previous_thumbnail_width: u32,
+    pub previous_thumbnail_height: u32,
+    pub previous_thumbnail_rgba: *const u8,
+}
+
 type WeSessionCreate = unsafe extern "C" fn() -> *mut we_session_t;
 type WeSessionCreateWithCachePath = unsafe extern "C" fn(*const c_char) -> *mut we_session_t;
 type WeSessionDestroy = unsafe extern "C" fn(*mut we_session_t);
@@ -152,6 +180,9 @@ type WeSessionResizeOutput = unsafe extern "C" fn(*mut we_session_t, u32, u32) -
 type WeSessionSetUserPropertiesJson = unsafe extern "C" fn(*mut we_session_t, *const c_char) -> i32;
 type WeSessionApplyRuntimeSettings =
     unsafe extern "C" fn(*mut we_session_t, *const we_runtime_settings_v1) -> i32;
+type WeSessionSetMediaState =
+    unsafe extern "C" fn(*mut we_session_t, *const we_media_state_v1) -> i32;
+type WeSessionPushAudioSamples = unsafe extern "C" fn(*mut we_session_t, *const f32, u32) -> i32;
 type WeSessionGetDiagnosticsJson =
     unsafe extern "C" fn(*mut we_session_t, *mut c_char, *mut u32) -> i32;
 type WeSessionPlayback = unsafe extern "C" fn(*mut we_session_t) -> i32;
@@ -178,6 +209,8 @@ pub struct RendererLibrary {
     we_session_resize_output: WeSessionResizeOutput,
     we_session_set_user_properties_json: WeSessionSetUserPropertiesJson,
     we_session_apply_runtime_settings: WeSessionApplyRuntimeSettings,
+    we_session_set_media_state: Option<WeSessionSetMediaState>,
+    we_session_push_audio_samples: Option<WeSessionPushAudioSamples>,
     we_session_get_diagnostics_json: Option<WeSessionGetDiagnosticsJson>,
     we_session_play: WeSessionPlayback,
     we_session_pause: WeSessionPlayback,
@@ -220,6 +253,18 @@ impl RendererLibrary {
         let we_session_apply_runtime_settings = unsafe {
             *library.get::<WeSessionApplyRuntimeSettings>(b"we_session_apply_runtime_settings\0")?
         };
+        let we_session_set_media_state = unsafe {
+            library
+                .get::<WeSessionSetMediaState>(b"we_session_set_media_state\0")
+                .ok()
+                .map(|symbol| *symbol)
+        };
+        let we_session_push_audio_samples = unsafe {
+            library
+                .get::<WeSessionPushAudioSamples>(b"we_session_push_audio_samples\0")
+                .ok()
+                .map(|symbol| *symbol)
+        };
         let we_session_get_diagnostics_json = unsafe {
             library
                 .get::<WeSessionGetDiagnosticsJson>(b"we_session_get_diagnostics_json\0")
@@ -250,6 +295,8 @@ impl RendererLibrary {
             we_session_resize_output,
             we_session_set_user_properties_json,
             we_session_apply_runtime_settings,
+            we_session_set_media_state,
+            we_session_push_audio_samples,
             we_session_get_diagnostics_json,
             we_session_play,
             we_session_pause,
@@ -260,6 +307,14 @@ impl RendererLibrary {
             we_frame_release,
             we_session_send_input_event,
         })
+    }
+
+    pub fn supports_media_state(&self) -> bool {
+        self.we_session_set_media_state.is_some()
+    }
+
+    pub fn supports_audio_samples(&self) -> bool {
+        self.we_session_push_audio_samples.is_some()
     }
 
     /// # Safety
@@ -340,6 +395,27 @@ impl RendererLibrary {
     }
 
     /// # Safety
+    pub unsafe fn session_set_media_state(
+        &self,
+        session: *mut we_session_t,
+        media_state: *const we_media_state_v1,
+    ) -> Option<i32> {
+        self.we_session_set_media_state.map(|function| function(session, media_state))
+    }
+
+    /// # Safety
+    ///
+    /// `samples` must be null when `count` is zero or point to at least `count` contiguous floats.
+    pub unsafe fn session_push_audio_samples(
+        &self,
+        session: *mut we_session_t,
+        samples: *const f32,
+        count: u32,
+    ) -> Option<i32> {
+        self.we_session_push_audio_samples.map(|function| function(session, samples, count))
+    }
+
+    /// # Safety
     ///
     /// `inout_size` must be valid for writes. When `buffer` is non-null it must point to at least
     /// the number of bytes supplied in `*inout_size`.
@@ -406,8 +482,8 @@ impl RendererLibrary {
 #[cfg(test)]
 mod tests {
     use super::{
-        we_frame_v1, we_input_event_v2, we_render_config_v1, we_runtime_settings_v1, we_source_v1,
-        RendererLibrary,
+        we_frame_v1, we_input_event_v2, we_media_state_v1, we_render_config_v1,
+        we_runtime_settings_v1, we_source_v1, RendererLibrary,
     };
     use std::mem::{align_of, offset_of, size_of};
 
@@ -429,6 +505,14 @@ mod tests {
         assert_eq!(size_of::<we_runtime_settings_v1>(), 32);
         assert_eq!(align_of::<we_runtime_settings_v1>(), 4);
         assert_eq!(offset_of!(we_runtime_settings_v1, fill_mode), 28);
+
+        assert_eq!(size_of::<we_media_state_v1>(), 168);
+        assert_eq!(align_of::<we_media_state_v1>(), 8);
+        assert_eq!(offset_of!(we_media_state_v1, playback_state), 8);
+        assert_eq!(offset_of!(we_media_state_v1, primary_color), 16);
+        assert_eq!(offset_of!(we_media_state_v1, title), 80);
+        assert_eq!(offset_of!(we_media_state_v1, thumbnail_rgba), 144);
+        assert_eq!(offset_of!(we_media_state_v1, previous_thumbnail_rgba), 160);
 
         assert_eq!(size_of::<we_frame_v1>(), 112);
         assert_eq!(align_of::<we_frame_v1>(), 8);

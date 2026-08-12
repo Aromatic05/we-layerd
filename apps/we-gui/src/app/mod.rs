@@ -66,6 +66,12 @@ mod tests {
             fps_limit: "144".to_string(),
             show_fps: true,
             scale_mode: ScaleModeOption::Stretch,
+            media_integration: true,
+            audio_spectrum: false,
+            audio_source: "@DEFAULT_MONITOR@".to_string(),
+            rule_focused: we_core::config::RuntimeRuleAction::Keep,
+            rule_maximized: we_core::config::RuntimeRuleAction::Mute,
+            rule_fullscreen: we_core::config::RuntimeRuleAction::Pause,
         }
     }
 
