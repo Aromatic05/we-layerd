@@ -450,26 +450,78 @@ struct IntegrationIoWorker {
     handle: thread::JoinHandle<()>,
 }
 
-impl IntegrationIoWorker {
-    fn retire(self, retired: &mut Vec<thread::JoinHandle<()>>) {
-        self.cancel.store(true, Ordering::Relaxed);
-        if self.handle.is_finished() {
-            let _ = self.handle.join();
-        } else {
-            retired.push(self.handle);
-        }
+enum ManagedIntegrationWorker {
+    Active(IntegrationIoWorker),
+    Retiring(thread::JoinHandle<()>),
+}
+
+struct IntegrationWorkerGate<T> {
+    worker: Option<ManagedIntegrationWorker>,
+    pending: Option<T>,
+}
+
+impl<T> Default for IntegrationWorkerGate<T> {
+    fn default() -> Self {
+        Self { worker: None, pending: None }
     }
 }
 
-fn reap_finished_workers(retired: &mut Vec<thread::JoinHandle<()>>) {
-    let mut index = 0;
-    while index < retired.len() {
-        if retired[index].is_finished() {
-            let handle = retired.swap_remove(index);
-            let _ = handle.join();
-        } else {
-            index += 1;
+impl<T> IntegrationWorkerGate<T> {
+    fn set_active(&mut self, worker: IntegrationIoWorker) {
+        debug_assert!(self.worker.is_none());
+        self.worker = Some(ManagedIntegrationWorker::Active(worker));
+    }
+
+    fn request(&mut self, pending: Option<T>) {
+        self.pending = pending;
+        let Some(worker) = self.worker.take() else {
+            return;
+        };
+
+        match worker {
+            ManagedIntegrationWorker::Active(worker) => {
+                worker.cancel.store(true, Ordering::Relaxed);
+                if worker.handle.is_finished() {
+                    let _ = worker.handle.join();
+                } else {
+                    self.worker = Some(ManagedIntegrationWorker::Retiring(worker.handle));
+                }
+            }
+            ManagedIntegrationWorker::Retiring(handle) => {
+                self.worker = Some(ManagedIntegrationWorker::Retiring(handle));
+            }
         }
+    }
+
+    fn reap(&mut self) {
+        let finished = match self.worker.as_ref() {
+            Some(ManagedIntegrationWorker::Active(worker)) => worker.handle.is_finished(),
+            Some(ManagedIntegrationWorker::Retiring(handle)) => handle.is_finished(),
+            None => false,
+        };
+        if !finished {
+            return;
+        }
+
+        let worker = self.worker.take().expect("finished worker exists");
+        match worker {
+            ManagedIntegrationWorker::Active(worker) => {
+                let _ = worker.handle.join();
+            }
+            ManagedIntegrationWorker::Retiring(handle) => {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    fn take_startable(&mut self) -> Option<T> {
+        self.reap();
+        self.worker.is_none().then(|| self.pending.take()).flatten()
+    }
+
+    fn shutdown(&mut self) {
+        self.request(None);
+        self.reap();
     }
 }
 
@@ -640,22 +692,22 @@ fn spawn_media_collector(
         .spawn(move || {
             let (event_tx, event_rx) = mpsc::channel::<MediaWorkerEvent>();
             let mut supervisor = MediaSupervisorState::default();
-            let mut active_worker: Option<IntegrationIoWorker> = None;
-            let mut retired_workers = Vec::new();
+            let mut workers = IntegrationWorkerGate::<u64>::default();
             while !shutdown.load(Ordering::Relaxed) {
-                reap_finished_workers(&mut retired_workers);
+                workers.reap();
                 let enabled =
                     desired_cfg.lock().map(|config| config.integrations.media).unwrap_or(false);
                 let previous_generation = supervisor.generation;
                 let start_generation = supervisor.reconcile(enabled, Instant::now(), &shared);
                 if supervisor.generation != previous_generation {
-                    if let Some(worker) = active_worker.take() {
-                        worker.retire(&mut retired_workers);
-                    }
+                    workers.request(start_generation);
                 }
-                if let Some(generation) = start_generation {
-                    active_worker =
-                        Some(spawn_media_io_worker(generation, event_tx.clone(), shutdown.clone()));
+                if let Some(generation) = workers.take_startable() {
+                    workers.set_active(spawn_media_io_worker(
+                        generation,
+                        event_tx.clone(),
+                        shutdown.clone(),
+                    ));
                 }
 
                 if let Ok(event) = event_rx.recv_timeout(INTEGRATION_SUPERVISOR_POLL) {
@@ -667,17 +719,17 @@ fn spawn_media_collector(
                 if let Some(generation) =
                     supervisor.expire_if_stale(Instant::now(), MEDIA_STALE_AFTER, &shared)
                 {
-                    if let Some(worker) = active_worker.take() {
-                        worker.retire(&mut retired_workers);
-                    }
-                    active_worker =
-                        Some(spawn_media_io_worker(generation, event_tx.clone(), shutdown.clone()));
+                    workers.request(Some(generation));
+                }
+                if let Some(generation) = workers.take_startable() {
+                    workers.set_active(spawn_media_io_worker(
+                        generation,
+                        event_tx.clone(),
+                        shutdown.clone(),
+                    ));
                 }
             }
-            if let Some(worker) = active_worker {
-                worker.retire(&mut retired_workers);
-            }
-            reap_finished_workers(&mut retired_workers);
+            workers.shutdown();
         })
         .expect("failed to spawn MPRIS collector")
 }
@@ -692,10 +744,9 @@ fn spawn_audio_collector(
         .spawn(move || {
             let (event_tx, event_rx) = mpsc::channel::<AudioWorkerEvent>();
             let mut supervisor = AudioSupervisorState::default();
-            let mut active_worker: Option<IntegrationIoWorker> = None;
-            let mut retired_workers = Vec::new();
+            let mut workers = IntegrationWorkerGate::<(u64, AudioWorkerSpec)>::default();
             while !shutdown.load(Ordering::Relaxed) {
-                reap_finished_workers(&mut retired_workers);
+                workers.reap();
                 let integration = desired_cfg
                     .lock()
                     .map(|config| config.integrations.clone())
@@ -703,12 +754,10 @@ fn spawn_audio_collector(
                 let previous_generation = supervisor.generation;
                 let start = supervisor.reconcile(&integration, Instant::now(), &shared);
                 if supervisor.generation != previous_generation {
-                    if let Some(worker) = active_worker.take() {
-                        worker.retire(&mut retired_workers);
-                    }
+                    workers.request(start);
                 }
-                if let Some((generation, spec)) = start {
-                    active_worker = Some(spawn_audio_io_worker(
+                if let Some((generation, spec)) = workers.take_startable() {
+                    workers.set_active(spawn_audio_io_worker(
                         generation,
                         spec,
                         event_tx.clone(),
@@ -725,10 +774,10 @@ fn spawn_audio_collector(
                 if let Some((generation, spec)) =
                     supervisor.expire_if_stale(Instant::now(), AUDIO_STALE_AFTER, &shared)
                 {
-                    if let Some(worker) = active_worker.take() {
-                        worker.retire(&mut retired_workers);
-                    }
-                    active_worker = Some(spawn_audio_io_worker(
+                    workers.request(Some((generation, spec)));
+                }
+                if let Some((generation, spec)) = workers.take_startable() {
+                    workers.set_active(spawn_audio_io_worker(
                         generation,
                         spec,
                         event_tx.clone(),
@@ -736,10 +785,7 @@ fn spawn_audio_collector(
                     ));
                 }
             }
-            if let Some(worker) = active_worker {
-                worker.retire(&mut retired_workers);
-            }
-            reap_finished_workers(&mut retired_workers);
+            workers.shutdown();
         })
         .expect("failed to spawn audio spectrum collector")
 }
@@ -813,7 +859,8 @@ mod tests {
 
     use super::{
         AudioSupervisorState, AudioWorkerEvent, HostIntegrationRuntime, HostIntegrations,
-        MediaSupervisorState, MediaWorkerEvent, AUDIO_SPECTRUM_BINS,
+        IntegrationIoWorker, IntegrationWorkerGate, ManagedIntegrationWorker, MediaSupervisorState,
+        MediaWorkerEvent, AUDIO_SPECTRUM_BINS,
     };
     use crate::runtime::{
         media::{MediaCandidate, MediaPlaybackState},
@@ -1046,6 +1093,41 @@ mod tests {
             "runtime shutdown must not depend on a blocking host collector returning"
         );
         assert!(shutdown_requested.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn worker_gate_coalesces_replacements_until_the_old_worker_exits() {
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker = IntegrationIoWorker {
+            cancel: cancel.clone(),
+            handle: thread::spawn(move || {
+                let _ = release_rx.recv();
+            }),
+        };
+        let mut gate = IntegrationWorkerGate::<u64>::default();
+        gate.set_active(worker);
+
+        gate.request(Some(1));
+        gate.request(Some(2));
+        gate.request(Some(3));
+
+        assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(matches!(gate.worker, Some(ManagedIntegrationWorker::Retiring(_))));
+        assert_eq!(gate.pending, Some(3));
+        assert_eq!(gate.take_startable(), None);
+
+        let _ = release_tx.send(());
+        for _ in 0..100 {
+            gate.reap();
+            if gate.worker.is_none() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(gate.worker.is_none());
+        assert_eq!(gate.take_startable(), Some(3));
     }
 
     #[test]
