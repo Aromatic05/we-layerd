@@ -43,6 +43,7 @@ use crate::{
 
 pub fn run(config_path: Option<&Path>) -> Result<()> {
     let mut cfg = Config::load(config_path)?;
+    resolve_renderer_assets_path(&mut cfg, we_core::steam::discover_wallpaper_engine_path)?;
     let playlist_state_path = playlist::state_path_for_config(config_path);
     let now = Instant::now();
     let mut playlist_runtime =
@@ -134,6 +135,10 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let switch_tx = switch_tx.clone();
             move |config_path| {
                 let mut next_cfg = Config::load(Some(config_path))?;
+                resolve_renderer_assets_path(
+                    &mut next_cfg,
+                    we_core::steam::discover_wallpaper_engine_path,
+                )?;
                 let now = Instant::now();
                 if let Ok(mut runtime) = playlist_runtime.lock() {
                     runtime.configure(next_cfg.playlists.clone(), now);
@@ -716,15 +721,6 @@ fn run_runtime_loop(cfg: &Config, inputs: RuntimeLoopInputs<'_>) -> Result<Runti
         cfg.general.force_scene_audio_loop,
     )?);
     cfg.renderer.validate_options_json()?;
-    if cfg.renderer.assets_path.trim().is_empty() {
-        cfg.renderer.assets_path = we_core::steam::discover_wallpaper_engine_path()
-            .map(|p| p.join("assets").display().to_string())
-            .ok_or_else(|| {
-                anyhow!(
-                    "renderer.assets_path is empty and Wallpaper Engine assets directory was not found; set assets_path in config"
-                )
-            })?;
-    }
 
     if shutdown_requested.load(Ordering::Relaxed) {
         return Ok(RuntimeLoopExit::Stop);
@@ -792,6 +788,22 @@ fn run_runtime_loop(cfg: &Config, inputs: RuntimeLoopInputs<'_>) -> Result<Runti
         output_playlist_rx: Some(output_playlist_rx),
         status_sink: &mut status_sink,
     })
+}
+
+fn resolve_renderer_assets_path(
+    cfg: &mut Config,
+    discover: impl FnOnce() -> Option<PathBuf>,
+) -> Result<()> {
+    if cfg.renderer.assets_path.trim().is_empty() {
+        cfg.renderer.assets_path = discover()
+            .map(|path| path.join("assets").display().to_string())
+            .ok_or_else(|| {
+                anyhow!(
+                    "renderer.assets_path is empty and Wallpaper Engine assets directory was not found; set assets_path in config"
+                )
+            })?;
+    }
+    Ok(())
 }
 
 fn handle_runtime_control_command(
@@ -1045,7 +1057,7 @@ mod tests {
 
     use super::{
         handle_runtime_control_command, persist_output_binding_change, request_runtime_shutdown,
-        update_playlist_active_config, RuntimePhase, RuntimeState,
+        resolve_renderer_assets_path, update_playlist_active_config, RuntimePhase, RuntimeState,
     };
     use crate::{
         config::Config,
@@ -1056,6 +1068,25 @@ mod tests {
     fn temp_config_path(label: &str) -> std::path::PathBuf {
         let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
         std::env::temp_dir().join(format!("we-layerd-{label}-{}-{suffix}.toml", std::process::id()))
+    }
+
+    #[test]
+    fn runtime_resolves_assets_before_output_workers_clone_config() {
+        let mut cfg = Config::default();
+        cfg.outputs.insert(
+            "DP-1".to_string(),
+            we_core::config::OutputBinding::wallpaper("42", "/workshop/42"),
+        );
+
+        resolve_renderer_assets_path(&mut cfg, || Some("/steam/wallpaper_engine".into()))
+            .expect("resolve renderer assets path");
+
+        let specs = crate::backend::layer_shell::orchestrator::build_output_specs(
+            &cfg,
+            &["DP-1".to_string()],
+        )
+        .expect("build output specs");
+        assert_eq!(specs["DP-1"].config.renderer.assets_path, "/steam/wallpaper_engine/assets");
     }
 
     #[test]
