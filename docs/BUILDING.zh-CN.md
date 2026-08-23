@@ -12,7 +12,7 @@ sudo pacman -S --needed \
   wayland wayland-protocols libxkbcommon \
   gtk3 xdotool \
   vulkan-headers vulkan-icd-loader mesa libglvnd \
-  gstreamer gst-plugins-base-libs \
+  gstreamer gst-libav gst-plugins-base-libs gst-plugins-bad-libs gst-plugins-good \
   lz4 pango fontconfig freetype2 \
   directx-shader-compiler cef
 ```
