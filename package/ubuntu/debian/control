@@ -19,6 +19,7 @@ Build-Depends:
  libgtk-3-dev,
  liblz4-dev,
  libpango1.0-dev,
+ libpulse-dev,
  libva-dev,
  libvulkan-dev,
  libwayland-dev,

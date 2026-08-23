@@ -36,6 +36,7 @@ BuildRequires:  mesa-libGL-devel
 BuildRequires:  pango-devel
 BuildRequires:  patchelf
 BuildRequires:  pkgconf-pkg-config
+BuildRequires:  pulseaudio-libs-devel
 BuildRequires:  rust
 BuildRequires:  vulkan-headers
 BuildRequires:  vulkan-loader-devel

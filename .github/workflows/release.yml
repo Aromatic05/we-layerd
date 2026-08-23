@@ -106,7 +106,7 @@ jobs:
           apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
             binutils build-essential bzip2 ca-certificates cmake curl debhelper \
             devscripts dpkg-dev fakeroot file git libasound2-dev libdrm-dev \
-            libfontconfig1-dev libfreetype-dev libgl-dev \
+            libfontconfig1-dev libfreetype-dev libgl-dev libpulse-dev \
             libgstreamer-plugins-bad1.0-dev libgstreamer-plugins-base1.0-dev \
             libgstreamer1.0-dev libgtk-3-dev liblz4-dev libpango1.0-dev \
             libva-dev libvulkan-dev libwayland-dev libxdo-dev \
@@ -380,7 +380,7 @@ jobs:
             gstreamer1-plugins-base-devel gtk3-devel libatomic libdrm-devel \
             libva-devel libxdo-devel libxkbcommon-devel lz4-devel \
             mesa-libGL-devel pango-devel patchelf pkgconf-pkg-config \
-            rpm-build rust tar vulkan-headers vulkan-loader-devel \
+            pulseaudio-libs-devel rpm-build rust tar vulkan-headers vulkan-loader-devel \
             wayland-devel wayland-protocols-devel xz
 
       - name: Check out source and submodules
@@ -454,8 +454,19 @@ jobs:
           cargo --version
           rpmbuild --version
 
+      - name: Fetch locked Rust dependencies
+        shell: bash
+        env:
+          CARGO_NET_RETRY: "10"
+          CARGO_HTTP_TIMEOUT: "60"
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 8m cargo fetch --locked
+
       - name: Build RPM and SRPM
         shell: bash
+        env:
+          CARGO_NET_OFFLINE: "true"
         run: package/fedora/build.sh
 
       - name: Verify package artifacts
