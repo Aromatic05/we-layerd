@@ -140,6 +140,7 @@ impl Drop for App {
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     AutoScan,
+    RefreshLibrary,
     ScanCompleted(u64, Result<Vec<WallpaperEntry>, String>),
     GifLoaded { generation: u64, path: PathBuf, result: Result<Vec<GifFrame>, String> },
     GifTick,

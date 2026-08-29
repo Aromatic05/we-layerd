@@ -154,6 +154,7 @@ impl fmt::Display for Language {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Text {
     Wallpapers,
+    RefreshLibrary,
     SearchWallpapers,
     NoMatchingWallpapers,
     OpenSettings,
