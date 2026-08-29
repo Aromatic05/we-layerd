@@ -777,10 +777,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
     }
 }
 
-fn exit_application(app: &mut App) -> Task<Message> {
-    if !app.shutdown_runtime() {
-        eprintln!("failed to stop daemon while exiting we-gui");
-    }
+fn exit_application(_app: &mut App) -> Task<Message> {
     iced::exit()
 }
 

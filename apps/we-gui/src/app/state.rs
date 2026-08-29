@@ -131,12 +131,6 @@ impl App {
     }
 }
 
-impl Drop for App {
-    fn drop(&mut self) {
-        let _ = self.shutdown_runtime();
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     AutoScan,

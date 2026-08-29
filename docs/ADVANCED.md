@@ -41,8 +41,10 @@ That persistence currently applies to the global playlist runtime. Output-scoped
 own independent in-memory cursors and timers.
 
 The GUI **Playlists** sidebar controls these commands directly. Closing the wallpaper library window
-does not drive playlist timing: progression remains daemon-owned. GUI playlist edits are persisted in
-the normal configuration and a running edited playlist is reloaded by the daemon.
+does not drive playlist timing: progression remains daemon-owned. Exiting `we-gui`, including the
+tray **Quit** action, also leaves the daemon running; use the GUI **Stop** action or `we-layerd ctl
+stop` when the wallpaper runtime should stop. GUI playlist edits are persisted in the normal
+configuration and a running edited playlist is reloaded by the daemon.
 
 Other commands:
 ```bash

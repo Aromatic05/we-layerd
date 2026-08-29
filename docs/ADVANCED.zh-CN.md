@@ -38,6 +38,9 @@ we-layerd playlist stop --output DP-1
 全局播放列表位置会在守护进程重启后恢复；per-output 播放列表各自维护独立的内存
 cursor 与计时器。
 
+退出 `we-gui`（包括托盘中的“退出”操作）不会停止守护进程；需要停止壁纸时，请使用 GUI
+中的“停止”操作或执行 `we-layerd ctl stop`。
+
 其他命令：
 ```bash
 we-layerd doctor

@@ -197,7 +197,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn dropping_gui_stops_layerd() {
+    fn exiting_gui_keeps_layerd_running() {
         let _lock = ENV_LOCK.lock().expect("environment lock");
         let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
         let temp = std::env::temp_dir().join(format!("we-gui-exit-{suffix}"));
@@ -215,7 +215,7 @@ mod tests {
         std::env::set_var("PATH", &temp);
         std::env::set_var("WE_GUI_TEST_LOG", &log);
 
-        let app = App {
+        let mut app = App {
             entries: Vec::new(),
             selected_id: None,
             selected_schema: UserPropertySchema { entries: Vec::new() },
@@ -272,6 +272,7 @@ mod tests {
             legacy_shuffle: legacy_shuffle(),
             playlist_migration_completed: true,
         };
+        let _task = update::update(&mut app, Message::ExitRequested);
         drop(app);
 
         match old_path {
@@ -283,8 +284,11 @@ mod tests {
             None => std::env::remove_var("WE_GUI_TEST_LOG"),
         }
 
-        let commands = fs::read_to_string(&log).expect("read fake command log");
-        assert!(commands.lines().any(|line| line == "ctl stop"));
+        let commands = fs::read_to_string(&log).unwrap_or_default();
+        assert!(
+            commands.trim().is_empty(),
+            "GUI exit must not stop the daemon, got commands: {commands:?}"
+        );
         fs::remove_dir_all(temp).expect("remove test directory");
     }
 
