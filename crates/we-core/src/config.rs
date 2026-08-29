@@ -167,6 +167,9 @@ pub struct RendererConfig {
     pub allow_shm_fallback: bool,
     #[serde(default = "default_renderer_fps")]
     pub fps: u32,
+    /// Hard upper bound applied to every wallpaper profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_fps: Option<u32>,
     #[serde(default = "default_renderer_speed")]
     pub speed: f32,
     #[serde(default = "default_renderer_volume")]
@@ -277,6 +280,7 @@ impl Default for RendererConfig {
             prefer_dmabuf: default_prefer_dmabuf(),
             allow_shm_fallback: default_allow_shm_fallback(),
             fps: default_renderer_fps(),
+            max_fps: None,
             speed: default_renderer_speed(),
             volume: default_renderer_volume(),
             muted: false,
@@ -353,6 +357,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.renderer.prefer_dmabuf = settings.prefer_dmabuf;
     cfg.renderer.allow_shm_fallback = settings.allow_shm_fallback;
     cfg.renderer.fps = settings.fps_limit.clamp(1, 360);
+    cfg.renderer.max_fps = Some(settings.fps_limit.clamp(1, 360));
     cfg.renderer.msaa_samples = settings.msaa_samples.max(1);
     cfg.renderer.options_json = settings.options_json.clone();
     cfg.hooks = settings.hooks.clone();
@@ -378,7 +383,8 @@ pub fn build_config_for_wallpaper(
             msaa_samples: settings.msaa_samples.max(1),
             ..WallpaperSettings::default()
         });
-    config.renderer.fps = wallpaper.fps.clamp(1, 360);
+    let fps_limit = config.renderer.max_fps.unwrap_or(settings.fps_limit).clamp(1, 360);
+    config.renderer.fps = wallpaper.fps.min(fps_limit).clamp(1, 360);
     config.renderer.speed = wallpaper.speed;
     config.renderer.volume = wallpaper.volume;
     config.renderer.muted = wallpaper.muted;
@@ -435,7 +441,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         prefer_dmabuf: cfg.renderer.prefer_dmabuf,
         allow_shm_fallback: cfg.renderer.allow_shm_fallback,
         interactive: cfg.general.interactive,
-        fps_limit: cfg.renderer.fps.max(1),
+        fps_limit: cfg.renderer.max_fps.unwrap_or(cfg.renderer.fps).clamp(1, 360),
         msaa_samples: cfg.renderer.msaa_samples.max(1),
         show_fps: cfg.general.show_fps,
         scale_mode: cfg.general.scale_mode,
@@ -810,7 +816,7 @@ mod tests {
 
     #[test]
     fn build_config_for_wallpaper_uses_only_the_selected_wallpaper_profile() {
-        let mut settings = LaunchSettings::default();
+        let mut settings = LaunchSettings { fps_limit: 144, ..LaunchSettings::default() };
         let mut user_properties = std::collections::BTreeMap::new();
         user_properties.insert("language".to_string(), serde_json::json!("3"));
         settings.wallpapers.insert(
@@ -853,6 +859,22 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn build_config_for_wallpaper_clamps_profile_fps_to_global_limit() {
+        let mut settings = LaunchSettings { fps_limit: 30, ..LaunchSettings::default() };
+        settings.wallpapers.insert(
+            "alpha".to_string(),
+            WallpaperSettings { fps: 144, ..WallpaperSettings::default() },
+        );
+
+        let cfg =
+            build_config_for_wallpaper(&settings, "alpha", Path::new("/tmp/alpha/project.json"))
+                .expect("wallpaper config");
+
+        assert_eq!(cfg.renderer.fps, 30);
+        assert_eq!(cfg.renderer.max_fps, Some(30));
     }
 
     #[test]

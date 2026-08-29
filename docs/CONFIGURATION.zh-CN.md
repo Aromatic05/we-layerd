@@ -54,6 +54,7 @@ muted = false
 - `prefer_dmabuf`：优先使用 DMA-BUF
 - `allow_shm_fallback`：DMA-BUF 不可用时允许退回 SHM
 - `fps`：传给 renderer 的目标更新频率
+- `max_fps`：所有壁纸 profile 的全局上限；单壁纸的 `fps` 不能超过它
 - `speed`、`volume`、`muted`：直接传给 renderer ABI 的 source 参数
 
 当前 DMA-BUF 协商范围：
