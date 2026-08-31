@@ -3,6 +3,7 @@ use super::Text;
 pub(super) fn text(key: Text) -> &'static str {
     match key {
         Text::Wallpapers => "Wallpapers",
+        Text::RefreshLibrary => "Refresh",
         Text::SearchWallpapers => "Search wallpapers",
         Text::NoMatchingWallpapers => "No wallpapers match your search and filters.",
         Text::OpenSettings => "Open settings",

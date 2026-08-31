@@ -3,6 +3,7 @@ use super::Text;
 pub(super) fn text(key: Text) -> &'static str {
     match key {
         Text::Wallpapers => "壁纸",
+        Text::RefreshLibrary => "刷新壁纸",
         Text::SearchWallpapers => "搜索壁纸",
         Text::NoMatchingWallpapers => "没有符合搜索和筛选条件的壁纸。",
         Text::OpenSettings => "打开设置",

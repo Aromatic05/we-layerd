@@ -37,7 +37,9 @@ const MAX_CONCURRENT_GIF_DECODES: usize = 2;
 
 pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
-        Message::AutoScan => queue_library_scan(app, app.ui_settings.workshop_path.clone()),
+        Message::AutoScan | Message::RefreshLibrary => {
+            queue_library_scan(app, app.ui_settings.workshop_path.clone())
+        }
         Message::ScanCompleted(generation, result) => finish_library_scan(app, generation, result),
         Message::SelectWallpaper(index) => {
             if !select_wallpaper(app, index, true) {
