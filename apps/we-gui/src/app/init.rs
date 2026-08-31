@@ -132,6 +132,9 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             language,
             preferences_path,
             runtime_status: RuntimeStatus::DaemonNotRunning,
+            autostart_enabled: false,
+            autostart_pending: true,
+            autostart_error: None,
             preferences_generation: 0,
             playlist_selected,
             playlist_new_name_input: String::new(),
@@ -156,6 +159,10 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         Task::batch(vec![
             Task::done(Message::AutoScan),
             Task::perform(crate::services::runtime::fetch_outputs(), Message::OutputsLoaded),
+            Task::perform(
+                async { crate::services::autostart::is_enabled() },
+                Message::AutostartStatusLoaded,
+            ),
             window::open(window::Settings::default()).1.map(Message::WindowOpened),
         ]),
     )

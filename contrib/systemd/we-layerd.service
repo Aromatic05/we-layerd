@@ -1,0 +1,14 @@
+[Unit]
+Description=we-layerd wallpaper daemon
+PartOf=graphical-session.target
+After=graphical-session-pre.target
+ConditionPathExists=%h/.config/we-layerd/config.toml
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/we-layerd run --config %h/.config/we-layerd/config.toml
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

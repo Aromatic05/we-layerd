@@ -65,6 +65,9 @@ pub(crate) struct App {
     pub language: Language,
     pub preferences_path: Option<PathBuf>,
     pub runtime_status: RuntimeStatus,
+    pub autostart_enabled: bool,
+    pub autostart_pending: bool,
+    pub autostart_error: Option<String>,
     pub preferences_generation: u64,
     pub playlist_selected: Option<String>,
     pub playlist_new_name_input: String,
@@ -121,6 +124,16 @@ impl App {
         stopped
     }
 
+    pub(crate) fn shutdown_owned_runtime(&mut self) -> bool {
+        if self.runtime_shutdown {
+            return true;
+        }
+        self.runtime_shutdown = true;
+        let stopped = crate::services::runtime::stop_owned(&mut self.runtime_child);
+        self.clear_playback_state();
+        stopped
+    }
+
     pub(crate) fn clear_playback_state(&mut self) {
         self.playback_running = false;
         self.playback_paused = false;
@@ -133,7 +146,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        let _ = self.shutdown_runtime();
+        let _ = self.shutdown_owned_runtime();
     }
 }
 
@@ -173,6 +186,9 @@ pub(crate) enum Message {
     FullscreenRuleSelected(we_core::config::RuntimeRuleAction),
     PreferDmabufToggled(bool),
     AllowShmFallbackToggled(bool),
+    AutostartStatusLoaded(Result<bool, String>),
+    AutostartToggled(bool),
+    AutostartUpdated { enabled: bool, result: Result<(), String> },
     LanguageSelected(Language),
     PreferencesSaved { generation: u64, result: Result<(), String> },
     Detail(DetailMessage),

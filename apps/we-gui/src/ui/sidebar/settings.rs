@@ -17,6 +17,9 @@ pub fn build_settings_overlay<'a>(
     ui_settings: &'a UiSettings,
     language: Language,
     runtime_status: &'a RuntimeStatus,
+    autostart_enabled: bool,
+    autostart_pending: bool,
+    autostart_error: Option<&'a str>,
 ) -> Element<'a, Message> {
     let assets_path_display = format_path_for_display(&ui_settings.assets_path, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
@@ -40,8 +43,16 @@ pub fn build_settings_overlay<'a>(
         rule_options.iter().find(|option| option.value == ui_settings.rule_maximized).cloned();
     let selected_fullscreen_rule =
         rule_options.iter().find(|option| option.value == ui_settings.rule_fullscreen).cloned();
+    let autostart_checkbox = checkbox(autostart_enabled)
+        .label(language.text(Text::StartOnLogin))
+        .style(md_checkbox_style);
+    let autostart_checkbox = if autostart_pending {
+        autostart_checkbox
+    } else {
+        autostart_checkbox.on_toggle(Message::AutostartToggled)
+    };
 
-    let content = column![
+    let mut content = column![
         row![
             column![
                 text(language.text(Text::Settings)).size(26),
@@ -135,6 +146,8 @@ pub fn build_settings_overlay<'a>(
         )
         .id("settings.scale-mode"),
         section_title(language.text(Text::Behaviour)),
+        container(autostart_checkbox).id("settings.autostart"),
+        text(language.text(Text::StartOnLoginDescription)).size(12),
         container(
             checkbox(ui_settings.interactive)
                 .label(language.text(Text::EnableWallpaperInput))
@@ -245,6 +258,9 @@ pub fn build_settings_overlay<'a>(
             .style(status_box_style),
     ]
     .spacing(10);
+    if let Some(error) = autostart_error {
+        content = content.push(text(error).size(12));
+    }
 
     container(
         scrollable(container(content).padding(iced::Padding {

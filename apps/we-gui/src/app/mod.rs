@@ -153,6 +153,9 @@ mod tests {
             language: Language::English,
             preferences_path: Some(preferences_path.clone()),
             runtime_status: RuntimeStatus::DaemonNotRunning,
+            autostart_enabled: false,
+            autostart_pending: false,
+            autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -197,7 +200,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn dropping_gui_stops_layerd() {
+    fn dropping_gui_leaves_unowned_layerd_running() {
         let _lock = ENV_LOCK.lock().expect("environment lock");
         let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
         let temp = std::env::temp_dir().join(format!("we-gui-exit-{suffix}"));
@@ -257,6 +260,9 @@ mod tests {
             language: Language::English,
             preferences_path: None,
             runtime_status: RuntimeStatus::DaemonNotRunning,
+            autostart_enabled: false,
+            autostart_pending: false,
+            autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -283,8 +289,69 @@ mod tests {
             None => std::env::remove_var("WE_GUI_TEST_LOG"),
         }
 
-        let commands = fs::read_to_string(&log).expect("read fake command log");
-        assert!(commands.lines().any(|line| line == "ctl stop"));
+        let commands = fs::read_to_string(&log).unwrap_or_default();
+        assert!(commands.trim().is_empty());
+        fs::remove_dir_all(temp).expect("remove test directory");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_restart_preserves_systemd_ownership() {
+        let _lock = ENV_LOCK.lock().expect("environment lock");
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
+        let temp = std::env::temp_dir().join(format!("we-gui-systemd-restart-{suffix}"));
+        let systemctl = temp.join("systemctl");
+        let layerd = temp.join("we-layerd");
+        let systemctl_log = temp.join("systemctl.log");
+        let layerd_log = temp.join("layerd.log");
+        fs::create_dir_all(&temp).expect("create test directory");
+        fs::write(
+            &systemctl,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$WE_GUI_SYSTEMCTL_LOG\"\nif [ \"$1 $2 $3\" = \"--user is-active we-layerd.service\" ]; then printf 'active\\n'; exit 0; fi\nif [ \"$1 $2 $3\" = \"--user restart we-layerd.service\" ]; then exit 0; fi\nexit 1\n",
+        )
+        .expect("write fake systemctl");
+        fs::write(&layerd, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$WE_GUI_LAYERD_LOG\"\nexit 1\n")
+            .expect("write fake we-layerd");
+        for command in [&systemctl, &layerd] {
+            let mut permissions =
+                fs::metadata(command).expect("fake command metadata").permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(command, permissions).expect("make fake command executable");
+        }
+
+        let old_path = std::env::var_os("PATH");
+        let old_systemctl_log = std::env::var_os("WE_GUI_SYSTEMCTL_LOG");
+        let old_layerd_log = std::env::var_os("WE_GUI_LAYERD_LOG");
+        std::env::set_var("PATH", &temp);
+        std::env::set_var("WE_GUI_SYSTEMCTL_LOG", &systemctl_log);
+        std::env::set_var("WE_GUI_LAYERD_LOG", &layerd_log);
+
+        let mut owned_child = None;
+        let replacement =
+            crate::services::runtime::restart(&temp.join("config.toml"), &mut owned_child)
+                .expect("restart systemd-managed daemon");
+
+        match old_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        match old_systemctl_log {
+            Some(value) => std::env::set_var("WE_GUI_SYSTEMCTL_LOG", value),
+            None => std::env::remove_var("WE_GUI_SYSTEMCTL_LOG"),
+        }
+        match old_layerd_log {
+            Some(value) => std::env::set_var("WE_GUI_LAYERD_LOG", value),
+            None => std::env::remove_var("WE_GUI_LAYERD_LOG"),
+        }
+
+        assert!(replacement.is_none());
+        assert!(owned_child.is_none());
+        let systemctl_commands = fs::read_to_string(&systemctl_log).expect("read systemctl log");
+        assert_eq!(
+            systemctl_commands.lines().collect::<Vec<_>>(),
+            ["--user is-active we-layerd.service", "--user restart we-layerd.service"]
+        );
+        assert!(!layerd_log.exists());
         fs::remove_dir_all(temp).expect("remove test directory");
     }
 
@@ -313,8 +380,9 @@ mod tests {
         std::env::set_var("WE_GUI_TEST_LOG", &log);
 
         let mut owned_child = None;
-        let mut replacement =
-            crate::services::runtime::restart(&config, &mut owned_child).expect("restart daemon");
+        let mut replacement = crate::services::runtime::restart(&config, &mut owned_child)
+            .expect("restart daemon")
+            .expect("direct restart should return an owned child");
         std::thread::sleep(std::time::Duration::from_millis(50));
         let _ = replacement.kill();
         let _ = replacement.wait();

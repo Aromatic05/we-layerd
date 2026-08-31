@@ -59,9 +59,14 @@ pub(crate) fn daemon_view(app: &App, _window: window::Id) -> Element<'_, Message
 
 fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
     match sidebar {
-        Sidebar::Settings => {
-            settings::build_settings_overlay(&app.ui_settings, app.language, &app.runtime_status)
-        }
+        Sidebar::Settings => settings::build_settings_overlay(
+            &app.ui_settings,
+            app.language,
+            &app.runtime_status,
+            app.autostart_enabled,
+            app.autostart_pending,
+            app.autostart_error.as_deref(),
+        ),
         Sidebar::Playlist => playlist::view(app),
         Sidebar::Profile => profile::view(app),
         Sidebar::Detail => match app

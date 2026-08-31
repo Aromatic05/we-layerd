@@ -23,7 +23,7 @@ use crate::{
         ui_state::{AnimatedPreview, Sidebar},
     },
     platform::tray,
-    services::{config, preferences, runtime, wallpaper as wallpaper_service},
+    services::{autostart, config, preferences, runtime, wallpaper as wallpaper_service},
     ui::sidebar::detail as wallpaper_detail,
 };
 
@@ -101,7 +101,13 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             };
             app.show_settings = app.sidebar == Some(Sidebar::Settings);
             if app.show_settings {
-                return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
+                return Task::batch(vec![
+                    Task::perform(runtime::fetch_status(), Message::StatusLoaded),
+                    Task::perform(
+                        async { autostart::is_enabled() },
+                        Message::AutostartStatusLoaded,
+                    ),
+                ]);
             }
             Task::none()
         }
@@ -264,6 +270,40 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::AllowShmFallbackToggled(value) => {
             app.ui_settings.allow_shm_fallback = value;
             super::settings::sync(app);
+            Task::none()
+        }
+        Message::AutostartStatusLoaded(result) => {
+            app.autostart_pending = false;
+            match result {
+                Ok(enabled) => {
+                    app.autostart_enabled = enabled;
+                    app.autostart_error = None;
+                }
+                Err(error) => app.autostart_error = Some(error),
+            }
+            Task::none()
+        }
+        Message::AutostartToggled(enabled) => {
+            if app.autostart_pending {
+                return Task::none();
+            }
+            app.autostart_pending = true;
+            app.autostart_error = None;
+            let config_path = app.config_path.clone();
+            Task::perform(
+                async move { autostart::set_enabled(enabled, &config_path) },
+                move |result| Message::AutostartUpdated { enabled, result },
+            )
+        }
+        Message::AutostartUpdated { enabled, result } => {
+            app.autostart_pending = false;
+            match result {
+                Ok(()) => {
+                    app.autostart_enabled = enabled;
+                    app.autostart_error = None;
+                }
+                Err(error) => app.autostart_error = Some(error),
+            }
             Task::none()
         }
         Message::LanguageSelected(language) => {
@@ -778,8 +818,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
 }
 
 fn exit_application(app: &mut App) -> Task<Message> {
-    if !app.shutdown_runtime() {
-        eprintln!("failed to stop daemon while exiting we-gui");
+    if !app.shutdown_owned_runtime() {
+        eprintln!("failed to stop GUI-owned daemon while exiting we-gui");
     }
     iced::exit()
 }
@@ -1095,8 +1135,7 @@ fn reload_running_config(app: &mut App) -> Result<(), String> {
         return Ok(());
     }
 
-    let child = runtime::restart(&app.config_path, &mut app.runtime_child)?;
-    app.runtime_child = Some(child);
+    app.runtime_child = runtime::restart(&app.config_path, &mut app.runtime_child)?;
     Ok(())
 }
 
@@ -1352,7 +1391,7 @@ fn play_selected_playlist(app: &mut App) -> Task<Message> {
 
         return match runtime::restart(&app.config_path, &mut app.runtime_child) {
             Ok(child) => {
-                app.runtime_child = Some(child);
+                app.runtime_child = child;
                 app.playback_running = true;
                 app.playback_paused = false;
                 app.runtime_playlist_active = Some(name);
@@ -1401,7 +1440,7 @@ fn synchronize_migrated_playlist_with_running_daemon(app: &mut App) {
 
     match runtime::restart(&app.config_path, &mut app.runtime_child) {
         Ok(child) => {
-            app.runtime_child = Some(child);
+            app.runtime_child = child;
             app.runtime_shutdown = false;
             app.playback_running = true;
             app.playback_paused = false;
@@ -1610,14 +1649,14 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
 
     let spawn = match start {
         PlaybackStart::SwitchOrStart => {
-            runtime::start(&app.config_path).map_err(|error| error.to_string())
+            runtime::start(&app.config_path).map(Some).map_err(|error| error.to_string())
         }
         PlaybackStart::Restart => runtime::restart(&app.config_path, &mut app.runtime_child),
     };
 
     match spawn {
         Ok(child) => {
-            app.runtime_child = Some(child);
+            app.runtime_child = child;
             app.runtime_status = RuntimeStatus::StartedDaemon;
             mark_selected_wallpaper_running(app);
         }
@@ -1687,7 +1726,7 @@ fn start_or_reconfigure_multi_output(app: &mut App) -> Task<Message> {
         }
         return match runtime::restart(&app.config_path, &mut app.runtime_child) {
             Ok(child) => {
-                app.runtime_child = Some(child);
+                app.runtime_child = child;
                 app.playback_running = true;
                 app.playback_paused = false;
                 app.runtime_status = RuntimeStatus::StartedDaemon;
