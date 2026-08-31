@@ -13,6 +13,8 @@ cache_path = "~/.cache/we-layerd/renderer"
 prefer_dmabuf = true
 allow_shm_fallback = true
 fps = 60
+# Global upper bound; per-wallpaper fps values cannot exceed it.
+max_fps = 60
 speed = 1.0
 volume = 1.0
 muted = false

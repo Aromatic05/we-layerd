@@ -65,6 +65,7 @@ options_json = '''
 - `prefer_dmabuf`: prefer DMA-BUF buffers when the current simple presenter path can use them
 - `allow_shm_fallback`: allow SHM presentation when DMA-BUF is unavailable or explicitly disabled
 - `fps`: target update rate passed to the renderer
+- `max_fps`: global upper bound for all wallpaper profiles; per-wallpaper `fps` values are clamped to it
 - `speed`, `volume`, `muted`: source parameters forwarded directly to the renderer ABI
 - `msaa_samples`: final-output MSAA request. `1` disables MSAA. Values above 1 are supported by
   scene wallpapers only; the renderer resolves unsupported sample counts downward to the highest

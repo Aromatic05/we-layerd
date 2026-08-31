@@ -99,6 +99,9 @@ pub struct RendererConfig {
     pub allow_shm_fallback: bool,
     #[serde(default = "default_renderer_fps")]
     pub fps: u32,
+    /// Hard upper bound applied to every wallpaper profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_fps: Option<u32>,
     #[serde(default = "default_renderer_speed")]
     pub speed: f32,
     #[serde(default = "default_renderer_volume")]
@@ -196,6 +199,7 @@ impl Default for RendererConfig {
             prefer_dmabuf: default_prefer_dmabuf(),
             allow_shm_fallback: default_allow_shm_fallback(),
             fps: default_renderer_fps(),
+            max_fps: None,
             speed: default_renderer_speed(),
             volume: default_renderer_volume(),
             muted: false,
@@ -236,8 +240,14 @@ impl Config {
             Some(path) => {
                 let raw = fs::read_to_string(path)
                     .with_context(|| format!("failed to read config file: {}", path.display()))?;
-                toml::from_str(&raw)
-                    .with_context(|| format!("invalid TOML in config file: {}", path.display()))
+                let mut config: Self = toml::from_str(&raw)
+                    .with_context(|| format!("invalid TOML in config file: {}", path.display()))?;
+                // Older configs only had `renderer.fps`; treat that value as the
+                // global cap when the explicit field is absent.
+                let max_fps = config.renderer.max_fps.unwrap_or(config.renderer.fps).clamp(1, 360);
+                config.renderer.max_fps = Some(max_fps);
+                config.renderer.fps = config.renderer.fps.min(max_fps).max(1);
+                Ok(config)
             }
             None => Ok(Self::default()),
         }

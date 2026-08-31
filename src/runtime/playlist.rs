@@ -356,7 +356,8 @@ pub(crate) fn apply_selection_to_config(
     config.renderer.source = selection.source.clone();
     let wallpaper_profile = config.wallpapers.get(&selection.wallpaper_id).cloned();
     let wallpaper = wallpaper_profile.clone().unwrap_or_else(WallpaperSettings::default);
-    config.renderer.fps = wallpaper.fps.clamp(1, 360);
+    let fps_limit = config.renderer.max_fps.unwrap_or(config.renderer.fps).clamp(1, 360);
+    config.renderer.fps = wallpaper.fps.min(fps_limit).clamp(1, 360);
     config.renderer.speed = wallpaper.speed;
     config.renderer.volume = wallpaper.volume;
     config.renderer.muted = wallpaper.muted;
@@ -469,6 +470,26 @@ mod tests {
             .advance(AdvanceDirection::Next, started, |item| item.wallpaper_id != "missing")
             .expect("a later playable item exists");
         assert_eq!(selection.wallpaper_id, "c");
+    }
+
+    #[test]
+    fn playlist_selection_clamps_profile_fps_to_global_cap() {
+        let mut runtime_config = crate::config::Config::default();
+        runtime_config.renderer.max_fps = Some(30);
+        runtime_config.wallpapers.insert(
+            "video".to_string(),
+            we_core::wallpaper::settings::WallpaperSettings { fps: 144, ..Default::default() },
+        );
+        let selection = super::PlaylistSelection {
+            index: 0,
+            wallpaper_id: "video".to_string(),
+            source: "/wallpapers/video".to_string(),
+        };
+
+        super::apply_selection_to_config(&mut runtime_config, &selection)
+            .expect("apply playlist selection");
+
+        assert_eq!(runtime_config.renderer.fps, 30);
     }
 
     #[test]

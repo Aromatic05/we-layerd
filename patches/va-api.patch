@@ -1,0 +1,26 @@
+diff --git a/src/render/vulkanrender/VulkanRender.cpp b/src/render/vulkanrender/VulkanRender.cpp
+index 3cdca08..3d7c55b 100644
+--- a/src/render/vulkanrender/VulkanRender.cpp
++++ b/src/render/vulkanrender/VulkanRender.cpp
+@@ -402,10 +402,19 @@ bool VulkanRender::Impl::init(RenderInitInfo info) {
+ 
+     {
+         m_device = std::make_unique<Device>();
++        // The ABI has historically defaulted to the NVIDIA CUDA video path, but
++        // non-NVIDIA devices otherwise silently fall back to CPU RGBA decoding.
++        // Prefer VA-API for those devices; VideoTextureCache still checks the
++        // required factories/extensions and falls back safely when unavailable.
++        constexpr std::uint32_t kNvidiaVendorId = 0x10de;
++        const auto              vendor_id = m_instance.gpu().GetProperties().vendorID;
++        const auto pipeline_preference = vendor_id == kNvidiaVendorId
++            ? info.gpu_pipeline_preference
++            : wallpaper::GpuPipelinePreference::Va;
+         const VideoTexturePipelineSettings video_texture_settings {
+-            .gpu_pipeline = info.gpu_pipeline_preference == wallpaper::GpuPipelinePreference::Va
++            .gpu_pipeline = pipeline_preference == wallpaper::GpuPipelinePreference::Va
+                                 ? VideoTextureGpuPipeline::Va
+-                                : (info.gpu_pipeline_preference ==
++                                : (pipeline_preference ==
+                                            wallpaper::GpuPipelinePreference::NvidiaStateless
+                                        ? VideoTextureGpuPipeline::NvidiaStateless
+                                        : VideoTextureGpuPipeline::Nvidia),
