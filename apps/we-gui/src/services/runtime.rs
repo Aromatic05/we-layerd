@@ -20,6 +20,10 @@ pub fn layerd_is_available() -> bool {
     resolve_layerd_executable().is_some()
 }
 
+pub fn layerd_executable() -> Option<PathBuf> {
+    resolve_layerd_executable()
+}
+
 pub fn try_switch(config_path: &Path) -> bool {
     let Ok(mut command) = layerd_command() else {
         return false;
@@ -64,12 +68,22 @@ pub fn start(config_path: &Path) -> std::io::Result<Child> {
     layerd_command()?.arg("run").arg("--config").arg(config_path).spawn()
 }
 
-pub fn restart(config_path: &Path, child: &mut Option<Child>) -> Result<Child, String> {
+pub fn restart(config_path: &Path, child: &mut Option<Child>) -> Result<Option<Child>, String> {
+    if child.is_none() {
+        match super::autostart::restart_if_active() {
+            Ok(true) => return Ok(None),
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("systemd ownership probe failed; using direct daemon fallback: {error}")
+            }
+        }
+    }
+
     let _ = stop(child);
 
     for _ in 0..40 {
         if !daemon_is_running() {
-            return start(config_path).map_err(|error| error.to_string());
+            return start(config_path).map(Some).map_err(|error| error.to_string());
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -133,6 +147,27 @@ pub fn stop(child: &mut Option<Child>) -> bool {
         stopped = true;
     }
     stopped || !daemon_is_running()
+}
+
+pub fn stop_owned(child: &mut Option<Child>) -> bool {
+    let Some(mut child) = child.take() else {
+        return true;
+    };
+
+    if child.try_wait().map_or(true, |status| status.is_some()) {
+        return true;
+    }
+
+    let _ = send_control("stop");
+    for _ in 0..3 {
+        if child.try_wait().map_or(true, |status| status.is_some()) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    true
 }
 
 pub fn daemon_is_running() -> bool {

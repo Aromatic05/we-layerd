@@ -6,6 +6,27 @@
 - File-socket fallback is kept for compatibility.
 - Daemon startup acquires an instance lock; launching a second instance under the same user returns an `already running` error.
 
+## Start on Login
+
+Native packages install `we-layerd.service` as a systemd user service. Enable it for future
+graphical logins with:
+
+```bash
+systemctl --user enable we-layerd.service
+```
+
+If no daemon is currently running and you also want to start it in the current session, run
+`systemctl --user start we-layerd.service`.
+
+The service loads `~/.config/we-layerd/config.toml`, so the wallpaper and output bindings last saved
+by `we-gui` are restored at the next graphical login. The GUI exposes the same enable/disable state
+as **Settings → Behaviour → Start wallpaper on login**. AppImage and local-binary launches create a
+user unit under `~/.config/systemd/user/` when that setting is enabled.
+
+Closing `we-gui` does not stop a daemon that was already running under systemd or another external
+owner. A fallback daemon spawned directly by the GUI remains GUI-owned and is cleaned up with the
+GUI. The explicit **Stop** action still stops the current daemon regardless of ownership.
+
 ## Runtime Control
 
 Control a running daemon:

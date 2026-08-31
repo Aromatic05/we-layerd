@@ -68,6 +68,10 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ScaleCover => "覆盖",
         Text::ScaleStretch => "拉伸",
         Text::Behaviour => "行为",
+        Text::StartOnLogin => "登录时自动启动壁纸",
+        Text::StartOnLoginDescription => {
+            "为后续图形会话启用 systemd 用户服务，并自动应用已保存的壁纸配置。"
+        }
         Text::EnableWallpaperInput => "启用壁纸输入",
         Text::ForceSceneAudioLoop => "强制循环场景音频",
         Text::ForceSceneAudioLoopDescription => {

@@ -97,6 +97,8 @@ install -Dm0644 apps/we-gui/assets/we-gui.desktop \
   %{buildroot}%{_datadir}/applications/we-gui.desktop
 install -Dm0644 apps/we-gui/assets/we-gui-logo.svg \
   %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/we-gui.svg
+install -Dm0644 contrib/systemd/we-layerd.service \
+  %{buildroot}%{_prefix}/lib/systemd/user/we-layerd.service
 
 desktop-file-validate %{buildroot}%{_datadir}/applications/we-gui.desktop
 
@@ -129,6 +131,7 @@ readelf -d %{buildroot}%{_prefix}/lib/libwallpaper-engine-renderer.so \
 %{_datadir}/applications/we-gui.desktop
 %{_datadir}/icons/hicolor/scalable/apps/we-gui.svg
 %{_datadir}/gnome-shell/extensions/we-layerd@aromatic/
+%{_prefix}/lib/systemd/user/we-layerd.service
 %license %{_licensedir}/%{name}/DXC-LICENSE-MS.txt
 %license %{_licensedir}/%{name}/DXC-LICENSE-LLVM.txt
 
