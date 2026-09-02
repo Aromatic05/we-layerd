@@ -86,10 +86,10 @@ fn can_present_next_frame(state: &LayerShellState) -> bool {
         && state.buffers.in_flight.len() < state.buffers.max_in_flight
 }
 
+// The frame-ready eventfd is level-triggered. Do not poll it while a frame
+// cannot be consumed, or a queued notification will turn the loop into a
+// busy loop (notably while a fullscreen rule has paused the session).
 fn renderer_poll_events(state: &LayerShellState) -> libc::c_short {
-    // The frame-ready eventfd is level-triggered. Do not poll it while a frame
-    // cannot be consumed, or a queued notification will turn the loop into a
-    // busy loop (notably while a fullscreen rule has paused the session).
     if can_present_next_frame(state) {
         libc::POLLIN
     } else {
@@ -755,12 +755,24 @@ mod tests {
     use crate::config::ScaleMode;
 
     #[test]
-    fn renderer_frame_fd_is_not_polled_while_presentation_is_paused() {
+    fn renderer_frame_fd_is_not_polled_while_presentation_is_backpressured() {
         let mut state = LayerShellState::test_default(ScaleMode::Cover);
         state.frame_callback.ready_for_next_frame = true;
         assert_eq!(renderer_poll_events(&state), libc::POLLIN);
 
         state.pause_state.set_rule(true);
+        assert_eq!(renderer_poll_events(&state), 0);
+
+        state.pause_state.set_rule(false);
+        state.frame_callback.pending = true;
+        assert_eq!(renderer_poll_events(&state), 0);
+
+        state.frame_callback.pending = false;
+        state.frame_callback.ready_for_next_frame = false;
+        assert_eq!(renderer_poll_events(&state), 0);
+
+        state.frame_callback.ready_for_next_frame = true;
+        state.buffers.max_in_flight = 0;
         assert_eq!(renderer_poll_events(&state), 0);
     }
 }
