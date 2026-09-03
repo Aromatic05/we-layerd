@@ -390,8 +390,16 @@ fn reconcile_live_workers(
                 (ctx.status_sink)(RuntimeStatusSnapshot::removed_output(output));
             }
             OutputAction::Restart(output) => {
-                stop_worker(workers, &output);
                 if let Some(spec) = desired.get(&output).cloned() {
+                    if workers
+                        .get_mut(&output)
+                        .is_some_and(|worker| reconfigure_worker_in_place(worker, &spec))
+                    {
+                        failed_start_retries.remove(&output);
+                        continue;
+                    }
+
+                    stop_worker(workers, &output);
                     let failed_fingerprint = spec.fingerprint.clone();
                     match spawn_worker(
                         spec,
@@ -452,6 +460,27 @@ fn reconcile_live_workers(
         report_output_error(ctx, &output, error);
     }
     Ok(())
+}
+
+fn reconfigure_worker_in_place(worker: &mut OutputWorker, spec: &OutputSpec) -> bool {
+    if worker.handle.is_none()
+        || worker.scheduler_handle.is_some()
+        || spec.playlist_name().is_some()
+    {
+        return false;
+    }
+
+    let Ok(mut config) = worker.desired_cfg.lock() else {
+        return false;
+    };
+    *config = spec.config.clone();
+    drop(config);
+
+    if worker.control_tx.send(ControlCommand::Reconfigure).is_err() {
+        return false;
+    }
+    worker.fingerprint = spec.fingerprint.clone();
+    true
 }
 
 fn report_output_error(ctx: &mut BackendContext<'_>, output: &str, error: String) {
@@ -779,10 +808,12 @@ fn stop_all_workers(workers: &mut BTreeMap<String, OutputWorker>) {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::{atomic::AtomicBool, mpsc, Arc, Mutex};
+    use std::thread;
     use std::time::{Duration, Instant};
 
     use crate::config::Config;
-    use crate::ipc::OutputPlaylistAction;
+    use crate::ipc::{ControlCommand, OutputPlaylistAction};
     use crate::runtime::playlist::PlaylistRuntime;
     use we_core::{
         config::OutputBinding,
@@ -792,7 +823,8 @@ mod tests {
     use super::{
         apply_output_playlist_action, apply_start_retry_backoff, build_output_specs,
         build_output_specs_with_errors, output_playlist_action_requires_reconcile,
-        reconcile_workers, FailedStartRetry, OutputAction,
+        reconcile_workers, reconfigure_worker_in_place, FailedStartRetry, OutputAction,
+        OutputWorker,
     };
 
     #[test]
@@ -846,6 +878,79 @@ mod tests {
             reconcile_workers(&current, &next),
             vec![OutputAction::Restart("DP-1".to_string())]
         );
+    }
+
+    #[test]
+    fn wallpaper_change_reconfigures_existing_worker_thread() {
+        let mut initial_config = Config::default();
+        initial_config.renderer.source = "/wallpapers/alpha".to_string();
+        let initial = build_output_specs(&initial_config, &["DP-1".to_string()])
+            .expect("initial specs")
+            .remove("DP-1")
+            .expect("initial DP-1 spec");
+
+        let (control_tx, control_rx) = mpsc::channel();
+        let mut worker = OutputWorker {
+            instance_id: 1,
+            fingerprint: initial.fingerprint,
+            control_tx,
+            desired_cfg: Arc::new(Mutex::new(initial.config)),
+            playlist_runtime: Arc::new(Mutex::new(None)),
+            stop_scheduler: Arc::new(AtomicBool::new(false)),
+            handle: Some(thread::spawn(|| {})),
+            scheduler_handle: None,
+            retry_at: None,
+        };
+
+        let mut next_config = Config::default();
+        next_config.renderer.source = "/wallpapers/beta".to_string();
+        let next = build_output_specs(&next_config, &["DP-1".to_string()])
+            .expect("next specs")
+            .remove("DP-1")
+            .expect("next DP-1 spec");
+
+        assert!(reconfigure_worker_in_place(&mut worker, &next));
+        assert_eq!(worker.fingerprint, next.fingerprint);
+        assert_eq!(
+            worker.desired_cfg.lock().expect("desired config").renderer.source,
+            "/wallpapers/beta"
+        );
+        assert!(matches!(
+            control_rx.recv_timeout(Duration::from_millis(100)),
+            Ok(ControlCommand::Reconfigure)
+        ));
+    }
+
+    #[test]
+    fn playlist_change_requires_worker_replacement() {
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/alpha".to_string();
+        let initial = build_output_specs(&config, &["DP-1".to_string()])
+            .expect("initial specs")
+            .remove("DP-1")
+            .expect("initial DP-1 spec");
+
+        let (control_tx, _control_rx) = mpsc::channel();
+        let mut worker = OutputWorker {
+            instance_id: 1,
+            fingerprint: initial.fingerprint,
+            control_tx,
+            desired_cfg: Arc::new(Mutex::new(initial.config)),
+            playlist_runtime: Arc::new(Mutex::new(None)),
+            stop_scheduler: Arc::new(AtomicBool::new(false)),
+            handle: Some(thread::spawn(|| {})),
+            scheduler_handle: None,
+            retry_at: None,
+        };
+
+        config.playlists.definitions.insert("Focus".to_string(), Playlist::default());
+        config.outputs.insert("DP-1".to_string(), OutputBinding::playlist("Focus"));
+        let playlist_spec = build_output_specs(&config, &["DP-1".to_string()])
+            .expect("playlist specs")
+            .remove("DP-1")
+            .expect("playlist DP-1 spec");
+
+        assert!(!reconfigure_worker_in_place(&mut worker, &playlist_spec));
     }
 
     #[test]
