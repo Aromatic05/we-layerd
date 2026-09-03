@@ -86,6 +86,17 @@ fn can_present_next_frame(state: &LayerShellState) -> bool {
         && state.buffers.in_flight.len() < state.buffers.max_in_flight
 }
 
+// The frame-ready eventfd is level-triggered. Do not poll it while a frame
+// cannot be consumed, or a queued notification will turn the loop into a
+// busy loop (notably while a fullscreen rule has paused the session).
+fn renderer_poll_events(state: &LayerShellState) -> libc::c_short {
+    if can_present_next_frame(state) {
+        libc::POLLIN
+    } else {
+        0
+    }
+}
+
 fn apply_pause_state(state: &mut LayerShellState, previous: bool) {
     let current = state.pause_state.effective();
     if current == previous {
@@ -656,7 +667,11 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
                 events: libc::POLLIN | if flush_blocked { libc::POLLOUT } else { 0 },
                 revents: 0,
             },
-            libc::pollfd { fd: renderer_frame_fd, events: libc::POLLIN, revents: 0 },
+            libc::pollfd {
+                fd: renderer_frame_fd,
+                events: renderer_poll_events(&state),
+                revents: 0,
+            },
         ];
         let timeout_ms = poll_timeout(Instant::now(), next_tick_at, &state);
         let poll_result = unsafe {
@@ -731,5 +746,33 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
             status_sink(state.snapshot());
             return Ok(exit);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{renderer_poll_events, LayerShellState};
+    use crate::config::ScaleMode;
+
+    #[test]
+    fn renderer_frame_fd_is_not_polled_while_presentation_is_backpressured() {
+        let mut state = LayerShellState::test_default(ScaleMode::Cover);
+        state.frame_callback.ready_for_next_frame = true;
+        assert_eq!(renderer_poll_events(&state), libc::POLLIN);
+
+        state.pause_state.set_rule(true);
+        assert_eq!(renderer_poll_events(&state), 0);
+
+        state.pause_state.set_rule(false);
+        state.frame_callback.pending = true;
+        assert_eq!(renderer_poll_events(&state), 0);
+
+        state.frame_callback.pending = false;
+        state.frame_callback.ready_for_next_frame = false;
+        assert_eq!(renderer_poll_events(&state), 0);
+
+        state.frame_callback.ready_for_next_frame = true;
+        state.buffers.max_in_flight = 0;
+        assert_eq!(renderer_poll_events(&state), 0);
     }
 }
