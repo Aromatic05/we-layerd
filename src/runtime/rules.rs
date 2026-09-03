@@ -81,6 +81,11 @@ pub(crate) fn policies_for_outputs(
         .into_iter()
         .map(|output| (output, RuntimePolicy::default()))
         .collect::<BTreeMap<_, _>>();
+    let outputs_with_active_non_fullscreen = toplevels
+        .iter()
+        .filter(|toplevel| toplevel.activated && !toplevel.fullscreen)
+        .flat_map(|toplevel| toplevel.outputs.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
 
     for toplevel in toplevels {
         for output in &toplevel.outputs {
@@ -93,7 +98,10 @@ pub(crate) fn policies_for_outputs(
             if toplevel.maximized {
                 apply_rule_action(policy, rules.maximized);
             }
-            if toplevel.fullscreen {
+            // niri keeps fullscreen on unfocused layout participants. An active
+            // non-fullscreen toplevel on this output means that fullscreen is stale.
+            if toplevel.fullscreen && !outputs_with_active_non_fullscreen.contains(output.as_str())
+            {
                 apply_rule_action(policy, rules.fullscreen);
             }
         }
@@ -475,6 +483,29 @@ mod tests {
 
         pause.set_manual(false);
         assert!(!pause.effective());
+    }
+
+    #[test]
+    fn fullscreen_rule_ignores_unfocused_fullscreen_behind_an_active_window() {
+        let policies = policies_for_outputs(
+            RuleSet { fullscreen: RuleAction::Pause, ..RuleSet::default() },
+            ["DP-1".to_string()],
+            &[
+                ToplevelActivity {
+                    outputs: vec!["DP-1".to_string()],
+                    activated: false,
+                    fullscreen: true,
+                    ..ToplevelActivity::default()
+                },
+                ToplevelActivity {
+                    outputs: vec!["DP-1".to_string()],
+                    activated: true,
+                    ..ToplevelActivity::default()
+                },
+            ],
+        );
+
+        assert_eq!(policies["DP-1"], RuntimePolicy::default());
     }
 
     #[test]

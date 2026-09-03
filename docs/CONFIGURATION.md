@@ -102,7 +102,10 @@ fullscreen = "pause"
   `@DEFAULT_MONITOR@` follows the current default sink monitor. This is opt-in because capture is
   continuous. Scene and web wallpapers can consume it; video wallpapers do not receive it.
 - window rules use `keep`, `mute`, or `pause`, are evaluated per output, and rely on
-  `zwlr_foreign_toplevel_manager_v1` for focused/maximized/fullscreen state.
+  `zwlr_foreign_toplevel_manager_v1` for focused/maximized/fullscreen state. The fullscreen
+  rule applies on an output when it has a fullscreen toplevel and no activated non-fullscreen
+  toplevel; this preserves unfocused fullscreen windows on other outputs while handling niri's
+  stale fullscreen state after focus moves within one output.
 - manual Pause/Resume and rule pause are independent. Removing a rule condition never resumes a
   wallpaper that the user manually paused.
 - missing MPRIS/Pulse/foreign-toplevel capabilities are reported through status and do not stop
