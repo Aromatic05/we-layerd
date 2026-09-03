@@ -93,7 +93,9 @@ pub(crate) fn policies_for_outputs(
             if toplevel.maximized {
                 apply_rule_action(policy, rules.maximized);
             }
-            if toplevel.fullscreen {
+            // niri keeps fullscreen on unfocused layout participants; only the active
+            // fullscreen window covers the current view.
+            if toplevel.activated && toplevel.fullscreen {
                 apply_rule_action(policy, rules.fullscreen);
             }
         }
@@ -478,6 +480,22 @@ mod tests {
     }
 
     #[test]
+    fn fullscreen_rule_does_not_pause_for_an_unfocused_fullscreen_window() {
+        let policies = policies_for_outputs(
+            RuleSet { fullscreen: RuleAction::Pause, ..RuleSet::default() },
+            ["DP-1".to_string()],
+            &[ToplevelActivity {
+                outputs: vec!["DP-1".to_string()],
+                activated: false,
+                fullscreen: true,
+                ..ToplevelActivity::default()
+            }],
+        );
+
+        assert_eq!(policies["DP-1"], RuntimePolicy::default());
+    }
+
+    #[test]
     fn pause_outranks_mute_and_rules_are_scoped_to_the_toplevel_output() {
         let policies = policies_for_outputs(
             RuleSet {
@@ -495,7 +513,7 @@ mod tests {
                 },
                 ToplevelActivity {
                     outputs: vec!["HDMI-A-1".to_string()],
-                    activated: false,
+                    activated: true,
                     maximized: true,
                     fullscreen: true,
                 },
