@@ -54,6 +54,9 @@ pub(crate) struct FrameStats {
     pub(crate) skipped_by_backpressure: u64,
     pub(crate) no_frame_polls: u64,
     pub(crate) released_buffers: u64,
+    pub(crate) wayland_buffers_created: u64,
+    pub(crate) wayland_buffers_reused: u64,
+    pub(crate) dmabuf_fdless_acquires: u64,
     pub(crate) in_flight_count: usize,
     pub(crate) last_present_backend: Option<PresentBackend>,
     pub(crate) last_frame_width: u32,
@@ -236,6 +239,9 @@ impl RuntimeStatusSnapshot {
             format!("skipped_by_backpressure = {}", self.frame_stats.skipped_by_backpressure),
             format!("no_frame_polls = {}", self.frame_stats.no_frame_polls),
             format!("released_buffers = {}", self.frame_stats.released_buffers),
+            format!("wayland_buffers_created = {}", self.frame_stats.wayland_buffers_created),
+            format!("wayland_buffers_reused = {}", self.frame_stats.wayland_buffers_reused),
+            format!("dmabuf_fdless_acquires = {}", self.frame_stats.dmabuf_fdless_acquires),
             format!("last_error = {:?}", self.frame_stats.last_error.as_deref().unwrap_or("")),
         ]);
 
