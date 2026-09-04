@@ -171,6 +171,8 @@ pub struct DmabufFrame {
     pub flags: u32,
     pub serial: u64,
     pub pts_ns: u64,
+    pub buffer_id: Option<u32>,
+    pub fds_omitted: bool,
     pub planes: Vec<DmabufPlane>,
 }
 
@@ -474,6 +476,13 @@ impl Session {
     }
 
     pub fn acquire_frame(&mut self) -> Result<Option<Frame>, Error> {
+        self.acquire_frame_with_reusable_buffers(0)
+    }
+
+    pub fn acquire_frame_with_reusable_buffers(
+        &mut self,
+        reusable_buffer_mask: u32,
+    ) -> Result<Option<Frame>, Error> {
         let mut raw = sys::we_frame_v1 {
             size: std::mem::size_of::<sys::we_frame_v1>() as u32,
             version: sys::WE_FRAME_V1_VERSION,
@@ -489,6 +498,8 @@ impl Session {
             shm_stride: 0,
             shm_size: 0,
             planes: [sys::we_dmabuf_plane_v1 { fd: -1, offset: 0, stride: 0 }; 4],
+            buffer_id: sys::WE_FRAME_BUFFER_ID_INVALID,
+            reusable_buffer_mask,
         };
 
         let status = unsafe { self.library.session_acquire_frame(self.raw, &mut raw) };
@@ -752,13 +763,16 @@ fn frame_from_raw(raw: &sys::we_frame_v1) -> Result<Frame, Error> {
             if raw.n_planes > raw.planes.len() as u32 {
                 return Err(Error::InvalidPlaneCount(raw.n_planes));
             }
+            let fds_omitted = raw.flags & sys::WE_FRAME_FLAG_FDS_OMITTED != 0;
             let mut planes = Vec::with_capacity(raw.n_planes as usize);
-            for plane in raw.planes.iter().take(raw.n_planes as usize) {
-                planes.push(DmabufPlane {
-                    fd: duplicate_fd(plane.fd)?,
-                    offset: plane.offset,
-                    stride: plane.stride,
-                });
+            if !fds_omitted {
+                for plane in raw.planes.iter().take(raw.n_planes as usize) {
+                    planes.push(DmabufPlane {
+                        fd: duplicate_fd(plane.fd)?,
+                        offset: plane.offset,
+                        stride: plane.stride,
+                    });
+                }
             }
             Ok(Frame::Dmabuf(DmabufFrame {
                 width: raw.width,
@@ -768,6 +782,9 @@ fn frame_from_raw(raw: &sys::we_frame_v1) -> Result<Frame, Error> {
                 flags: raw.flags,
                 serial: raw.serial,
                 pts_ns: raw.pts_ns,
+                buffer_id: (raw.buffer_id != sys::WE_FRAME_BUFFER_ID_INVALID)
+                    .then_some(raw.buffer_id),
+                fds_omitted,
                 planes,
             }))
         }
@@ -829,10 +846,42 @@ mod tests {
             shm_stride: 0,
             shm_size: 0,
             planes: [we_dmabuf_plane_v1 { fd: -1, offset: 0, stride: 0 }; 4],
+            buffer_id: u32::MAX,
+            reusable_buffer_mask: 0,
         };
 
         let err = frame_from_raw(&raw).expect_err("too many planes should fail");
         assert!(err.to_string().contains("exceeds the ABI limit"));
+    }
+
+    #[test]
+    fn dmabuf_frame_conversion_accepts_omitted_reusable_fds() {
+        let raw = we_frame_v1 {
+            size: std::mem::size_of::<we_frame_v1>() as u32,
+            version: 1,
+            kind: we_frame_kind_v1::WE_FRAME_KIND_DMABUF as u32,
+            width: 1920,
+            height: 1080,
+            drm_fourcc: u32::from_le_bytes(*b"AB24"),
+            drm_modifier: 0,
+            n_planes: 1,
+            flags: we_renderer_sys::WE_FRAME_FLAG_FDS_OMITTED,
+            serial: 2,
+            pts_ns: 0,
+            shm_stride: 0,
+            shm_size: 0,
+            planes: [we_dmabuf_plane_v1 { fd: -1, offset: 0, stride: 7680 }; 4],
+            buffer_id: 2,
+            reusable_buffer_mask: 0,
+        };
+
+        let frame = frame_from_raw(&raw).expect("reusable DMA-BUF metadata should be valid");
+        let Frame::Dmabuf(frame) = frame else {
+            panic!("expected DMA-BUF frame");
+        };
+        assert_eq!(frame.buffer_id, Some(2));
+        assert!(frame.fds_omitted);
+        assert!(frame.planes.is_empty());
     }
 
     #[test]
@@ -858,6 +907,8 @@ mod tests {
                 we_dmabuf_plane_v1 { fd: -1, offset: 0, stride: 0 },
                 we_dmabuf_plane_v1 { fd: -1, offset: 0, stride: 0 },
             ],
+            buffer_id: u32::MAX,
+            reusable_buffer_mask: 0,
         };
 
         let frame = frame_from_raw(&raw).expect("valid shm frame");
@@ -888,6 +939,8 @@ mod tests {
             shm_stride: 0,
             shm_size: 0,
             planes: [we_dmabuf_plane_v1 { fd: -1, offset: 0, stride: 0 }; 4],
+            buffer_id: u32::MAX,
+            reusable_buffer_mask: 0,
         };
 
         let err = frame_from_raw(&raw).expect_err("unknown kind should fail");

@@ -34,15 +34,62 @@ use crate::{
 
 pub(super) const MAX_IN_FLIGHT_BUFFERS: usize = 3;
 
+// DMA-BUF file descriptors are duplicated by the renderer ABI on full acquisitions.
+// Their (device, inode) identity remains stable across dup() calls and provides a
+// fallback identity alongside the renderer-provided stable buffer_id.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct DmabufPlaneKey {
+    pub(super) device: u64,
+    pub(super) inode: u64,
+    pub(super) offset: u32,
+    pub(super) stride: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DmabufKey {
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) drm_fourcc: u32,
+    pub(super) drm_modifier: u64,
+    pub(super) plane_count: u32,
+    pub(super) planes: [DmabufPlaneKey; 4],
+}
+
 // ---------------------------------------------------------------------------
 // Buffer bookkeeping
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReleasedBufferDisposition {
+    Drop,
+    Cache,
+    EvictOldestAndCache,
+}
+
+pub(super) fn released_buffer_disposition(
+    entry_generation: u64,
+    current_generation: u64,
+    has_identity: bool,
+    reusable_len: usize,
+) -> ReleasedBufferDisposition {
+    if entry_generation != current_generation || !has_identity {
+        return ReleasedBufferDisposition::Drop;
+    }
+    if reusable_len >= MAX_IN_FLIGHT_BUFFERS {
+        ReleasedBufferDisposition::EvictOldestAndCache
+    } else {
+        ReleasedBufferDisposition::Cache
+    }
+}
 
 #[derive(Debug)]
 pub(super) struct WaylandBuffer {
     pub(super) buffer: WlBuffer,
     pub(super) released: Arc<AtomicBool>,
     pub(super) pending_fds: Vec<OwnedFd>,
+    pub(super) dmabuf_key: Option<DmabufKey>,
+    pub(super) buffer_id: Option<u32>,
+    pub(super) generation: u64,
 }
 
 impl Drop for WaylandBuffer {
@@ -76,12 +123,19 @@ pub(super) struct FrameCallbackState {
 
 pub(super) struct BufferBookkeeping {
     pub(super) in_flight: Vec<WaylandBuffer>,
+    pub(super) reusable: Vec<WaylandBuffer>,
     pub(super) max_in_flight: usize,
+    pub(super) generation: u64,
 }
 
 impl Default for BufferBookkeeping {
     fn default() -> Self {
-        Self { in_flight: Vec::new(), max_in_flight: MAX_IN_FLIGHT_BUFFERS }
+        Self {
+            in_flight: Vec::new(),
+            reusable: Vec::new(),
+            max_in_flight: MAX_IN_FLIGHT_BUFFERS,
+            generation: 0,
+        }
     }
 }
 
@@ -124,10 +178,19 @@ impl LayerShellState {
         self.output.recompute_geometry();
         let new_size = (self.output.geometry.render_width, self.output.geometry.render_height);
         if self.render_resolution_follows_output && old_size != new_size {
-            if let Some(session) = &mut self.session {
-                if let Err(error) = session.resize_output(new_size.0, new_size.1) {
-                    tracing::warn!(%error, width = new_size.0, height = new_size.1, "failed to resize renderer output");
+            let resized = if let Some(session) = &mut self.session {
+                match session.resize_output(new_size.0, new_size.1) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        tracing::warn!(%error, width = new_size.0, height = new_size.1, "failed to resize renderer output");
+                        false
+                    }
                 }
+            } else {
+                false
+            };
+            if resized {
+                self.invalidate_reusable();
             }
         }
     }
@@ -283,12 +346,45 @@ impl LayerShellState {
         }
     }
 
+    pub(super) fn reusable_buffer_mask(&self) -> u32 {
+        self.buffers.reusable.iter().fold(0, |mask, entry| match entry.buffer_id {
+            Some(id) if id < u32::BITS => mask | (1u32 << id),
+            _ => mask,
+        })
+    }
+
+    pub(super) fn invalidate_reusable(&mut self) {
+        self.buffers.reusable.clear();
+        self.buffers.generation = self.buffers.generation.saturating_add(1);
+    }
+
     pub(super) fn collect_released_buffers(&mut self) {
-        let before = self.buffers.in_flight.len();
-        self.buffers.in_flight.retain(|entry| {
-            !(entry.pending_fds.is_empty() && entry.released.load(Ordering::SeqCst))
-        });
-        let released = before.saturating_sub(self.buffers.in_flight.len());
+        let in_flight = std::mem::take(&mut self.buffers.in_flight);
+        let mut released = 0usize;
+        for entry in in_flight {
+            if entry.pending_fds.is_empty() && entry.released.load(Ordering::SeqCst) {
+                // SHM buffers still use the old create-per-frame lifecycle. Only
+                // retain DMA-BUF wl_buffers for a later attach, and never carry
+                // an old renderer generation across a resize/format change.
+                let disposition = released_buffer_disposition(
+                    entry.generation,
+                    self.buffers.generation,
+                    entry.dmabuf_key.is_some() || entry.buffer_id.is_some(),
+                    self.buffers.reusable.len(),
+                );
+                match disposition {
+                    ReleasedBufferDisposition::Drop => {}
+                    ReleasedBufferDisposition::Cache => self.buffers.reusable.push(entry),
+                    ReleasedBufferDisposition::EvictOldestAndCache => {
+                        self.buffers.reusable.swap_remove(0);
+                        self.buffers.reusable.push(entry);
+                    }
+                }
+                released += 1;
+            } else {
+                self.buffers.in_flight.push(entry);
+            }
+        }
         self.frame_stats.released_buffers =
             self.frame_stats.released_buffers.saturating_add(released as u64);
         self.frame_stats.in_flight_count = self.buffers.in_flight.len();
@@ -296,6 +392,7 @@ impl LayerShellState {
 
     pub(super) fn clear_in_flight_buffers(&mut self) {
         self.buffers.in_flight.clear();
+        self.buffers.reusable.clear();
         self.frame_stats.in_flight_count = 0;
     }
 
@@ -340,7 +437,10 @@ impl LayerShellState {
 
 #[cfg(test)]
 mod tests {
-    use super::LayerShellState;
+    use super::{
+        released_buffer_disposition, LayerShellState, ReleasedBufferDisposition,
+        MAX_IN_FLIGHT_BUFFERS,
+    };
     use crate::config::ScaleMode;
     use we_renderer::InputEvent;
 
@@ -370,5 +470,35 @@ mod tests {
             state.pending_input_events.drain(),
             vec![InputEvent::Focus { focused: true }, InputEvent::PointerMove { x: 0.25, y: 0.5 },]
         );
+    }
+    #[test]
+    fn released_dmabuf_from_current_generation_is_cached() {
+        assert_eq!(released_buffer_disposition(4, 4, true, 0), ReleasedBufferDisposition::Cache);
+    }
+
+    #[test]
+    fn released_buffer_from_old_generation_is_dropped() {
+        assert_eq!(released_buffer_disposition(3, 4, true, 0), ReleasedBufferDisposition::Drop);
+    }
+
+    #[test]
+    fn shm_buffer_without_stable_identity_is_not_cached() {
+        assert_eq!(released_buffer_disposition(4, 4, false, 0), ReleasedBufferDisposition::Drop);
+    }
+
+    #[test]
+    fn reusable_cache_evicts_before_exceeding_swapchain_bound() {
+        assert_eq!(
+            released_buffer_disposition(4, 4, true, MAX_IN_FLIGHT_BUFFERS),
+            ReleasedBufferDisposition::EvictOldestAndCache
+        );
+    }
+
+    #[test]
+    fn invalidation_advances_generation() {
+        let mut state = LayerShellState::test_default(ScaleMode::Stretch);
+        let generation = state.buffers.generation;
+        state.invalidate_reusable();
+        assert_eq!(state.buffers.generation, generation + 1);
     }
 }

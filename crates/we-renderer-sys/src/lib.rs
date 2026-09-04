@@ -13,6 +13,9 @@ pub const WE_RENDER_CONFIG_V1_VERSION: u32 = 1;
 pub const WE_RUNTIME_SETTINGS_V1_VERSION: u32 = 1;
 pub const WE_MEDIA_STATE_V1_VERSION: u32 = 1;
 pub const WE_FRAME_V1_VERSION: u32 = 1;
+pub const WE_FRAME_FLAG_PREMULTIPLIED: u32 = 1 << 0;
+pub const WE_FRAME_FLAG_FDS_OMITTED: u32 = 1 << 1;
+pub const WE_FRAME_BUFFER_ID_INVALID: u32 = u32::MAX;
 pub const WE_INPUT_EVENT_V2_VERSION: u32 = 2;
 
 #[repr(C)]
@@ -97,6 +100,8 @@ pub struct we_frame_v1 {
     pub shm_stride: u32,
     pub shm_size: u32,
     pub planes: [we_dmabuf_plane_v1; 4],
+    pub buffer_id: u32,
+    pub reusable_buffer_mask: u32,
 }
 
 #[repr(C)]
@@ -514,10 +519,12 @@ mod tests {
         assert_eq!(offset_of!(we_media_state_v1, thumbnail_rgba), 144);
         assert_eq!(offset_of!(we_media_state_v1, previous_thumbnail_rgba), 160);
 
-        assert_eq!(size_of::<we_frame_v1>(), 112);
+        assert_eq!(size_of::<we_frame_v1>(), 120);
         assert_eq!(align_of::<we_frame_v1>(), 8);
         assert_eq!(offset_of!(we_frame_v1, kind), 8);
         assert_eq!(offset_of!(we_frame_v1, planes), 64);
+        assert_eq!(offset_of!(we_frame_v1, buffer_id), 112);
+        assert_eq!(offset_of!(we_frame_v1, reusable_buffer_mask), 116);
 
         assert_eq!(size_of::<we_input_event_v2>(), 52);
         assert_eq!(align_of::<we_input_event_v2>(), 4);

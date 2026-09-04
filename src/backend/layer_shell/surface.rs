@@ -1,4 +1,4 @@
-use std::os::fd::{AsFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 
 use anyhow::{anyhow, Result};
 use wayland_client::{
@@ -33,10 +33,10 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
     zwlr_layer_surface_v1::{Event as LayerSurfaceEvent, ZwlrLayerSurfaceV1},
 };
-use we_renderer::Frame;
+use we_renderer::{DmabufFrame, Frame};
 
 use crate::backend::{
-    layer_shell::state::{LayerShellState, WaylandBuffer},
+    layer_shell::state::{DmabufKey, DmabufPlaneKey, LayerShellState, WaylandBuffer},
     wayland_common::{input::PointerAxis, output::FRACTIONAL_SCALE_DENOMINATOR},
 };
 
@@ -54,6 +54,48 @@ fn to_opaque_drm_fourcc(fourcc: u32) -> u32 {
         DRM_FORMAT_ARGB8888 => DRM_FORMAT_XRGB8888,
         _ => fourcc,
     }
+}
+
+fn dma_buf_fd_identity(fd: &OwnedFd) -> Option<(u64, u64)> {
+    let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+    let result = unsafe { libc::fstat(fd.as_raw_fd(), metadata.as_mut_ptr()) };
+    if result != 0 {
+        return None;
+    }
+    let metadata = unsafe { metadata.assume_init() };
+    Some((metadata.st_dev, metadata.st_ino))
+}
+
+fn dmabuf_key(frame: &DmabufFrame) -> Option<DmabufKey> {
+    if frame.planes.is_empty() || frame.planes.len() > 4 {
+        return None;
+    }
+
+    let mut planes = [DmabufPlaneKey::default(); 4];
+    for (index, plane) in frame.planes.iter().enumerate() {
+        let (device, inode) = dma_buf_fd_identity(&plane.fd)?;
+        planes[index] =
+            DmabufPlaneKey { device, inode, offset: plane.offset, stride: plane.stride };
+    }
+
+    Some(DmabufKey {
+        width: frame.width,
+        height: frame.height,
+        drm_fourcc: frame.drm_fourcc,
+        drm_modifier: frame.drm_modifier,
+        plane_count: frame.planes.len() as u32,
+        planes,
+    })
+}
+
+fn reusable_identity_matches(
+    entry_buffer_id: Option<u32>,
+    entry_key: Option<DmabufKey>,
+    frame_buffer_id: Option<u32>,
+    frame_key: Option<DmabufKey>,
+) -> bool {
+    frame_buffer_id.is_some_and(|id| entry_buffer_id == Some(id))
+        || frame_key.is_some_and(|key| entry_key == Some(key))
 }
 
 fn release_wayland_pointer(pointer: WlPointer) {
@@ -128,13 +170,21 @@ impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for LayerShellState {
                 let formats = state.dmabuf_feedback.finish_surface_feedback();
                 state.diagnostics.dmabuf_formats_known = true;
                 state.diagnostics.dmabuf_format_count = formats.len();
-                if let Some(session) = &mut state.session {
+                if state.session.is_some() {
                     let pairs: Vec<(u32, u64)> =
                         formats.iter().map(|format| (format.fourcc, format.modifier)).collect();
-                    if let Err(error) = session.set_dmabuf_formats(&pairs) {
-                        tracing::error!(%error, "failed to apply updated DMA-BUF feedback");
-                        state.frame_stats.last_error = Some(error.to_string());
-                        state.running = false;
+                    let applied = state
+                        .session
+                        .as_mut()
+                        .expect("session checked above")
+                        .set_dmabuf_formats(&pairs);
+                    match applied {
+                        Ok(()) => state.invalidate_reusable(),
+                        Err(error) => {
+                            tracing::error!(%error, "failed to apply updated DMA-BUF feedback");
+                            state.frame_stats.last_error = Some(error.to_string());
+                            state.running = false;
+                        }
                     }
                 }
             }
@@ -387,7 +437,7 @@ delegate_noop!(
 // ---------------------------------------------------------------------------
 
 pub(super) fn create_buffer_for_frame(
-    state: &LayerShellState,
+    state: &mut LayerShellState,
     qh: &QueueHandle<LayerShellState>,
     frame: Frame,
 ) -> Result<WaylandBuffer> {
@@ -407,9 +457,42 @@ pub(super) fn create_buffer_for_frame(
                 std::sync::Arc::clone(&released),
             );
             pool.destroy();
-            Ok(WaylandBuffer { buffer, released, pending_fds: vec![shm.fd] })
+            state.frame_stats.wayland_buffers_created =
+                state.frame_stats.wayland_buffers_created.saturating_add(1);
+            Ok(WaylandBuffer {
+                buffer,
+                released,
+                pending_fds: vec![shm.fd],
+                dmabuf_key: None,
+                buffer_id: None,
+                generation: state.buffers.generation,
+            })
         }
         Frame::Dmabuf(dmabuf) => {
+            let reuse_key = dmabuf_key(&dmabuf);
+            let reusable_index = state.buffers.reusable.iter().position(|entry| {
+                reusable_identity_matches(
+                    entry.buffer_id,
+                    entry.dmabuf_key,
+                    dmabuf.buffer_id,
+                    reuse_key,
+                )
+            });
+            if let Some(index) = reusable_index {
+                let mut entry = state.buffers.reusable.swap_remove(index);
+                entry.pending_fds.clear();
+                entry.released.store(false, std::sync::atomic::Ordering::SeqCst);
+                state.frame_stats.wayland_buffers_reused =
+                    state.frame_stats.wayland_buffers_reused.saturating_add(1);
+                return Ok(entry);
+            }
+            if dmabuf.fds_omitted {
+                return Err(anyhow!(
+                    "renderer omitted DMA-BUF fds for unavailable buffer {}",
+                    dmabuf.buffer_id.unwrap_or(u32::MAX)
+                ));
+            }
+
             let dmabuf_obj = state
                 .objects
                 .dmabuf
@@ -439,7 +522,16 @@ pub(super) fn create_buffer_for_frame(
             );
             params.destroy();
             let pending_fds: Vec<OwnedFd> = dmabuf.planes.into_iter().map(|p| p.fd).collect();
-            Ok(WaylandBuffer { buffer, released, pending_fds })
+            state.frame_stats.wayland_buffers_created =
+                state.frame_stats.wayland_buffers_created.saturating_add(1);
+            Ok(WaylandBuffer {
+                buffer,
+                released,
+                pending_fds,
+                dmabuf_key: reuse_key,
+                buffer_id: dmabuf.buffer_id,
+                generation: state.buffers.generation,
+            })
         }
     }
 }
@@ -629,7 +721,8 @@ pub(super) fn update_input_region(
 
 #[cfg(test)]
 mod tests {
-    use super::to_opaque_drm_fourcc;
+    use super::{reusable_identity_matches, to_opaque_drm_fourcc};
+    use crate::backend::layer_shell::state::{DmabufKey, DmabufPlaneKey};
 
     #[test]
     fn exported_rgba_formats_are_presented_as_opaque() {
@@ -645,5 +738,37 @@ mod tests {
             to_opaque_drm_fourcc(u32::from_le_bytes(*b"NV12")),
             u32::from_le_bytes(*b"NV12")
         );
+    }
+
+    fn test_key(inode: u64) -> DmabufKey {
+        DmabufKey {
+            width: 1920,
+            height: 1080,
+            drm_fourcc: u32::from_le_bytes(*b"XR24"),
+            drm_modifier: 0,
+            plane_count: 1,
+            planes: [
+                DmabufPlaneKey { device: 1, inode, offset: 0, stride: 7680 },
+                DmabufPlaneKey::default(),
+                DmabufPlaneKey::default(),
+                DmabufPlaneKey::default(),
+            ],
+        }
+    }
+
+    #[test]
+    fn reusable_buffer_prefers_matching_stable_buffer_id() {
+        assert!(reusable_identity_matches(Some(2), Some(test_key(10)), Some(2), None));
+    }
+
+    #[test]
+    fn reusable_buffer_can_fall_back_to_dmabuf_identity() {
+        assert!(reusable_identity_matches(None, Some(test_key(10)), None, Some(test_key(10))));
+    }
+
+    #[test]
+    fn fdless_frame_without_matching_reusable_identity_is_unavailable() {
+        assert!(!reusable_identity_matches(Some(1), Some(test_key(10)), Some(2), None));
+        assert!(!reusable_identity_matches(None, Some(test_key(10)), None, Some(test_key(11))));
     }
 }

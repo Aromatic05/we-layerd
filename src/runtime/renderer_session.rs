@@ -99,8 +99,10 @@ impl RendererSession {
         self.session.tick().context("renderer tick failed")
     }
 
-    pub(crate) fn acquire_frame(&mut self) -> Result<Option<Frame>> {
-        self.session.acquire_frame().context("failed to acquire frame")
+    pub(crate) fn acquire_frame(&mut self, reusable_buffer_mask: u32) -> Result<Option<Frame>> {
+        self.session
+            .acquire_frame_with_reusable_buffers(reusable_buffer_mask)
+            .context("failed to acquire frame")
     }
 
     pub(crate) fn diagnostics(&self) -> Result<RendererDiagnostics> {

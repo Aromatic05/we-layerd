@@ -56,6 +56,10 @@ fn note_frame_acquired(state: &mut LayerShellState, frame: &Frame) {
             state.frame_stats.last_present_backend = Some(PresentBackend::Dmabuf);
             state.frame_stats.last_frame_width = dmabuf.width;
             state.frame_stats.last_frame_height = dmabuf.height;
+            if dmabuf.fds_omitted {
+                state.frame_stats.dmabuf_fdless_acquires =
+                    state.frame_stats.dmabuf_fdless_acquires.saturating_add(1);
+            }
         }
         Frame::Shm(shm) => {
             state.frame_stats.last_present_backend = Some(PresentBackend::Shm);
@@ -632,6 +636,9 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
                 presented = state.frame_stats.presented,
                 no_frame_polls = state.frame_stats.no_frame_polls,
                 in_flight = state.frame_stats.in_flight_count,
+                wayland_buffers_created = state.frame_stats.wayland_buffers_created,
+                wayland_buffers_reused = state.frame_stats.wayland_buffers_reused,
+                dmabuf_fdless_acquires = state.frame_stats.dmabuf_fdless_acquires,
                 last_present_backend = state
                     .frame_stats
                     .last_present_backend
@@ -720,8 +727,9 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
         }
 
         if (poll_fds[1].revents & libc::POLLIN) != 0 && can_present_next_frame(&state) {
+            let reusable_buffer_mask = state.reusable_buffer_mask();
             if let Some(ref mut session) = state.session {
-                match session.acquire_frame()? {
+                match session.acquire_frame(reusable_buffer_mask)? {
                     Some(frame) => {
                         note_frame_acquired(&mut state, &frame);
                         presenter::present_frame(&mut state, &qh, frame)
