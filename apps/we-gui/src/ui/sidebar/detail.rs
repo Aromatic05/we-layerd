@@ -226,6 +226,7 @@ fn actions_view<'a>(
             text(language.speed(settings.speed)).size(13).color(Color::from_rgb8(196, 199, 204)),
             container(
                 slider(0.1..=3.0, settings.speed, DetailMessage::SpeedChanged)
+                    .step(0.01_f32)
                     .style(md_slider_style)
             )
             .id("detail.speed"),
@@ -234,6 +235,7 @@ fn actions_view<'a>(
                 .color(Color::from_rgb8(196, 199, 204)),
             container(
                 slider(0.0..=1.0, settings.volume, DetailMessage::VolumeChanged)
+                    .step(0.01_f32)
                     .style(md_slider_style)
             )
             .id("detail.volume"),

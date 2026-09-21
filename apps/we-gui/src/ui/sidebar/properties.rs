@@ -94,6 +94,10 @@ fn control<'a>(
             let minimum = property.minimum.unwrap_or(0.0) as f32;
             let maximum = property.maximum.unwrap_or(1.0) as f32;
             let value = current.as_f64().unwrap_or(minimum as f64) as f32;
+            let step = property
+                .precision
+                .map(|precision| 10.0_f32.powi(-(precision.min(38) as i32)))
+                .unwrap_or(1.0);
             container(
                 slider(
                     minimum..=maximum.max(minimum),
@@ -106,6 +110,7 @@ fn control<'a>(
                         }
                     },
                 )
+                .step(step)
                 .style(detail::md_slider_style),
             )
             .id(format!("detail.property.{}.slider", property.key))
