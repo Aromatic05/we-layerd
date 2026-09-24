@@ -1,9 +1,40 @@
 {
-  description = "Development environment for we-layerd";
+  description = "Build and develop we-layerd on x86_64 Linux";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    renderer = {
+      url = "github:Aromatic05/wallpaper-engine-renderer/89dfcd86de2dc0ae537bc136046c5ed05733e7b7";
+      flake = false;
+    };
+    rendererEigen = {
+      url = "gitlab:libeigen/eigen/3147391d946bb4b6c68edd901f2add6ac1f31f8c";
+      flake = false;
+    };
+    rendererSpirvReflect = {
+      url = "github:KhronosGroup/SPIRV-Reflect/c6c0f5c9796bdef40c55065d82e0df67c38a29a4";
+      flake = false;
+    };
+    rendererGlslang = {
+      url = "github:KhronosGroup/glslang/9db8c369e6f49b5c00376040ba8c0cda6cbb7b4d";
+      flake = false;
+    };
+    rendererMiniaudio = {
+      url = "github:mackron/miniaudio/4a5b74bef029b3592c54b6048650ee5f972c1a48";
+      flake = false;
+    };
+    rendererNlohmann = {
+      url = "github:nlohmann/json/0457de21cffb298c22b629e538036bfeb96130b7";
+      flake = false;
+    };
+    rendererQuickjs = {
+      url = "github:quickjs-ng/quickjs/01bce21cb70c771b372ac17a8ef9920ee105e972";
+      flake = false;
+    };
+  };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, renderer, rendererEigen, rendererSpirvReflect
+    , rendererGlslang, rendererMiniaudio, rendererNlohmann, rendererQuickjs }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
@@ -29,7 +60,46 @@
         mkdir -p "$out"
         tar -xzf ${dxcSdkArchive} -C "$out"
       '';
+      projectSource = pkgs.lib.cleanSourceWith {
+        src = self;
+        filter = path: type:
+          if toString path == toString self then true else
+          let relative = pkgs.lib.removePrefix "${toString self}/" (toString path);
+              topLevel = builtins.head (builtins.split "/" relative);
+          in builtins.elem topLevel [
+            ".gitmodules"
+            "Cargo.lock"
+            "Cargo.toml"
+            "apps"
+            "build.rs"
+            "contrib"
+            "crates"
+            "src"
+            "xtask"
+          ];
+      };
+      package = pkgs.callPackage ./nix/package.nix {
+        src = projectSource;
+        inherit renderer cefSdk dxcSdk;
+        rendererSubmodules = {
+          Eigen = rendererEigen;
+          "SPIRV-Reflect" = rendererSpirvReflect;
+          glslang = rendererGlslang;
+          miniaudio = rendererMiniaudio;
+          nlohmann = rendererNlohmann;
+          quickjs = rendererQuickjs;
+        };
+      };
     in {
+      packages.${system} = {
+        default = package;
+        we-layerd = package;
+      };
+
+      nixosModules.default = import ./nix/module.nix {
+        package = self.packages.${system}.default;
+      };
+
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
           rustc
@@ -47,9 +117,12 @@
           patchelf
 
           wayland
+          wayland-scanner
           wayland-protocols
           libxkbcommon
           gtk3
+          pcre2
+          libsysprof-capture
           xdotool
           libdrm
           libva

@@ -4,7 +4,7 @@
 
 `we-layerd` 是面向 Wayland 的原生 Wallpaper Engine 运行时，支持 **场景（Scene）**、**视频（Video）** 和 **网页（Web）** 三类壁纸，不需要通过 Wine 运行 Wallpaper Engine。`we-gui` 提供壁纸浏览、设置与播放控制界面。
 
-项目支持实现 layer-shell 协议的合成器，包括 niri、Hyprland 和 KDE Plasma；GNOME 则通过随项目提供的 Shell 扩展接入。
+守护进程支持实现 layer-shell 协议的合成器，包括 niri、Hyprland 和 KDE Plasma。GNOME 也可通过 GNOME Shell 扩展与 XWayland 窗口桥接播放壁纸。GNOME 后端要求启用 XWayland，目前通过共享内存呈现画面，不使用 DMA-BUF，也不向交互式壁纸转发指针输入。
 
 ## 截图
 
@@ -39,11 +39,11 @@
 - 直接在 `we-gui` 中应用和切换壁纸，不需要手动重启运行时。
 - 提供播放、暂停、恢复、停止和托盘控制。
 - 支持由守护进程管理的命名播放列表，可配置顺序、循环、随机、手动模式以及单条目播放时长。
-- 可以在 GUI 中把不同壁纸或播放列表绑定到不同的 Wayland 输出。
+- 在 layer-shell 合成器上，可以在 GUI 中把不同壁纸或播放列表绑定到不同的 Wayland 输出。
 - 可为每张壁纸分别设置帧率、播放速度、音量和静音状态。
 - 渲染分辨率可以跟随输出，也可以使用固定分辨率。
 - 支持覆盖、适应、拉伸、居中四种缩放方式，以及 0°、90°、180°、270° 旋转。
-- 将鼠标移动、点击和滚轮输入转发给交互式壁纸。
+- 在 layer-shell 合成器上将鼠标移动、点击和滚轮输入转发给交互式壁纸。
 - 可选地让原本以单次模式播放的可见场景音频循环播放，用于兼容部分壁纸。
 
 ### Wayland 原生呈现
@@ -64,10 +64,10 @@
 - 规则导致的暂停与用户手动暂停彼此独立；规则解除不会错误恢复用户手动暂停的壁纸。
 - 合成器不支持 foreign-toplevel 协议、MPRIS/Pulse 不可用或旧渲染器缺少对应 ABI 时，只在运行状态中报告能力不可用，不会让壁纸运行时退出。
 - 使用 Wayland frame callback 和有限的在途缓冲区，避免无节制地产生帧。
-- GNOME 通过随包扩展完成桌面集成，实际壁纸渲染仍由原生运行时负责。
 
 ### 桌面集成
 
+- GNOME 通过 Shell 扩展和 XWayland 窗口桥接播放壁纸；当前使用共享内存呈现，不支持 DMA-BUF。
 - 提供自适应壁纸网格和 GIF 动态预览。
 - 跟随桌面的亮色或暗色外观。
 - 英语与简体中文可以即时切换。
@@ -87,7 +87,7 @@ GUI 会探测常见 Steam 路径、打开创意工坊壁纸库、保存壁纸设
 ## 运行要求
 
 - Linux Wayland 会话。
-- 支持 layer-shell 的合成器，或者启用了随包扩展的 GNOME。
+- 壁纸播放需要支持 layer-shell 的合成器，或启用 XWayland 且安装并启用了项目扩展的 GNOME Shell。
 - 本地安装 Wallpaper Engine，并已下载创意工坊壁纸。
 - 当前基于 CEF 的网页壁纸 helper 仅支持 Linux x86_64。
 
@@ -98,3 +98,4 @@ GUI 会探测常见 Steam 路径、打开创意工坊壁纸库、保存壁纸设
 - [守护进程、IPC 与命令行控制](./ADVANCED.zh-CN.md)
 - [架构说明](./ARCHITECTURE.md)
 - [故障排查](./TROUBLESHOOTING.zh-CN.md)
+- [NixOS GNOME 构建、部署与验证](./NIXOS-GNOME-DEPLOYMENT.zh-CN.md)

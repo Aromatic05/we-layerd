@@ -7,23 +7,38 @@ use std::{
 const UNIT_NAME: &str = "we-layerd.service";
 const MANAGED_UNIT_MARKER: &str =
     "# Managed by we-gui. Do not edit while using the GUI autostart setting.";
+const SYSTEM_MANAGED_MARKER: &str = "X-Managed-By=NixOS services.we-layerd.enable";
 
-pub fn is_enabled() -> Result<bool, String> {
+#[derive(Debug, Clone, Copy)]
+pub struct AutostartStatus {
+    pub enabled: bool,
+    pub system_managed: bool,
+}
+
+pub fn status() -> Result<AutostartStatus, String> {
+    let unit = systemctl(&["cat", UNIT_NAME])?;
+    let system_managed = unit.status.success()
+        && String::from_utf8_lossy(&unit.stdout).contains(SYSTEM_MANAGED_MARKER);
     let output = systemctl(&["is-enabled", UNIT_NAME])?;
     if output.status.success() {
-        return Ok(true);
+        return Ok(AutostartStatus { enabled: true, system_managed });
     }
     if unit_missing(&output) {
-        return Ok(false);
+        return Ok(AutostartStatus { enabled: false, system_managed });
     }
 
     match stdout_state(&output).as_str() {
-        "disabled" | "masked" | "static" | "indirect" => Ok(false),
+        "disabled" | "masked" | "static" | "indirect" => {
+            Ok(AutostartStatus { enabled: false, system_managed })
+        }
         _ => Err(output_error("failed to query systemd user autostart state", &output)),
     }
 }
 
 pub fn set_enabled(enabled: bool, config_path: &Path) -> Result<(), String> {
+    if status()?.system_managed {
+        return Err("we-layerd autostart is managed by the system configuration".to_string());
+    }
     if enabled {
         ensure_unit(config_path)?;
         run_systemctl(&["enable", UNIT_NAME], "failed to enable we-layerd at login")

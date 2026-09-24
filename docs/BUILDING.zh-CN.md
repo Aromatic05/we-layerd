@@ -2,6 +2,37 @@
 
 本文说明如何从源码安装 `we-layerd`，以及如何生成对应的原生发行版软件包。
 
+## NixOS GNOME
+
+Flake 提供 x86_64 Linux 包与 NixOS 模块。可在系统 Flake 中添加输入并启用模块：
+
+```nix
+{
+  inputs.we-layerd.url = "path:/absolute/path/to/we-layerd";
+
+  outputs = { nixpkgs, we-layerd, ... }: {
+    nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
+      # ...
+      modules = [
+        we-layerd.nixosModules.default
+        ({ ... }: {
+          services.we-layerd.enable = true;
+        })
+      ];
+    };
+  };
+}
+```
+
+模块安装 daemon、GUI 与 GNOME Shell 扩展，并在图形会话中启用用户服务。GNOME 后端通过 XWayland 窗口和扩展将画面放到工作区背景；它要求启用 XWayland，并使用共享内存呈现，不使用 DMA-BUF，也不转发指针输入。服务仅在
+`~/.config/we-layerd/config.toml` 存在时启动。扩展启用项通过 GNOME GSettings 默认值提供，
+不会覆盖用户已保存的 dconf 设置；若用户之前显式设置过扩展列表，需自行将
+`we-layerd@aromatic` 加入该列表。GUI 会将此服务显示为系统配置管理，不能从 GUI 中关闭。
+
+从旧版升级且配置中已显式保存 `backend = "layer_shell"` 的用户，需要手动将其改为
+`backend = "gnome"`；环境默认值不会覆盖配置文件中已有的显式值。新建配置会根据 GNOME
+会话选择 `gnome`。XWayland 桥接监听 RandR 布局变化，并重建壁纸窗口与渲染会话；目前所有显示器使用同一份壁纸配置，逐屏壁纸绑定仅适用于 layer-shell 后端。
+
 ## Arch Linux 源码构建
 
 安装项目本体与渲染器依赖：

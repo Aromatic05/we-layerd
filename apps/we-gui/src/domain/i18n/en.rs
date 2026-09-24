@@ -73,6 +73,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::StartOnLoginDescription => {
             "Enables the systemd user service for future graphical logins and applies the saved wallpaper configuration."
         }
+        Text::StartOnLoginManagedDescription => "Managed by system configuration.",
         Text::EnableWallpaperInput => "Enable wallpaper input",
         Text::ForceSceneAudioLoop => "Force loop scene audio",
         Text::ForceSceneAudioLoopDescription => {

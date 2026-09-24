@@ -4,7 +4,7 @@
 
 A native Wallpaper Engine runtime for Wayland. `we-layerd` renders **scene**, **video**, and **web** wallpapers without Wine, while `we-gui` provides the desktop interface for browsing, configuring, and controlling them.
 
-It supports compositors implementing the layer-shell protocol, including niri, Hyprland, and KDE Plasma, as well as GNOME through the bundled Shell extension.
+The daemon supports compositors implementing the layer-shell protocol, including niri, Hyprland, and KDE Plasma. GNOME playback is also supported through the GNOME Shell extension and an XWayland window bridge. The GNOME backend requires XWayland, presents frames through shared memory, and does not currently forward pointer input to interactive wallpapers.
 
 ## Screenshots
 
@@ -39,7 +39,7 @@ It supports compositors implementing the layer-shell protocol, including niri, H
 - Applies and switches wallpapers directly from `we-gui` without manually restarting the runtime.
 - Provides play, pause, resume, stop, and tray controls.
 - Supports named daemon-managed playlists with ordered, repeat, shuffle, manual, and per-entry timing controls.
-- Assigns different wallpapers or playlists to named Wayland outputs from the GUI.
+- On layer-shell compositors, assigns different wallpapers or playlists to named Wayland outputs from the GUI.
 - Exposes MPRIS playback metadata to compatible scene wallpapers and an opt-in 64-bin stereo
   desktop-audio spectrum to scene/web wallpapers.
 - Supports per-output focused/maximized/fullscreen application rules that can mute or pause the
@@ -47,7 +47,7 @@ It supports compositors implementing the layer-shell protocol, including niri, H
 - Configures frame rate, playback speed, audio volume, and mute state per wallpaper.
 - Can follow the output resolution or use a fixed rendering resolution.
 - Supports cover, fit, stretch, and center scaling modes, plus 0°, 90°, 180°, and 270° rotation.
-- Forwards pointer movement, clicks, and scrolling to interactive wallpapers.
+- Forwards pointer movement, clicks, and scrolling to interactive wallpapers on layer-shell compositors.
 - Includes an optional compatibility setting for looping visible scene audio authored as a one-shot sound.
 
 ### Wayland-native rendering
@@ -59,10 +59,10 @@ It supports compositors implementing the layer-shell protocol, including niri, H
 - Falls back to shared-memory presentation when DMA-BUF is unavailable or unsuitable, including common hybrid-GPU configurations.
 - Handles output size, integer and fractional scaling, viewport cropping, and dynamic renderer resizing.
 - Uses Wayland frame callbacks and bounded in-flight buffers to avoid uncontrolled frame production.
-- Supports GNOME through the bundled extension while keeping rendering in the native runtime.
 
 ### Desktop integration
 
+- Supports GNOME wallpaper playback through the GNOME Shell extension, which clones XWayland renderer windows into workspace backgrounds.
 - Provides an adaptive wallpaper grid with animated GIF previews.
 - Follows the desktop light or dark appearance.
 - Switches immediately between English and Simplified Chinese.
@@ -82,7 +82,7 @@ The GUI detects common Steam paths, opens the Workshop library, saves wallpaper 
 ## Requirements
 
 - Linux with a Wayland session.
-- A compositor with layer-shell support, or GNOME with the bundled extension enabled.
+- A compositor with layer-shell support, or GNOME Shell with XWayland enabled and the included extension installed and active.
 - A local Wallpaper Engine installation and downloaded Workshop wallpapers.
 - Linux x86_64 for the current CEF-based web wallpaper helper.
 

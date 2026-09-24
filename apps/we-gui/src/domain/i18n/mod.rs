@@ -222,6 +222,7 @@ pub(crate) enum Text {
     Behaviour,
     StartOnLogin,
     StartOnLoginDescription,
+    StartOnLoginManagedDescription,
     EnableWallpaperInput,
     ForceSceneAudioLoop,
     ForceSceneAudioLoopDescription,
