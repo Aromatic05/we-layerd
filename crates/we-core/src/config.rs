@@ -135,11 +135,29 @@ pub struct RuntimeRulesConfig {
     pub fullscreen: RuntimeRuleAction,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
-    #[default]
     LayerShell,
+    Gnome,
+}
+
+impl Default for Backend {
+    fn default() -> Self {
+        let is_gnome = std::env::var("XDG_CURRENT_DESKTOP")
+            .unwrap_or_default()
+            .split([':', ';'])
+            .any(|desktop| desktop.eq_ignore_ascii_case("gnome"))
+            || std::env::var("DESKTOP_SESSION")
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .starts_with("gnome");
+        if is_gnome {
+            Self::Gnome
+        } else {
+            Self::LayerShell
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -192,6 +210,7 @@ pub struct RendererConfig {
 
 #[derive(Debug, Clone)]
 pub struct LaunchSettings {
+    pub backend: Backend,
     pub assets_path: String,
     pub workshop_path: String,
     pub renderer_library_path: String,
@@ -322,6 +341,7 @@ impl Default for GeneralConfig {
 impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
+            backend: Backend::default(),
             assets_path: String::new(),
             workshop_path: String::new(),
             renderer_library_path: default_renderer_library_path(),
@@ -348,6 +368,7 @@ impl Default for LaunchSettings {
 
 pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();
+    cfg.general.backend = settings.backend;
     cfg.general.interactive = settings.interactive;
     cfg.general.show_fps = settings.show_fps;
     cfg.general.scale_mode = settings.scale_mode;
@@ -430,6 +451,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
 
     Ok(LaunchSettings {
+        backend: cfg.general.backend,
         assets_path: Path::new(&cfg.renderer.assets_path)
             .parent()
             .unwrap_or_else(|| Path::new(""))
@@ -812,6 +834,28 @@ mod tests {
         assert!(!cfg.general.interactive);
         assert_eq!(cfg.general.scale_mode, ScaleMode::Fit);
         assert_eq!(cfg.hooks, hooks);
+    }
+
+    #[test]
+    fn build_config_preserves_selected_backend() {
+        let settings = LaunchSettings { backend: Backend::Gnome, ..LaunchSettings::default() };
+        let config = build_config(&settings, Path::new("/tmp/item/project.json"));
+        assert_eq!(config.general.backend, Backend::Gnome);
+    }
+
+    #[test]
+    fn load_launch_settings_preserves_gnome_backend() {
+        let path = unique_temp_path("gnome-backend-config.toml");
+        fs::write(
+            &path,
+            r#"[general]
+backend = "gnome"
+"#,
+        )
+        .expect("write GNOME backend config");
+        let settings = load_launch_settings(&path).expect("load GNOME backend config");
+        assert_eq!(settings.backend, Backend::Gnome);
+        let _ = fs::remove_file(path);
     }
 
     #[test]

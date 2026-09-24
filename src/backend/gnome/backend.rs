@@ -15,9 +15,9 @@ impl WallpaperBackend for GnomeBackend {
 
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
-            supports_dmabuf: true,
+            supports_dmabuf: false,
             supports_shm: true,
-            supports_pointer_input: true,
+            supports_pointer_input: false,
             needs_external_extension: true,
             owns_wayland_surface: false,
         }

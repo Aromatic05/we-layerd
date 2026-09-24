@@ -1,5 +1,3 @@
-import GLib from 'gi://GLib';
-
 function logDebug(message) {
     console.log(`[we-layerd][gnome-window-bridge-v3-hanabi-port] ${message}`);
 }
@@ -9,7 +7,6 @@ class ManagedWindow {
         this._window = window;
         this._signals = [];
         this._disposed = false;
-        this._lowerLaterId = 0;
 
         this._signals.push(window.connect_after('shown', () => {
             if (this._disposed)
@@ -20,7 +17,7 @@ class ManagedWindow {
         this._signals.push(window.connect_after('raised', () => {
             if (this._disposed)
                 return;
-            this._queueLower();
+            this._window.lower();
         }));
 
         this._signals.push(window.connect('notify::above', () => {
@@ -33,8 +30,8 @@ class ManagedWindow {
         this._signals.push(window.connect('notify::minimized', () => {
             if (this._disposed)
                 return;
-            if (this._window.minimized)
-                this._window.unminimize();
+            if (!this._window.minimized)
+                this._window.minimize();
         }));
 
         this._refresh();
@@ -45,32 +42,14 @@ class ManagedWindow {
             return;
 
         this._window.unmake_above();
-        this._window.stick();
-        this._queueLower();
-    }
-
-    _queueLower() {
-        if (this._disposed || !this._window)
-            return;
-
-        if (this._lowerLaterId)
-            GLib.source_remove(this._lowerLaterId);
-
-        this._lowerLaterId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-            this._lowerLaterId = 0;
-            if (!this._disposed && this._window)
-                this._window.lower();
-            return GLib.SOURCE_REMOVE;
-        });
+        // Keep the renderer out of Mutter's workspace window stack. GNOME's
+        // BackgroundManager clones its compositor actor into each workspace.
+        if (!this._window.minimized)
+            this._window.minimize();
     }
 
     disconnect() {
         this._disposed = true;
-
-        if (this._lowerLaterId) {
-            GLib.source_remove(this._lowerLaterId);
-            this._lowerLaterId = 0;
-        }
 
         this._signals.forEach(signal => {
             this._window.disconnect(signal);

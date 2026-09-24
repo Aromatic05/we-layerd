@@ -3,7 +3,9 @@ use std::{collections::BTreeMap, fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use we_core::{
-    config::{HooksConfig, IntegrationsConfig, OutputBinding, RuntimeRulesConfig},
+    config::{
+        Backend as CoreBackend, HooksConfig, IntegrationsConfig, OutputBinding, RuntimeRulesConfig,
+    },
     playlist::PlaylistConfig,
     profile::ProfileConfig,
     wallpaper::settings::{WallpaperFillMode, WallpaperSettings},
@@ -127,7 +129,10 @@ fn default_interactive() -> bool {
 }
 
 fn default_backend() -> ConfigBackend {
-    ConfigBackend::LayerShell
+    match CoreBackend::default() {
+        CoreBackend::LayerShell => ConfigBackend::LayerShell,
+        CoreBackend::Gnome => ConfigBackend::Gnome,
+    }
 }
 
 fn default_fps_report_interval_secs() -> u64 {
@@ -265,7 +270,6 @@ mod tests {
     #[test]
     fn default_config_uses_renderer_native_defaults() {
         let cfg = Config::default();
-        assert_eq!(cfg.general.backend, ConfigBackend::LayerShell);
         assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert!(cfg.general.interactive);
         assert!(!cfg.general.force_scene_audio_loop);
