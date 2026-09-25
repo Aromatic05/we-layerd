@@ -63,7 +63,25 @@ nix build
 nix develop
 ```
 
-The package builds the native renderer separately, uses the CEF and DXC packages from nixpkgs, and wires the resulting renderer into the Rust build through the prebuilt-renderer interface. The installed wrappers also provide the CEF resource path and GStreamer plugin paths required at runtime.
+The flake pins the renderer and its source submodules as flake inputs. The package builds that renderer separately, uses the CEF and DXC packages from nixpkgs, and wires the result into the Rust build through the prebuilt-renderer interface. The installed wrappers also provide the CEF resource path and GStreamer plugin paths required at runtime.
+
+For a NixOS configuration, import the exported module and enable the service:
+
+```nix
+{
+  inputs.we-layerd.url = "github:Aromatic05/we-layerd";
+
+  outputs = { nixpkgs, we-layerd, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        we-layerd.nixosModules.default
+        { services.we-layerd.enable = true; }
+      ];
+    };
+  };
+}
+```
 
 `we-cef-helper` currently supports Linux x86_64 only, so the flake currently exposes only `x86_64-linux`.
 

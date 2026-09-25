@@ -2,7 +2,7 @@
   lib,
   stdenv,
   rustPlatform,
-  fetchgit,
+  rendererSrc,
   cmake,
   pkg-config,
   makeWrapper,
@@ -29,13 +29,6 @@
 }:
 let
   manifest = lib.importTOML ../../Cargo.toml;
-
-  rendererSrc = fetchgit {
-    url = "https://github.com/Aromatic05/wallpaper-engine-renderer.git";
-    rev = "89dfcd86de2dc0ae537bc136046c5ed05733e7b7";
-    hash = "sha256-nw11exZ+H1cFoibDKriAi3gQlxLaBmyjjtZNMWyvBIw=";
-    fetchSubmodules = true;
-  };
 
   renderer = stdenv.mkDerivation {
     pname = "wallpaper-engine-renderer";
@@ -131,12 +124,17 @@ rustPlatform.buildRustPackage {
   '';
 
   installPhase = ''
-    mkdir -p $out/bin $out/lib $out/share/applications $out/lib/systemd/user
+    mkdir -p $out/bin $out/lib $out/share/applications $out/share/icons/hicolor/scalable/apps
+    mkdir -p $out/share/gnome-shell/extensions/we-layerd@aromatic $out/lib/systemd/user
     cargoTarget=target/${stdenv.hostPlatform.rust.rustcTarget}/release
     install -Dm755 "$cargoTarget/we-layerd" $out/bin/we-layerd
     install -Dm755 "$cargoTarget/we-gui" $out/bin/we-gui
     cp -a ${renderer}/lib/. $out/lib/
+    cp -a contrib/gnome-shell-extension/we-layerd@aromatic/. \
+      $out/share/gnome-shell/extensions/we-layerd@aromatic/
     install -Dm644 apps/we-gui/assets/we-gui.desktop $out/share/applications/we-gui.desktop
+    install -Dm644 apps/we-gui/assets/we-gui-logo.svg \
+      $out/share/icons/hicolor/scalable/apps/we-gui.svg
     install -Dm644 contrib/systemd/we-layerd.service $out/lib/systemd/user/we-layerd.service
     substituteInPlace $out/lib/systemd/user/we-layerd.service \
       --replace-fail /usr/bin/we-layerd $out/bin/we-layerd
@@ -156,5 +154,6 @@ rustPlatform.buildRustPackage {
     description = "Wayland daemon and GUI for Wallpaper Engine wallpapers";
     homepage = "https://github.com/Aromatic05/we-layerd";
     platforms = [ "x86_64-linux" ];
+    mainProgram = "we-layerd";
   };
 }

@@ -16,9 +16,135 @@
         "type": "github"
       }
     },
+    "renderer": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788491866,
+        "narHash": "sha256-0sDOR2GVuAuiIZKwgisatwzicjboMlqo89/L4QPRr7M=",
+        "owner": "Aromatic05",
+        "repo": "wallpaper-engine-renderer",
+        "rev": "89dfcd86de2dc0ae537bc136046c5ed05733e7b7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Aromatic05",
+        "repo": "wallpaper-engine-renderer",
+        "rev": "89dfcd86de2dc0ae537bc136046c5ed05733e7b7",
+        "type": "github"
+      }
+    },
+    "rendererEigen": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1629319318,
+        "narHash": "sha256-1/4xMetKMDOgZgzz3WMxfHUEpmdAm52RqZvz6i0mLEw=",
+        "owner": "libeigen",
+        "repo": "eigen",
+        "rev": "3147391d946bb4b6c68edd901f2add6ac1f31f8c",
+        "type": "gitlab"
+      },
+      "original": {
+        "owner": "libeigen",
+        "repo": "eigen",
+        "rev": "3147391d946bb4b6c68edd901f2add6ac1f31f8c",
+        "type": "gitlab"
+      }
+    },
+    "rendererGlslang": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1746606779,
+        "narHash": "sha256-Ydw20Ztkb6N+DqO2e1uOE2pfLicVemrYX/0nPsm4Lh8=",
+        "owner": "KhronosGroup",
+        "repo": "glslang",
+        "rev": "9db8c369e6f49b5c00376040ba8c0cda6cbb7b4d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "KhronosGroup",
+        "repo": "glslang",
+        "rev": "9db8c369e6f49b5c00376040ba8c0cda6cbb7b4d",
+        "type": "github"
+      }
+    },
+    "rendererMiniaudio": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1700011380,
+        "narHash": "sha256-EOIykyUXYcdDeTYb/Mf3xgcxEpKS4us213tEFwm5mEI=",
+        "owner": "mackron",
+        "repo": "miniaudio",
+        "rev": "4a5b74bef029b3592c54b6048650ee5f972c1a48",
+        "type": "github"
+      },
+      "original": {
+        "owner": "mackron",
+        "repo": "miniaudio",
+        "rev": "4a5b74bef029b3592c54b6048650ee5f972c1a48",
+        "type": "github"
+      }
+    },
+    "rendererNlohmann": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1706469922,
+        "narHash": "sha256-tXvz5ukjB+33gTw4h5AWA40hAGdkWCuKnQMiwT6LRbg=",
+        "owner": "nlohmann",
+        "repo": "json",
+        "rev": "0457de21cffb298c22b629e538036bfeb96130b7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nlohmann",
+        "repo": "json",
+        "rev": "0457de21cffb298c22b629e538036bfeb96130b7",
+        "type": "github"
+      }
+    },
+    "rendererQuickjs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1775732016,
+        "narHash": "sha256-ltrHT0zwJaZXZ8+AR4ouDXVWlVzJcdDzY2wpp8PyDmU=",
+        "owner": "quickjs-ng",
+        "repo": "quickjs",
+        "rev": "01bce21cb70c771b372ac17a8ef9920ee105e972",
+        "type": "github"
+      },
+      "original": {
+        "owner": "quickjs-ng",
+        "repo": "quickjs",
+        "rev": "01bce21cb70c771b372ac17a8ef9920ee105e972",
+        "type": "github"
+      }
+    },
+    "rendererSpirvReflect": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1743785178,
+        "narHash": "sha256-wghhePlcZEwd+qXgAkdFmXe+eBLjbtQXGDmPfxsIcWc=",
+        "owner": "KhronosGroup",
+        "repo": "SPIRV-Reflect",
+        "rev": "c6c0f5c9796bdef40c55065d82e0df67c38a29a4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "KhronosGroup",
+        "repo": "SPIRV-Reflect",
+        "rev": "c6c0f5c9796bdef40c55065d82e0df67c38a29a4",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "renderer": "renderer",
+        "rendererEigen": "rendererEigen",
+        "rendererGlslang": "rendererGlslang",
+        "rendererMiniaudio": "rendererMiniaudio",
+        "rendererNlohmann": "rendererNlohmann",
+        "rendererQuickjs": "rendererQuickjs",
+        "rendererSpirvReflect": "rendererSpirvReflect"
       }
     }
   },
