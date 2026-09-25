@@ -6,11 +6,13 @@ use std::{
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=package/common/renderer-scene-fps-floor.patch");
     println!("cargo:rerun-if-changed=.gitmodules");
     println!("cargo:rerun-if-env-changed=CEF_ROOT");
     println!("cargo:rerun-if-env-changed=CMAKE_BUILD_PARALLEL_LEVEL");
     println!("cargo:rerun-if-env-changed=WE_LAYERD_INSTALL_PREFIX");
     println!("cargo:rerun-if-env-changed=WE_LAYERD_PREBUILT_RENDERER_ROOT");
+    println!("cargo:rerun-if-env-changed=WE_LAYERD_RENDERER_PATCHED");
 
     let workspace_root =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
@@ -35,6 +37,11 @@ fn main() {
     let build_root = workspace_root.join("target/we-renderer-upstream/build");
     let install_root = workspace_root.join("target/we-renderer-upstream/install");
     ensure_recursive_submodules(&upstream_root);
+    let _renderer_patch = if env::var_os("WE_LAYERD_RENDERER_PATCHED").is_none() {
+        Some(apply_renderer_patch(&workspace_root, &upstream_root))
+    } else {
+        None
+    };
     reset_cmake_cache_if_source_changed(&build_root, &upstream_root)
         .expect("failed to reset stale cmake cache");
 
@@ -99,6 +106,53 @@ fn main() {
     println!("cargo:rustc-env=WE_LAYERD_INSTALL_PREFIX={}", install_prefix.display());
     persist_install_prefix(&workspace_root, &install_prefix)
         .expect("failed to persist configured install prefix");
+}
+
+struct RendererPatchGuard {
+    renderer_root: PathBuf,
+    patch_path: PathBuf,
+}
+
+impl Drop for RendererPatchGuard {
+    fn drop(&mut self) {
+        let status = Command::new("patch")
+            .current_dir(&self.renderer_root)
+            .arg("--batch")
+            .arg("--reverse")
+            .arg("-p1")
+            .arg("-i")
+            .arg(&self.patch_path)
+            .status();
+        if !matches!(status, Ok(status) if status.success()) {
+            eprintln!("warning: failed to revert temporary renderer FPS patch");
+        }
+    }
+}
+
+fn apply_renderer_patch(workspace_root: &Path, renderer_root: &Path) -> RendererPatchGuard {
+    let source_file =
+        renderer_root.join("src/backend/scene/internal/engine/WESceneRuntimeDriver.cpp");
+    let source = fs::read_to_string(&source_file)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_file.display()));
+    if !source.contains("if (fps >= 5)") {
+        panic!("renderer FPS floor has changed; review the GNOME FPS compatibility patch");
+    }
+
+    let patch_path = workspace_root.join("package/common/renderer-scene-fps-floor.patch");
+    let status = Command::new("patch")
+        .current_dir(renderer_root)
+        .arg("--batch")
+        .arg("--forward")
+        .arg("-p1")
+        .arg("-i")
+        .arg(&patch_path)
+        .status()
+        .unwrap_or_else(|error| panic!("failed to run patch for the renderer FPS floor: {error}"));
+    if !status.success() {
+        panic!("failed to apply renderer FPS floor patch ({status})");
+    }
+
+    RendererPatchGuard { renderer_root: renderer_root.to_path_buf(), patch_path }
 }
 
 fn validate_renderer_install(install_root: &Path) {

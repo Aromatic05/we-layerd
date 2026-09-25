@@ -9,6 +9,7 @@
 , gcc
 , git
 , patchelf
+, patch
 , gtk3
 , libayatana-appindicator
 , xdotool
@@ -92,6 +93,7 @@ rustPlatform.buildRustPackage {
     makeWrapper
     pkg-config
     cmake
+    patch
     gcc
     git
     patchelf
@@ -153,6 +155,7 @@ rustPlatform.buildRustPackage {
   CMAKE_PREFIX_PATH = "${dxcSdk}";
   WE_LAYERD_INSTALL_PREFIX = "/usr";
   CMAKE_BUILD_PARALLEL_LEVEL = "4";
+  WE_LAYERD_RENDERER_PATCHED = "1";
 
   preBuild = ''
     export PATH="${dxcSdk}/bin:$PATH"

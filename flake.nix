@@ -60,6 +60,11 @@
         mkdir -p "$out"
         tar -xzf ${dxcSdkArchive} -C "$out"
       '';
+      rendererWithOneFpsFloor = pkgs.applyPatches {
+        name = "wallpaper-engine-renderer-configurable-fps";
+        src = renderer;
+        patches = [ ./package/common/renderer-scene-fps-floor.patch ];
+      };
       projectSource = pkgs.lib.cleanSourceWith {
         src = self;
         filter = path: type:
@@ -74,13 +79,15 @@
             "build.rs"
             "contrib"
             "crates"
+            "package"
             "src"
             "xtask"
           ];
       };
       package = pkgs.callPackage ./nix/package.nix {
         src = projectSource;
-        inherit renderer cefSdk dxcSdk;
+        renderer = rendererWithOneFpsFloor;
+        inherit cefSdk dxcSdk;
         rendererSubmodules = {
           Eigen = rendererEigen;
           "SPIRV-Reflect" = rendererSpirvReflect;
@@ -108,6 +115,7 @@
           clippy
           gcc
           cmake
+          patch
           pkg-config
           git
           curl

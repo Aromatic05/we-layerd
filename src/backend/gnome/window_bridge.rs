@@ -1,5 +1,5 @@
 use std::{
-    os::fd::RawFd,
+    os::fd::{AsRawFd, RawFd},
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -26,6 +26,8 @@ use crate::{
 };
 
 use super::x11_window::X11Windows;
+
+const MAX_RUNTIME_IDLE_WAIT: Duration = Duration::from_millis(100);
 
 struct OutputRuntime {
     window_index: usize,
@@ -290,11 +292,57 @@ pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                 info!("XWayland monitor topology changed; restarting GNOME wallpaper runtime");
                 return Ok(RuntimeLoopExit::RestartCurrent);
             }
-            std::thread::sleep(Duration::from_millis(2));
+            wait_for_runtime_events(&windows, &outputs)?;
         }
     })();
     super::dbus::unregister_window(&cfg.gnome.extension_dbus_name, bridge_window);
     result
+}
+
+fn wait_for_runtime_events(windows: &X11Windows, outputs: &[OutputRuntime]) -> Result<()> {
+    let x11_fd = windows.connection.stream().as_raw_fd();
+    let mut poll_fds = Vec::with_capacity(outputs.len() + 1);
+    poll_fds.push(libc::pollfd { fd: x11_fd, events: libc::POLLIN, revents: 0 });
+    poll_fds.extend(outputs.iter().map(|output| libc::pollfd {
+        fd: output.frame_fd,
+        events: libc::POLLIN,
+        revents: 0,
+    }));
+
+    let next_tick =
+        outputs.iter().filter(|output| !output.paused()).map(|output| output.next_tick).min();
+    let timeout = next_tick
+        .map(|at| at.saturating_duration_since(Instant::now()).min(MAX_RUNTIME_IDLE_WAIT))
+        .unwrap_or(MAX_RUNTIME_IDLE_WAIT);
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        let timeout_ms =
+            deadline.saturating_duration_since(Instant::now()).as_millis().min(i32::MAX as u128)
+                as i32;
+        let ready = unsafe {
+            libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as libc::nfds_t, timeout_ms)
+        };
+        if ready >= 0 {
+            for fd in &poll_fds {
+                if fd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+                    if fd.fd == x11_fd {
+                        anyhow::bail!("XWayland connection fd became invalid");
+                    }
+                    anyhow::bail!("renderer frame-ready fd became invalid");
+                }
+            }
+            return Ok(());
+        }
+
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error).context("failed to wait for GNOME wallpaper events");
+        }
+        if Instant::now() >= deadline {
+            return Ok(());
+        }
+    }
 }
 
 fn fd_ready(fd: RawFd) -> Result<bool> {

@@ -1,0 +1,9 @@
+--- a/src/backend/scene/internal/engine/WESceneRuntimeDriver.cpp
++++ b/src/backend/scene/internal/engine/WESceneRuntimeDriver.cpp
+@@ -786,7 +786,7 @@ MHANDLER_CMD_IMPL(MainHandler, SET_PROPERTY) {
+             int32_t fps { 15 };
+             msg->findInt32("value", &fps);
+-            if (fps >= 5) {
++            if (fps >= 1) {
+                 m_render_handler->frameTimer().SetRequiredFps((uint8_t)fps);
+             }
