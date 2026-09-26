@@ -105,10 +105,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             if app.show_settings {
                 return Task::batch(vec![
                     Task::perform(runtime::fetch_status(), Message::StatusLoaded),
-                    Task::perform(
-                        async { autostart::is_enabled() },
-                        Message::AutostartStatusLoaded,
-                    ),
+                    Task::perform(async { autostart::status() }, Message::AutostartStatusLoaded),
                 ]);
             }
             Task::none()
@@ -277,8 +274,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::AutostartStatusLoaded(result) => {
             app.autostart_pending = false;
             match result {
-                Ok(enabled) => {
-                    app.autostart_enabled = enabled;
+                Ok(status) => {
+                    app.autostart_enabled = status.enabled;
+                    app.autostart_system_managed = status.system_managed;
                     app.autostart_error = None;
                 }
                 Err(error) => app.autostart_error = Some(error),
@@ -286,7 +284,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::AutostartToggled(enabled) => {
-            if app.autostart_pending {
+            if app.autostart_pending || app.autostart_system_managed {
                 return Task::none();
             }
             app.autostart_pending = true;
@@ -302,6 +300,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             match result {
                 Ok(()) => {
                     app.autostart_enabled = enabled;
+                    app.autostart_system_managed = false;
                     app.autostart_error = None;
                 }
                 Err(error) => app.autostart_error = Some(error),

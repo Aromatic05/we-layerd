@@ -133,6 +133,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             preferences_path,
             runtime_status: RuntimeStatus::DaemonNotRunning,
             autostart_enabled: false,
+            autostart_system_managed: false,
             autostart_pending: true,
             autostart_error: None,
             preferences_generation: 0,
@@ -160,7 +161,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             Task::done(Message::AutoScan),
             Task::perform(crate::services::runtime::fetch_outputs(), Message::OutputsLoaded),
             Task::perform(
-                async { crate::services::autostart::is_enabled() },
+                async { crate::services::autostart::status() },
                 Message::AutostartStatusLoaded,
             ),
             window::open(window::Settings::default()).1.map(Message::WindowOpened),

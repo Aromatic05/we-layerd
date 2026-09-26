@@ -18,6 +18,7 @@ pub fn build_settings_overlay<'a>(
     language: Language,
     runtime_status: &'a RuntimeStatus,
     autostart_enabled: bool,
+    autostart_system_managed: bool,
     autostart_pending: bool,
     autostart_error: Option<&'a str>,
 ) -> Element<'a, Message> {
@@ -46,7 +47,7 @@ pub fn build_settings_overlay<'a>(
     let autostart_checkbox = checkbox(autostart_enabled)
         .label(language.text(Text::StartOnLogin))
         .style(md_checkbox_style);
-    let autostart_checkbox = if autostart_pending {
+    let autostart_checkbox = if autostart_pending || autostart_system_managed {
         autostart_checkbox
     } else {
         autostart_checkbox.on_toggle(Message::AutostartToggled)
@@ -147,7 +148,12 @@ pub fn build_settings_overlay<'a>(
         .id("settings.scale-mode"),
         section_title(language.text(Text::Behaviour)),
         container(autostart_checkbox).id("settings.autostart"),
-        text(language.text(Text::StartOnLoginDescription)).size(12),
+        text(if autostart_system_managed {
+            language.text(Text::StartOnLoginManagedDescription)
+        } else {
+            language.text(Text::StartOnLoginDescription)
+        })
+        .size(12),
         container(
             checkbox(ui_settings.interactive)
                 .label(language.text(Text::EnableWallpaperInput))

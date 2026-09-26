@@ -35,7 +35,10 @@ in
       wantedBy = [ "graphical-session.target" ];
       partOf = [ "graphical-session.target" ];
       after = [ "graphical-session-pre.target" ];
-      unitConfig.ConditionPathExists = "%h/.config/we-layerd/config.toml";
+      unitConfig = {
+        ConditionPathExists = "%h/.config/we-layerd/config.toml";
+        "X-Managed-By" = "NixOS services.we-layerd.enable";
+      };
       serviceConfig = {
         Type = "simple";
         ExecStart = "${cfg.package}/bin/we-layerd run --config %h/.config/we-layerd/config.toml";

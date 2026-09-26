@@ -108,6 +108,8 @@
           we-layerd = self.packages.${system}.we-layerd;
           nixos-module = pkgs.runCommand "we-layerd-nixos-module-check" { } ''
             test -n "${moduleSystem.config.systemd.user.services.we-layerd.serviceConfig.ExecStart}"
+            test "${moduleSystem.config.systemd.user.services.we-layerd.unitConfig."X-Managed-By"}" = \
+              "NixOS services.we-layerd.enable"
             touch "$out"
           '';
         }
