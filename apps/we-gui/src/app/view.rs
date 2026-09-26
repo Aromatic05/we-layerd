@@ -64,6 +64,7 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
             app.language,
             &app.runtime_status,
             app.autostart_enabled,
+            app.autostart_system_managed,
             app.autostart_pending,
             app.autostart_error.as_deref(),
         ),

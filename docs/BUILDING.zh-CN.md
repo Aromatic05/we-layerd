@@ -54,6 +54,37 @@ DESTDIR="$pkgdir" cargo xtask install --prefix /usr
 
 构建脚本会启用网页壁纸后端。`directx-shader-compiler` 用于满足渲染器的 DXC 探测，`cef` 则提供网页壁纸所需的 Chromium 运行时。
 
+## Nix / NixOS
+
+仓库根目录的 flake 提供 x86_64 Linux 软件包和开发环境：
+
+```bash
+nix build
+nix develop
+```
+
+flake 会把 renderer 及其源码 submodule 固定为 flake inputs。Nix 包会单独构建该 renderer，使用 nixpkgs 提供的 CEF 和 DXC，再通过现有 prebuilt renderer 接口把产物交给 Rust 构建。最终生成的 wrapper 还会设置网页壁纸运行时需要的 CEF 资源路径和 GStreamer 插件路径。
+
+NixOS 配置可以直接导入仓库导出的 module：
+
+```nix
+{
+  inputs.we-layerd.url = "github:Aromatic05/we-layerd";
+
+  outputs = { nixpkgs, we-layerd, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        we-layerd.nixosModules.default
+        { services.we-layerd.enable = true; }
+      ];
+    };
+  };
+}
+```
+
+`we-cef-helper` 当前只支持 Linux x86_64，因此 flake 目前只暴露 `x86_64-linux`。
+
 ## 支持范围
 
 当前打包配置以以下发行版为基准：

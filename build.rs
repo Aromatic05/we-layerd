@@ -14,12 +14,6 @@ fn main() {
 
     let workspace_root =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
-    let upstream_root = workspace_root.join("third_party/wallpaper-engine-renderer");
-    if !upstream_root.exists() {
-        panic!("missing upstream renderer repository at {}", upstream_root.display());
-    }
-    emit_upstream_rerun_hints(&upstream_root);
-
     let install_prefix = configured_install_prefix();
     if let Some(install_root) = env::var_os("WE_LAYERD_PREBUILT_RENDERER_ROOT").map(PathBuf::from) {
         validate_renderer_install(&install_root);
@@ -31,6 +25,12 @@ fn main() {
             .expect("failed to persist configured install prefix");
         return;
     }
+
+    let upstream_root = workspace_root.join("third_party/wallpaper-engine-renderer");
+    if !upstream_root.exists() {
+        panic!("missing upstream renderer repository at {}", upstream_root.display());
+    }
+    emit_upstream_rerun_hints(&upstream_root);
 
     let build_root = workspace_root.join("target/we-renderer-upstream/build");
     let install_root = workspace_root.join("target/we-renderer-upstream/install");

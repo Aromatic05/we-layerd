@@ -73,6 +73,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::StartOnLoginDescription => {
             "为后续图形会话启用 systemd 用户服务，并自动应用已保存的壁纸配置。"
         }
+        Text::StartOnLoginManagedDescription => "由系统配置管理。",
         Text::EnableWallpaperInput => "启用壁纸输入",
         Text::ForceSceneAudioLoop => "强制循环场景音频",
         Text::ForceSceneAudioLoopDescription => {

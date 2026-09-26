@@ -54,6 +54,37 @@ DESTDIR="$pkgdir" cargo xtask install --prefix /usr
 
 The renderer is configured with web wallpaper support enabled. `directx-shader-compiler` satisfies its DXC probe, while `cef` provides the Chromium runtime used by web wallpapers.
 
+## Nix / NixOS
+
+The repository flake provides an x86_64 Linux package and development shell:
+
+```bash
+nix build
+nix develop
+```
+
+The flake pins the renderer and its source submodules as flake inputs. The package builds that renderer separately, uses the CEF and DXC packages from nixpkgs, and wires the result into the Rust build through the prebuilt-renderer interface. The installed wrappers also provide the CEF resource path and GStreamer plugin paths required at runtime.
+
+For a NixOS configuration, import the exported module and enable the service:
+
+```nix
+{
+  inputs.we-layerd.url = "github:Aromatic05/we-layerd";
+
+  outputs = { nixpkgs, we-layerd, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        we-layerd.nixosModules.default
+        { services.we-layerd.enable = true; }
+      ];
+    };
+  };
+}
+```
+
+`we-cef-helper` currently supports Linux x86_64 only, so the flake currently exposes only `x86_64-linux`.
+
 ## Supported baseline
 
 The packaging files are currently maintained against:
