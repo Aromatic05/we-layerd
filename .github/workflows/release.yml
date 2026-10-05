@@ -341,6 +341,9 @@ jobs:
           mkdir -p release-assets
           find package/ubuntu/out -maxdepth 1 -type f -name '*.deb' \
             -exec cp -v {} release-assets/ \;
+          for artifact in release-assets/*.deb; do
+            mv -v "${artifact}" "${artifact%.deb}-ubuntu24.04.deb"
+          done
           test -n "$(find release-assets -maxdepth 1 -type f -name '*.deb' -print -quit)"
 
       - name: Upload Ubuntu 24.04 artifact
@@ -637,6 +640,7 @@ jobs:
     needs:
       - validate
       - ubuntu
+      - ubuntu2404
       - appimage
       - fedora
     runs-on: ubuntu-24.04
@@ -644,11 +648,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download Ubuntu package
+      - name: Download Ubuntu 26.04 package
         uses: actions/download-artifact@v4
         with:
           name: we-layerd-${{ needs.validate.outputs.version }}-ubuntu-amd64
-          path: downloaded-artifacts/ubuntu
+          path: downloaded-artifacts/ubuntu2604
+
+      - name: Download Ubuntu 24.04 package
+        uses: actions/download-artifact@v4
+        with:
+          name: we-layerd-${{ needs.validate.outputs.version }}-ubuntu2404-amd64
+          path: downloaded-artifacts/ubuntu2404
 
       - name: Download AppImage package
         uses: actions/download-artifact@v4
@@ -755,5 +765,5 @@ jobs:
             package/archlinux/PKGBUILD \
             package/fedora/we-layerd.spec \
             package/ubuntu/debian/changelog
-          git commit -m "chore: start ${next_version} development [skip ci]"
+          git commit -m "chore: start ${next_version} development"
           git push origin "HEAD:${DEFAULT_BRANCH}"
