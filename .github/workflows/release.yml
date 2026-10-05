@@ -765,5 +765,5 @@ jobs:
             package/archlinux/PKGBUILD \
             package/fedora/we-layerd.spec \
             package/ubuntu/debian/changelog
-          git commit -m "chore: start ${next_version} development [skip ci]"
+          git commit -m "chore: start ${next_version} development"
           git push origin "HEAD:${DEFAULT_BRANCH}"
