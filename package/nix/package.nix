@@ -148,7 +148,7 @@ rustPlatform.buildRustPackage {
   '';
 
   postFixup = ''
-    gstreamerPluginPath="${gst_all_1.gst-plugins-base}/lib/gstreamer-1.0:${gst_all_1.gst-plugins-bad}/lib/gstreamer-1.0:${gst_all_1.gst-plugins-good}/lib/gstreamer-1.0:${gst_all_1.gst-libav}/lib/gstreamer-1.0"
+    gstreamerPluginPath="${lib.getLib gst_all_1.gstreamer}/lib/gstreamer-1.0:${gst_all_1.gst-plugins-base}/lib/gstreamer-1.0:${gst_all_1.gst-plugins-bad}/lib/gstreamer-1.0:${gst_all_1.gst-plugins-good}/lib/gstreamer-1.0:${gst_all_1.gst-libav}/lib/gstreamer-1.0"
     wrapProgram $out/bin/we-layerd \
       --set CEF_ROOT "${cef-binary}" \
       --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "$gstreamerPluginPath" \
