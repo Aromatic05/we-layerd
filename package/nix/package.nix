@@ -4,6 +4,8 @@
   rustPlatform,
   rendererSrc,
   cmake,
+  cudaSupport ? false,
+  cudaPackages,
   pkg-config,
   makeWrapper,
   cef-binary,
@@ -67,7 +69,8 @@ let
       vulkan-loader
       wayland
       wayland-protocols
-    ];
+    ]
+    ++ lib.optionals cudaSupport [ cudaPackages.cuda_cudart ];
 
     cmakeFlags = [
       "-DBUILD_WEWEB=ON"
@@ -77,6 +80,10 @@ let
       "-DCEF_ROOT=${cef-binary}"
       "-DCMAKE_INSTALL_LIBDIR=lib"
     ];
+    # check for cuda header
+    postConfigure = lib.optionalString cudaSupport ''
+      grep -q "HANABI_HAS_CUDA_HEADER:INTERNAL=1" CMakeCache.txt
+    '';
   };
 in
 rustPlatform.buildRustPackage {

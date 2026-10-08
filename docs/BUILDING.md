@@ -85,6 +85,30 @@ For a NixOS configuration, import the exported module and enable the service:
 
 `we-cef-helper` currently supports Linux x86_64 only, so the flake currently exposes only `x86_64-linux`.
 
+### NVIDIA scene video textures
+
+Enable CUDA interop on NVIDIA systems to keep scene video conversion and transfer on
+the GPU. The default package does not require NVIDIA's unfree CUDA headers. With
+`nixpkgs.config.allowUnfree = true` in your NixOS configuration, select:
+
+```nix
+we-layerd.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+  cudaSupport = true;
+  cudaPackages = pkgs.cudaPackages;
+}
+```
+
+Pass this package to your service (for the bundled module, use
+`services.we-layerd.package`). Supplying `pkgs.cudaPackages` uses your system's
+unfree-package policy rather than the flake's default package set. Only the CUDA
+runtime development headers are needed; `nvcc` is not required. The renderer loads
+the installed NVIDIA driver through GStreamer at runtime.
+
+Without CUDA headers, the renderer silently builds without CUDA interop. NVIDIA
+video decoding may still work, but scene video textures use CPU color conversion
+and GPU readback/upload. `cudaSupport = true` checks header detection during the
+build so this fallback cannot silently recur.
+
 ## Supported baseline
 
 The packaging files are currently maintained against:
