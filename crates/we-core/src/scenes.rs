@@ -11,6 +11,9 @@ pub fn matching_scene<'a>(
     power: Option<ScenePower>,
     connected_outputs: &[String],
 ) -> Option<(usize, &'a SceneRule)> {
+    if !scenes.enabled {
+        return None;
+    }
     scenes
         .rules
         .iter()
@@ -27,7 +30,7 @@ pub fn next_scene_transition(
     power: Option<ScenePower>,
     connected_outputs: &[String],
 ) -> Option<(u8, u16, Option<usize>)> {
-    if minute >= 1440 {
+    if !scenes.enabled || minute >= 1440 {
         return None;
     }
     let days = [
@@ -144,7 +147,7 @@ mod tests {
     fn overnight_window_uses_start_day_and_end_is_exclusive() {
         let mut night = rule("Night", "22:00", "06:00");
         night.days = vec![SceneDay::Mon];
-        let config = SceneConfig { rules: vec![night] };
+        let config = SceneConfig { enabled: true, rules: vec![night] };
         assert_eq!(matching(&config, 23 * 60, SceneDay::Mon), Some("Night"));
         assert_eq!(matching(&config, 5 * 60, SceneDay::Tue), Some("Night"));
         assert_eq!(matching(&config, 6 * 60, SceneDay::Tue), None);
@@ -156,7 +159,8 @@ mod tests {
         let mut battery = rule("Battery", "00:00", "00:00");
         battery.power = Some(ScenePower::Battery);
         battery.outputs = vec!["DP-1".into()];
-        let config = SceneConfig { rules: vec![battery, rule("Default", "00:00", "00:00")] };
+        let config =
+            SceneConfig { enabled: true, rules: vec![battery, rule("Default", "00:00", "00:00")] };
         let time = 500;
         let active = matching_scene(
             &config,
@@ -172,6 +176,7 @@ mod tests {
     #[test]
     fn invalid_partial_windows_never_match() {
         let config = SceneConfig {
+            enabled: true,
             rules: vec![SceneRule {
                 profile: "Broken".into(),
                 start: Some("12:00".into()),
@@ -188,7 +193,7 @@ mod tests {
     fn next_transition_tracks_boundaries_and_weekday_rollover() {
         let mut day = rule("Work", "09:00", "17:00");
         day.days = vec![SceneDay::Mon];
-        let scenes = SceneConfig { rules: vec![day] };
+        let scenes = SceneConfig { enabled: true, rules: vec![day] };
         assert_eq!(
             next_scene_transition(&scenes, 10 * 60, SceneDay::Mon, None, &[]),
             Some((0, 17 * 60, None))
@@ -203,7 +208,8 @@ mod tests {
     fn next_transition_considers_all_day_and_fallback_priority() {
         let mut work = rule("Work", "00:00", "00:00");
         work.days = vec![SceneDay::Mon];
-        let scenes = SceneConfig { rules: vec![work, rule("Fallback", "00:00", "00:00")] };
+        let scenes =
+            SceneConfig { enabled: true, rules: vec![work, rule("Fallback", "00:00", "00:00")] };
         assert_eq!(
             next_scene_transition(&scenes, 22 * 60, SceneDay::Mon, None, &[]),
             Some((1, 0, Some(1)))
@@ -212,7 +218,18 @@ mod tests {
             next_scene_transition(&scenes, 22 * 60, SceneDay::Tue, None, &[]),
             Some((6, 0, Some(0)))
         );
-        let never = SceneConfig { rules: vec![rule("All", "00:00", "00:00")] };
+        let never = SceneConfig { enabled: true, rules: vec![rule("All", "00:00", "00:00")] };
         assert_eq!(next_scene_transition(&never, 600, SceneDay::Mon, None, &[]), None);
+    }
+
+    #[test]
+    fn paused_automation_preserves_rules_but_never_matches_or_forecasts() {
+        let mut scenes =
+            SceneConfig { enabled: false, rules: vec![rule("Desk", "00:00", "00:00")] };
+        assert!(matching_scene(&scenes, 600, SceneDay::Mon, None, &[]).is_none());
+        assert!(next_scene_transition(&scenes, 600, SceneDay::Mon, None, &[]).is_none());
+        assert_eq!(scenes.rules[0].profile, "Desk");
+        scenes.enabled = true;
+        assert_eq!(matching(&scenes, 600, SceneDay::Mon), Some("Desk"));
     }
 }

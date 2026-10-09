@@ -434,8 +434,8 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                     let Ok(cfg) = desired_cfg.lock().map(|guard| guard.clone()) else {
                         break;
                     };
-                    let needs_outputs =
-                        cfg.scenes.rules.iter().any(|rule| !rule.outputs.is_empty());
+                    let needs_outputs = cfg.scenes.enabled
+                        && cfg.scenes.rules.iter().any(|rule| !rule.outputs.is_empty());
                     if needs_outputs
                         && last_output_probe.is_none_or(|at| at.elapsed() >= Duration::from_secs(5))
                     {

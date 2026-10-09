@@ -155,15 +155,31 @@ impl AdaptiveConfig {
 }
 
 /// Ordered profile-selection conditions. The first matching entry has priority.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SceneConfig {
+    #[serde(default = "scene_enabled", skip_serializing_if = "scene_enabled_value")]
+    pub enabled: bool,
     #[serde(default)]
     pub rules: Vec<SceneRule>,
 }
 
+fn scene_enabled() -> bool {
+    true
+}
+
+fn scene_enabled_value(enabled: &bool) -> bool {
+    *enabled
+}
+
+impl Default for SceneConfig {
+    fn default() -> Self {
+        Self { enabled: true, rules: Vec::new() }
+    }
+}
+
 impl SceneConfig {
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
+        self.enabled && self.rules.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -1211,6 +1227,7 @@ outputs = ["DP-1"]
         assert_eq!(parse_clock_time("23:59"), Some(1439));
 
         let mut rules = SceneConfig {
+            enabled: true,
             rules: vec![SceneRule {
                 profile: "Desk".into(),
                 start: Some("09:00".into()),
@@ -1424,6 +1441,7 @@ fullscreen = "pause"
         let path = unique_temp_path("scene-editor.toml");
         fs::write(&path, "[renderer]\nsource = \"/keep/source\"\n\n[custom]\nvalue = 9\n").unwrap();
         let scenes = SceneConfig {
+            enabled: true,
             rules: vec![SceneRule {
                 profile: "Desk".to_string(),
                 start: Some("09:00".into()),
@@ -1446,6 +1464,15 @@ fullscreen = "pause"
         invalid.rules[0].end = None;
         assert!(save_scene_settings(&path, &invalid, &adaptive).is_err());
         assert_eq!(load_launch_settings(&path).unwrap().scenes, scenes);
+        let mut paused = scenes.clone();
+        paused.enabled = false;
+        save_scene_settings(&path, &paused, &adaptive).unwrap();
+        assert_eq!(load_launch_settings(&path).unwrap().scenes, paused);
+        assert_eq!(paused.rules, scenes.rules);
+        let mut empty_and_paused = SceneConfig::default();
+        empty_and_paused.enabled = false;
+        save_scene_settings(&path, &empty_and_paused, &adaptive).unwrap();
+        assert_eq!(load_launch_settings(&path).unwrap().scenes, empty_and_paused);
         save_scene_settings(&path, &SceneConfig::default(), &AdaptiveConfig::default()).unwrap();
         let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
         assert!(value.get("scenes").is_none());
@@ -1465,6 +1492,7 @@ fullscreen = "pause"
         let mut profiles = ProfileConfig::default();
         profiles.definitions.insert("Office".into(), OutputProfile { outputs: outputs.clone() });
         let scenes = SceneConfig {
+            enabled: true,
             rules: vec![SceneRule {
                 profile: "Office".into(),
                 start: None,
