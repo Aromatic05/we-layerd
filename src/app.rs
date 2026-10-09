@@ -641,14 +641,34 @@ fn schedule_scene_settings_reload(
     let saved = Config::load(Some(config_path))?;
     // Lock ordering matches the scheduler: scene ownership before current configuration.
     let mut scene = scene_runtime.lock().map_err(|_| anyhow!("scene runtime lock poisoned"))?;
-    let mut current =
-        desired_cfg.lock().map_err(|_| anyhow!("failed to read running scene config"))?.clone();
-    // Do not overwrite live wallpaper outputs, manual profiles or playlist cursor state.
-    current.scenes = saved.scenes;
-    current.adaptive = saved.adaptive;
-    schedule_config_reconfigure(current, desired_cfg, runtime_cfg_toml, runtime_state, control_tx)?;
-    scene.invalidate_rules();
-    Ok(())
+    for _ in 0..3 {
+        let original =
+            desired_cfg.lock().map_err(|_| anyhow!("failed to read running scene config"))?.clone();
+        let mut next = original.clone();
+        // Preserve outputs, active profiles and playlist progress even if another runtime
+        // command changes them while an automation-only reload is being prepared.
+        next.scenes = saved.scenes.clone();
+        next.adaptive = saved.adaptive;
+        let rules_changed = original.scenes != next.scenes;
+        if original.scenes == next.scenes && original.adaptive == next.adaptive {
+            return Ok(());
+        }
+        if schedule_config_reconfigure_guarded(
+            next,
+            Some(&original),
+            desired_cfg,
+            runtime_cfg_toml,
+            runtime_state,
+            control_tx,
+        )? {
+            // Changing only battery limits must not revoke the user's manual scene override.
+            if rules_changed {
+                scene.invalidate_rules();
+            }
+            return Ok(());
+        }
+    }
+    Err(anyhow!("running config changed during scene reload; retry the reload"))
 }
 
 fn schedule_playlist_selection(
@@ -1427,6 +1447,61 @@ mod tests {
         assert_eq!(live.adaptive.on_battery_fps, Some(24));
         assert_eq!(live.scenes.rules[0].profile, "Day");
         assert_eq!(rx.try_recv().unwrap(), ControlCommand::Reconfigure);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn adaptive_only_reload_preserves_manual_scene_override_and_skips_identical_reload() {
+        use we_core::{
+            config::{AdaptiveConfig, OutputBinding, SceneRule},
+            profile::OutputProfile,
+        };
+
+        let path = temp_config_path("adaptive-only-reload");
+        let mut config = Config::default();
+        config.outputs.insert("DP-1".into(), OutputBinding::wallpaper("old", "/old"));
+        config.profiles.definitions.insert(
+            "Desk".into(),
+            OutputProfile {
+                outputs: [("DP-1".into(), OutputBinding::wallpaper("desk", "/desk"))].into(),
+            },
+        );
+        config.scenes.rules.push(SceneRule {
+            profile: "Desk".into(),
+            start: None,
+            end: None,
+            days: Vec::new(),
+            power: None,
+            outputs: Vec::new(),
+        });
+        let mut automation = crate::runtime::scenes::SceneRuntime::default();
+        let active = automation.reconcile(&config, Some((0, "Desk")), |_| true).unwrap().unwrap();
+        automation.manual_override();
+        let desired = Arc::new(Mutex::new(active.clone()));
+        let status = Arc::new(Mutex::new(active.to_toml_pretty().unwrap()));
+        let runtime = Arc::new(Mutex::new(RuntimeState::new(&active)));
+        let scene = Arc::new(Mutex::new(automation));
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let adaptive = AdaptiveConfig { on_battery_fps: Some(24), ..Default::default() };
+        we_core::config::save_scene_settings(&path, &config.scenes, &adaptive).unwrap();
+        schedule_scene_settings_reload(&path, &desired, &status, &runtime, &tx, &scene).unwrap();
+        assert_eq!(rx.try_recv().unwrap(), ControlCommand::Reconfigure);
+        assert_eq!(desired.lock().unwrap().outputs, active.outputs);
+        assert_eq!(desired.lock().unwrap().adaptive.on_battery_fps, Some(24));
+        assert!(scene.lock().unwrap().render_status_toml().contains("manual_override = true"));
+        assert!(scene.lock().unwrap().render_status_toml().contains("matched_rule = 1"));
+        assert!(scene
+            .lock()
+            .unwrap()
+            .reconcile(&desired.lock().unwrap(), Some((0, "Desk")), |_| true)
+            .unwrap()
+            .is_none());
+
+        // Saving unchanged settings must not generate a redundant renderer reconfigure.
+        schedule_scene_settings_reload(&path, &desired, &status, &runtime, &tx, &scene).unwrap();
+        assert!(rx.try_recv().is_err());
+        assert!(scene.lock().unwrap().render_status_toml().contains("manual_override = true"));
         let _ = fs::remove_file(path);
     }
 
