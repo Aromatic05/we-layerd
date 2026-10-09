@@ -644,6 +644,36 @@ pub fn save_integrations_and_rules(
     save_config_document(path, &document)
 }
 
+/// Save only automation-related sections, leaving unrelated wallpaper settings untouched.
+pub fn save_scene_settings(
+    path: &Path,
+    scenes: &SceneConfig,
+    adaptive: &AdaptiveConfig,
+) -> Result<()> {
+    scenes.validate().map_err(anyhow::Error::msg)?;
+    if let Some(fps) = adaptive.on_battery_fps {
+        anyhow::ensure!(
+            (1..=360).contains(&fps),
+            "adaptive.on_battery_fps must be between 1 and 360"
+        );
+    }
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    if scenes.is_empty() {
+        root.remove("scenes");
+    } else {
+        root.insert("scenes".to_string(), toml::Value::try_from(scenes)?);
+    }
+    if adaptive.is_disabled() {
+        root.remove("adaptive");
+    } else {
+        root.insert("adaptive".to_string(), toml::Value::try_from(adaptive)?);
+    }
+    save_config_document(path, &document)
+}
+
 pub fn save_playlists(path: &Path, playlists: &PlaylistConfig) -> Result<()> {
     let mut document = load_config_document(path)?;
     let Some(root) = document.as_table_mut() else {
@@ -878,9 +908,10 @@ mod tests {
     use super::{
         build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
         save_force_scene_audio_loop, save_integrations_and_rules, save_outputs, save_playlists,
-        save_profiles_and_outputs, save_wallpapers_playlists_and_outputs, HookCommand, HooksConfig,
-        IntegrationsConfig, LaunchSettings, OutputBinding, RuntimeRuleAction, RuntimeRulesConfig,
-        ScaleMode,
+        save_profiles_and_outputs, save_scene_settings, save_wallpapers_playlists_and_outputs,
+        AdaptiveConfig, HookCommand, HooksConfig, IntegrationsConfig, LaunchSettings,
+        OutputBinding, RuntimeRuleAction, RuntimeRulesConfig, ScaleMode, SceneConfig, SceneDay,
+        ScenePower, SceneRule,
     };
     use crate::playlist::{Playlist, PlaylistConfig, PlaylistItem, PlaylistMode};
     use crate::profile::{OutputProfile, ProfileConfig};
@@ -1363,6 +1394,41 @@ fullscreen = "pause"
         let value = toml::from_str::<toml::Value>(&document).expect("valid TOML");
         assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/fallback"));
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn scene_settings_patch_preserves_unrelated_sections_and_rejects_invalid_data() {
+        let path = unique_temp_path("scene-editor.toml");
+        fs::write(&path, "[renderer]\nsource = \"/keep/source\"\n\n[custom]\nvalue = 9\n").unwrap();
+        let scenes = SceneConfig {
+            rules: vec![SceneRule {
+                profile: "Desk".to_string(),
+                start: Some("09:00".into()),
+                end: Some("18:00".into()),
+                days: vec![SceneDay::Mon],
+                power: Some(ScenePower::Ac),
+                outputs: vec!["DP-1".into()],
+            }],
+        };
+        let adaptive =
+            AdaptiveConfig { on_battery_fps: Some(24), on_battery: RuntimeRuleAction::Mute };
+        save_scene_settings(&path, &scenes, &adaptive).unwrap();
+        let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/source"));
+        assert_eq!(value["custom"]["value"].as_integer(), Some(9));
+        assert_eq!(value["adaptive"]["on_battery_fps"].as_integer(), Some(24));
+        assert_eq!(load_launch_settings(&path).unwrap().scenes, scenes);
+
+        let mut invalid = scenes.clone();
+        invalid.rules[0].end = None;
+        assert!(save_scene_settings(&path, &invalid, &adaptive).is_err());
+        assert_eq!(load_launch_settings(&path).unwrap().scenes, scenes);
+        save_scene_settings(&path, &SceneConfig::default(), &AdaptiveConfig::default()).unwrap();
+        let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(value.get("scenes").is_none());
+        assert!(value.get("adaptive").is_none());
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/source"));
         let _ = fs::remove_file(path);
     }
 }
