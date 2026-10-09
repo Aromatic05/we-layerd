@@ -2,6 +2,7 @@ mod en;
 mod zh_hans;
 
 use std::fmt;
+use we_core::config::SceneDay;
 
 use super::runtime_status::RuntimeStatus;
 
@@ -42,6 +43,25 @@ impl Language {
             Self::English if count == 1 => "1 item".to_string(),
             Self::English => format!("{count} items"),
             Self::SimplifiedChinese => format!("{count} 项"),
+        }
+    }
+
+    pub(crate) fn scene_day(self, day: SceneDay) -> &'static str {
+        match (self, day) {
+            (Self::English, SceneDay::Mon) => "Mon",
+            (Self::English, SceneDay::Tue) => "Tue",
+            (Self::English, SceneDay::Wed) => "Wed",
+            (Self::English, SceneDay::Thu) => "Thu",
+            (Self::English, SceneDay::Fri) => "Fri",
+            (Self::English, SceneDay::Sat) => "Sat",
+            (Self::English, SceneDay::Sun) => "Sun",
+            (Self::SimplifiedChinese, SceneDay::Mon) => "周一",
+            (Self::SimplifiedChinese, SceneDay::Tue) => "周二",
+            (Self::SimplifiedChinese, SceneDay::Wed) => "周三",
+            (Self::SimplifiedChinese, SceneDay::Thu) => "周四",
+            (Self::SimplifiedChinese, SceneDay::Fri) => "周五",
+            (Self::SimplifiedChinese, SceneDay::Sat) => "周六",
+            (Self::SimplifiedChinese, SceneDay::Sun) => "周日",
         }
     }
 
@@ -194,6 +214,42 @@ pub(crate) enum Text {
     ApplyProfile,
     ProfileOutputs,
     ProfileEmpty,
+    SmartScenes,
+    ScenesSubtitle,
+    SceneAddRule,
+    SceneNoProfiles,
+    SceneNoRules,
+    ScenePriority,
+    SceneProfile,
+    SceneTime,
+    SceneStart,
+    SceneEnd,
+    SceneAllDay,
+    SceneDays,
+    SceneEveryDay,
+    ScenePower,
+    SceneAny,
+    SceneAc,
+    SceneBattery,
+    SceneDisplays,
+    SceneAnyDisplay,
+    SceneBatteryFps,
+    SceneBatteryAction,
+    ScenePreview,
+    ScenePreviewHint,
+    SceneMatch,
+    SceneNoMatch,
+    SceneCurrent,
+    SceneSave,
+    SceneDiscard,
+    SceneUnsaved,
+    SceneSaved,
+    SceneDelete,
+    SceneMoveUp,
+    SceneMoveDown,
+    SceneStatusUnavailable,
+    SceneManualOverride,
+    SceneError,
     FilterAll,
     FilterWeb,
     FilterScene,

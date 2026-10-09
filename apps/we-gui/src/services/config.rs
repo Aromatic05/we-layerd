@@ -4,8 +4,9 @@ use we_core::{
     config::{
         build_config_for_wallpaper, save_config, save_force_scene_audio_loop,
         save_integrations_and_rules, save_playlists_profiles_and_outputs,
-        save_profiles_and_outputs, save_wallpapers, save_wallpapers_playlists_profiles_and_outputs,
-        IntegrationsConfig, LaunchSettings, OutputBinding, RuntimeRulesConfig,
+        save_profiles_and_outputs, save_scene_settings, save_wallpapers,
+        save_wallpapers_playlists_profiles_and_outputs, AdaptiveConfig, IntegrationsConfig,
+        LaunchSettings, OutputBinding, RuntimeRulesConfig, SceneConfig,
     },
     playlist::PlaylistConfig,
     profile::ProfileConfig,
@@ -35,6 +36,14 @@ pub(crate) fn persist_integrations_and_rules(
     rules: &RuntimeRulesConfig,
 ) -> Result<(), String> {
     save_integrations_and_rules(config_path, integrations, rules).map_err(|error| error.to_string())
+}
+
+pub(crate) fn persist_scene_settings(
+    config_path: &Path,
+    scenes: &SceneConfig,
+    adaptive: &AdaptiveConfig,
+) -> Result<(), String> {
+    save_scene_settings(config_path, scenes, adaptive).map_err(|error| error.to_string())
 }
 
 pub(crate) fn persist_wallpapers(

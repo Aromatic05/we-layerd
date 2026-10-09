@@ -324,6 +324,26 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::ScenesPressed
+        | Message::SceneSelect(_)
+        | Message::SceneAdd
+        | Message::SceneDelete
+        | Message::SceneMove(_)
+        | Message::SceneProfileSelected(_)
+        | Message::SceneStartChanged(_)
+        | Message::SceneEndChanged(_)
+        | Message::SceneAllDay
+        | Message::SceneDayToggled(_, _)
+        | Message::ScenePowerSelected(_)
+        | Message::SceneOutputToggled(_, _)
+        | Message::SceneBatteryFpsChanged(_)
+        | Message::SceneBatteryActionSelected(_)
+        | Message::SceneSave
+        | Message::SceneDiscard
+        | Message::ScenePreviewTimeChanged(_)
+        | Message::ScenePreviewDaySelected(_)
+        | Message::ScenePreviewPowerSelected(_)
+        | Message::ScenePreviewOutputToggled(_, _) => super::scene_update::update(app, message),
         Message::PlaylistsPressed => {
             app.sidebar = match app.sidebar {
                 Some(Sidebar::Playlist) => None,

@@ -105,6 +105,12 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         )
         .id("library.profiles"),
         container(
+            button(text(format!("◷  {}", language.text(Text::SmartScenes))).size(16))
+                .on_press(Message::ScenesPressed)
+                .style(top_bar_button_style),
+        )
+        .id("library.scenes"),
+        container(
             button(text(format!("⚙  {}", language.text(Text::OpenSettings))).size(16))
                 .on_press(Message::SettingsPressed)
                 .style(top_bar_button_style),
