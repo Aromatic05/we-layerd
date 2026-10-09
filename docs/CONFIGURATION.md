@@ -225,7 +225,8 @@ rules and updates only `[scenes]` and `[adaptive]`, keeping `[outputs]` and wall
 intact; **Discard changes** restores the last saved rules.
 
 Displays that are currently disconnected can still be used in conditions: enter their stable
-Wayland output name (for example `DP-1`) under **Required displays**, then select that name.
+Wayland output name (for example `DP-1`) under **Required displays** and click **Add display name**.
+The newly added display is immediately selected as a required condition.
 
 The **Test conditions** section is offline: choose a clock time, weekday, power source and
 monitor set to see the first matched rule, its conditions, and the next time-based transition in
