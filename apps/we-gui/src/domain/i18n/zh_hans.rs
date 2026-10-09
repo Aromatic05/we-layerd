@@ -69,7 +69,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ScenePreview => "条件模拟",
         Text::ScenePreviewHint => "仅模拟规则匹配，不实际切换或保存壁纸。",
         Text::SceneMatch => "命中的规则",
-        Text::SceneNoMatch => "没有匹配规则，保留当前壁纸",
+        Text::SceneNoMatch => "无匹配规则；先前自动切换的显示器将恢复原始壁纸绑定",
         Text::SceneCurrent => "守护进程实时状态",
         Text::SceneAppliedBatteryFps => "当前电池帧率上限",
         Text::ScenePowerUnknown => "电源状态未知",

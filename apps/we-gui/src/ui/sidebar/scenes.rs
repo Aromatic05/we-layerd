@@ -75,6 +75,10 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
     let profiles = app.launch_settings.profiles.definitions.keys().cloned().collect::<Vec<_>>();
     if profiles.is_empty() {
         rules = rules.push(text(language.text(Text::SceneNoProfiles)).size(13));
+        rules = rules.push(
+            button(text(language.text(Text::CreateProfile)).size(13))
+                .on_press(Message::ProfilesPressed),
+        );
     } else {
         rules = rules.push(
             button(text(format!("+  {}", language.text(Text::SceneAddRule))))

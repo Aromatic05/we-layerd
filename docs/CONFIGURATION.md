@@ -224,12 +224,15 @@ configures the optional battery FPS cap and mute/pause behavior. **Save rules** 
 rules and updates only `[scenes]` and `[adaptive]`, keeping `[outputs]` and wallpaper settings
 intact; **Discard changes** restores the last saved rules.
 
+Displays that are currently disconnected can still be used in conditions: enter their stable
+Wayland output name (for example `DP-1`) under **Required displays**, then select that name.
+
 The **Test conditions** section is offline: choose a clock time, weekday, power source and
 monitor set to see the first matched rule, its conditions, and the next time-based transition in
 the following seven days. The forecast assumes power/monitor connections stay unchanged. It does
 not apply profiles or touch the system wallpaper. The **Live daemon state** section is read from
 `we-layerd ctl status`, and reports the current match, applied profile, manual override, errors
-and power state when a daemon is running.
+and power state when a daemon is running, including the active battery FPS cap when applicable.
 
 Saving while the new daemon is active sends `we-layerd reload-scenes --config PATH`. Unlike
 `we-layerd switch --config PATH`, this reloads **only** automation and adaptive settings without

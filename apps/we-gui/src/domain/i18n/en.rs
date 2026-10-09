@@ -69,7 +69,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::ScenePreview => "Test conditions",
         Text::ScenePreviewHint => "Simulation only. Does not switch or save wallpaper settings.",
         Text::SceneMatch => "Matching rule",
-        Text::SceneNoMatch => "No matching profile — existing wallpaper stays in place",
+        Text::SceneNoMatch => "No matching rule — original display bindings are restored after automation",
         Text::SceneCurrent => "Live daemon state",
         Text::SceneAppliedBatteryFps => "Battery FPS cap in effect",
         Text::ScenePowerUnknown => "Power state unknown",

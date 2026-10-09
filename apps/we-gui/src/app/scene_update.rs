@@ -104,7 +104,10 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 }
             }
         }
-        Message::SceneOutputNameChanged(value) => app.scene_editor.output_name_input = value,
+        Message::SceneOutputNameChanged(value) => {
+            app.scene_editor.output_name_input = value;
+            app.scene_editor.error = None;
+        }
         Message::SceneAddOutput => {
             if !app.scene_editor.add_output_name() {
                 app.scene_editor.error = Some(app.language.text(Text::SceneInvalidDisplay).into());

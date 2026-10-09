@@ -71,7 +71,7 @@ impl SceneEditor {
     /// A repeat is a no-op; existing conditions never get duplicated.
     pub(crate) fn add_output_name(&mut self) -> bool {
         let name = self.output_name_input.trim().to_string();
-        if name.is_empty() || name.chars().any(char::is_whitespace) {
+        if name.is_empty() {
             return false;
         }
         let Some(rule) = self.selected_rule_mut() else { return false };
@@ -249,8 +249,10 @@ mod tests {
         editor.output_name_input = "DP-1".into();
         assert!(editor.add_output_name());
         assert_eq!(editor.rules.rules[0].outputs, ["DP-1"]);
-        editor.output_name_input = " HDMI A-1 ".into();
+        editor.output_name_input = "  \t ".into();
         assert!(!editor.add_output_name());
-        assert_eq!(editor.rules.rules[0].outputs, ["DP-1"]);
+        editor.output_name_input = " HDMI A-1 ".into();
+        assert!(editor.add_output_name());
+        assert_eq!(editor.rules.rules[0].outputs, ["DP-1", "HDMI A-1"]);
     }
 }
