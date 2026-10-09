@@ -1028,6 +1028,15 @@ mod tests {
         config.integrations.audio_source = "custom.monitor".to_string();
         config.rules.focused = we_core::config::RuntimeRuleAction::Mute;
         config.rules.fullscreen = we_core::config::RuntimeRuleAction::Pause;
+        config.adaptive.on_battery_fps = Some(24);
+        config.scenes.rules.push(we_core::config::SceneRule {
+            profile: "Desk".to_string(),
+            start: None,
+            end: None,
+            days: vec![],
+            power: None,
+            outputs: vec![],
+        });
         let second = build_output_specs(&config, &["DP-1".to_string()]).expect("second specs");
 
         assert_eq!(first["DP-1"].fingerprint, second["DP-1"].fingerprint);

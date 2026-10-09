@@ -131,7 +131,8 @@ compose with the existing per-output window rules. A manual Pause stays in effec
 Resume, even if the battery condition disappears. Settings are disabled when `[adaptive]` is
 absent; unknown power state (including many desktop systems) applies no battery policy. Power
 is detected through `/sys/class/power_supply` and shown in `we-layerd ctl status` under
-`[integration_runtime]`.
+`[integration_runtime]`. Adaptive tick pacing and automatic pause/mute currently apply to the
+layer-shell backend; GNOME's separate rendering path is not yet governed by this policy.
 
 Current DMA-BUF scope:
 

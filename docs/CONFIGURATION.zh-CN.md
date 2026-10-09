@@ -79,7 +79,8 @@ on_battery = "keep" # 可选："keep"、"mute"、"pause"
 也不需要重建 renderer session。暂停/静音会叠加到已有窗口规则；手动暂停不会
 因为切回交流电而被取消。未设置 `[adaptive]` 时功能关闭，检测不到电源状态时
 不启用节电策略。电源来自 `/sys/class/power_supply`，状态见 `we-layerd ctl status`
-的 `[integration_runtime]`。
+的 `[integration_runtime]`。当前自适应帧率和暂停/静音策略仅接入 layer-shell 后端，
+GNOME 的独立渲染路径暂不受此策略控制。
 
 ## 多输出 layer-shell 运行时
 
