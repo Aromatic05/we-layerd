@@ -142,28 +142,17 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let switch_tx = switch_tx.clone();
             let scene_runtime = scene_runtime.clone();
             move |config_path, automation_only| {
-                let mut next_cfg = Config::load(Some(config_path))?;
                 if automation_only {
-                    // Keep live output bindings, playlist progression and manually selected
-                    // wallpapers intact. `switch-config` is a separate, explicit manual action.
-                    let mut scene =
-                        scene_runtime.lock().map_err(|_| anyhow!("scene runtime lock poisoned"))?;
-                    let mut current = desired_cfg
-                        .lock()
-                        .map_err(|_| anyhow!("failed to read running scene config"))?
-                        .clone();
-                    current.scenes = next_cfg.scenes;
-                    current.adaptive = next_cfg.adaptive;
-                    schedule_config_reconfigure(
-                        current,
+                    return schedule_scene_settings_reload(
+                        config_path,
                         &desired_cfg,
                         &runtime_cfg_toml,
                         &runtime_state,
                         &switch_tx,
-                    )?;
-                    scene.invalidate_rules();
-                    return Ok(());
+                        &scene_runtime,
+                    );
                 }
+                let mut next_cfg = Config::load(Some(config_path))?;
                 resolve_renderer_assets_path(
                     &mut next_cfg,
                     we_core::steam::discover_wallpaper_engine_path,
@@ -639,6 +628,27 @@ fn persist_output_binding_change(
         we_core::config::save_profiles_and_outputs(path, &next_cfg.profiles, &next_cfg.outputs)?;
     }
     Ok(next_cfg)
+}
+
+fn schedule_scene_settings_reload(
+    config_path: &Path,
+    desired_cfg: &Arc<Mutex<Config>>,
+    runtime_cfg_toml: &Arc<Mutex<String>>,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    control_tx: &mpsc::Sender<ControlCommand>,
+    scene_runtime: &Arc<Mutex<SceneRuntime>>,
+) -> Result<()> {
+    let saved = Config::load(Some(config_path))?;
+    // Lock ordering matches the scheduler: scene ownership before current configuration.
+    let mut scene = scene_runtime.lock().map_err(|_| anyhow!("scene runtime lock poisoned"))?;
+    let mut current =
+        desired_cfg.lock().map_err(|_| anyhow!("failed to read running scene config"))?.clone();
+    // Do not overwrite live wallpaper outputs, manual profiles or playlist cursor state.
+    current.scenes = saved.scenes;
+    current.adaptive = saved.adaptive;
+    schedule_config_reconfigure(current, desired_cfg, runtime_cfg_toml, runtime_state, control_tx)?;
+    scene.invalidate_rules();
+    Ok(())
 }
 
 fn schedule_playlist_selection(
@@ -1216,7 +1226,7 @@ mod tests {
     use super::{
         handle_runtime_control_command, persist_output_binding_change, request_runtime_shutdown,
         resolve_renderer_assets_path, schedule_config_reconfigure_guarded,
-        update_playlist_active_config, RuntimePhase, RuntimeState,
+        schedule_scene_settings_reload, update_playlist_active_config, RuntimePhase, RuntimeState,
     };
     use crate::{
         config::Config,
@@ -1387,6 +1397,37 @@ mod tests {
         assert_eq!(desired.lock().unwrap().playlists.active, Some("Manual".to_string()));
         assert!(desired.lock().unwrap().outputs.is_empty());
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn scene_settings_reload_preserves_live_wallpaper_and_playlist_state() {
+        let path = temp_config_path("scene-only-reload");
+        fs::write(
+            &path,
+            "[adaptive]\non_battery_fps = 24\n\n[[scenes.rules]]\nprofile = \"Day\"\n",
+        )
+        .unwrap();
+        let mut config = Config::default();
+        config.renderer.source = "/still-running".to_string();
+        config.outputs.insert(
+            "DP-1".into(),
+            we_core::config::OutputBinding::wallpaper("42", "/my-live-wallpaper"),
+        );
+        config.playlists.active = Some("Manual".into());
+        let desired = Arc::new(Mutex::new(config.clone()));
+        let status = Arc::new(Mutex::new(config.to_toml_pretty().unwrap()));
+        let runtime = Arc::new(Mutex::new(RuntimeState::new(&config)));
+        let scene = Arc::new(Mutex::new(crate::runtime::scenes::SceneRuntime::default()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        schedule_scene_settings_reload(&path, &desired, &status, &runtime, &tx, &scene).unwrap();
+        let live = desired.lock().unwrap();
+        assert_eq!(live.renderer.source, "/still-running");
+        assert_eq!(live.outputs, config.outputs);
+        assert_eq!(live.playlists, config.playlists);
+        assert_eq!(live.adaptive.on_battery_fps, Some(24));
+        assert_eq!(live.scenes.rules[0].profile, "Day");
+        assert_eq!(rx.try_recv().unwrap(), ControlCommand::Reconfigure);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
