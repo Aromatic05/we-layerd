@@ -88,7 +88,7 @@ fn matches_rule(rule: &SceneRule, time: LocalTime, power: PowerState, outputs: &
 
 /// Runtime-only overlay over the persisted output bindings. Manual changes always win until
 /// the selected rule changes. The overlay never writes the user's configuration file.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct SceneRuntime {
     matched: Option<String>,
     active: Option<String>,
@@ -99,6 +99,18 @@ pub(crate) struct SceneRuntime {
 }
 
 impl SceneRuntime {
+    /// A user explicitly applied a configuration or output profile. Discard ownership of the
+    /// automatic overlay even when the selected bindings happen to be identical.
+    pub(crate) fn manual_override(&mut self) {
+        if self.matched.is_some() {
+            self.manual_override = true;
+            self.active = None;
+            self.applied = None;
+            self.baseline = None;
+            self.last_error = None;
+        }
+    }
+
     pub(crate) fn reconcile<F>(
         &mut self,
         config: &Config,
@@ -117,18 +129,19 @@ impl SceneRuntime {
             self.baseline = None;
         }
         if selected == self.matched {
+            if selected.is_none() {
+                self.last_error = None;
+            }
             return Ok(None);
         }
-
-        self.matched = selected.clone();
-        self.last_error = None;
-        // A new condition transition is a new opportunity for automatic selection.
-        self.manual_override = false;
         if selected.is_none() {
             let restore = if owned { self.baseline.take() } else { None };
+            self.matched = None;
             self.active = None;
             self.applied = None;
             self.baseline = None;
+            self.last_error = None;
+            self.manual_override = false;
             return Ok(restore.filter(|outputs| *outputs != config.outputs).map(|outputs| {
                 let mut next = config.clone();
                 next.outputs = outputs;
@@ -136,7 +149,7 @@ impl SceneRuntime {
             }));
         }
 
-        let profile = selected.expect("selected profile");
+        let profile = selected.as_deref().expect("selected profile");
         let mut next = config.clone();
         if let Err(error) = apply_profile_to_outputs(
             &config.profiles,
@@ -145,14 +158,22 @@ impl SceneRuntime {
             &mut next.outputs,
             source_available,
         ) {
+            // Keep the previous match so a missing source/profile can recover without a
+            // clock or power transition. Report a repeated identical error only once.
+            if self.last_error.as_deref() == Some(&error) {
+                return Ok(None);
+            }
             self.last_error = Some(error.clone());
             return Err(error);
         }
+        self.active = selected.clone();
+        self.matched = selected;
+        self.last_error = None;
+        self.manual_override = false;
         if self.baseline.is_none() {
             self.baseline = Some(config.outputs.clone());
         }
         self.applied = Some(next.outputs.clone());
-        self.active = Some(profile);
         Ok((next.outputs != config.outputs).then_some(next))
     }
 
@@ -268,5 +289,40 @@ mod tests {
         assert!(runtime.reconcile(&manual, Some("Desk"), |_| true).unwrap().is_none());
         assert!(runtime.reconcile(&manual, None, |_| true).unwrap().is_none());
         assert_eq!(manual.outputs["DP-1"].wallpaper_id.as_deref(), Some("99"));
+    }
+
+    #[test]
+    fn explicit_manual_apply_of_identical_bindings_is_not_undone_at_rule_end() {
+        let mut config = Config::default();
+        let initial = OutputBinding::wallpaper("old", "/old");
+        let selected = OutputBinding::wallpaper("desk", "/desk");
+        config.outputs.insert("DP-1".into(), initial);
+        config.profiles.definitions.insert(
+            "Desk".into(),
+            OutputProfile { outputs: [("DP-1".into(), selected.clone())].into() },
+        );
+        let mut runtime = SceneRuntime::default();
+        let applied = runtime.reconcile(&config, Some("Desk"), |_| true).unwrap().unwrap();
+        runtime.manual_override();
+        assert!(runtime.reconcile(&applied, Some("Desk"), |_| true).unwrap().is_none());
+        assert!(runtime.reconcile(&applied, None, |_| true).unwrap().is_none());
+        assert_eq!(applied.outputs["DP-1"], selected);
+    }
+
+    #[test]
+    fn missing_profile_recovers_without_a_scene_condition_transition() {
+        let mut config = Config::default();
+        let mut runtime = SceneRuntime::default();
+        assert!(runtime.reconcile(&config, Some("Late"), |_| true).is_err());
+        // Repeated unchanged errors do not spam the log, but the next poll still retries.
+        assert!(runtime.reconcile(&config, Some("Late"), |_| true).unwrap().is_none());
+        config.profiles.definitions.insert(
+            "Late".into(),
+            OutputProfile {
+                outputs: [("DP-1".into(), OutputBinding::wallpaper("new", "/new"))].into(),
+            },
+        );
+        let applied = runtime.reconcile(&config, Some("Late"), |_| true).unwrap().unwrap();
+        assert_eq!(applied.outputs["DP-1"].wallpaper_id.as_deref(), Some("new"));
     }
 }
