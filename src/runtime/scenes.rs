@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use we_core::{
-    config::{parse_clock_time, OutputBinding, SceneConfig, SceneDay, ScenePower, SceneRule},
+    config::{OutputBinding, SceneConfig, SceneDay, ScenePower},
     profile::apply_profile_to_outputs,
+    scenes::matching_scene,
 };
 
 use crate::{config::Config, runtime::power::PowerState};
@@ -34,46 +35,7 @@ pub(crate) fn selected_profile<'a>(
     power: PowerState,
     connected_outputs: &[String],
 ) -> Option<&'a str> {
-    scenes
-        .rules
-        .iter()
-        .find(|rule| matches_rule(rule, time, power, connected_outputs))
-        .map(|rule| rule.profile.as_str())
-}
-
-fn matches_rule(rule: &SceneRule, time: LocalTime, power: PowerState, outputs: &[String]) -> bool {
-    if let Some(requested) = rule.power {
-        if !matches!(
-            (requested, power),
-            (ScenePower::Ac, PowerState::Ac) | (ScenePower::Battery, PowerState::Battery)
-        ) {
-            return false;
-        }
-    }
-    if !rule.outputs.iter().all(|output| outputs.contains(output)) {
-        return false;
-    }
-
-    let mut weekday = time.weekday;
-    if let (Some(start), Some(end)) = (&rule.start, &rule.end) {
-        let (Some(start), Some(end)) = (parse_clock_time(start), parse_clock_time(end)) else {
-            return false;
-        };
-        if start < end && !(start <= time.minute && time.minute < end) {
-            return false;
-        }
-        if start > end {
-            if time.minute >= end && time.minute < start {
-                return false;
-            }
-            // After midnight the active rule still belongs to the preceding weekday.
-            if time.minute < end {
-                weekday = (weekday + 6) % 7;
-            }
-        }
-    }
-
-    let day = match weekday {
+    let weekday = match time.weekday {
         0 => SceneDay::Sun,
         1 => SceneDay::Mon,
         2 => SceneDay::Tue,
@@ -81,9 +43,15 @@ fn matches_rule(rule: &SceneRule, time: LocalTime, power: PowerState, outputs: &
         4 => SceneDay::Thu,
         5 => SceneDay::Fri,
         6 => SceneDay::Sat,
-        _ => return false,
+        _ => return None,
     };
-    rule.days.is_empty() || rule.days.contains(&day)
+    let power = match power {
+        PowerState::Ac => Some(ScenePower::Ac),
+        PowerState::Battery => Some(ScenePower::Battery),
+        PowerState::Unknown => None,
+    };
+    matching_scene(scenes, time.minute, weekday, power, connected_outputs)
+        .map(|(_, rule)| rule.profile.as_str())
 }
 
 /// Runtime-only overlay over the persisted output bindings. Manual changes always win until
