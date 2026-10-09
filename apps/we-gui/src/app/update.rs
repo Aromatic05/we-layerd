@@ -405,6 +405,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             let next = app.profile_name_input.trim().to_string();
             match rename_profile(&mut app.launch_settings.profiles, &current, &next) {
                 Ok(()) => {
+                    for rule in &mut app.launch_settings.scenes.rules {
+                        if rule.profile == current {
+                            rule.profile = next.clone();
+                        }
+                    }
+                    app.scene_editor.rename_profile(&current, &next);
                     app.profile_selected = Some(next);
                     sync_profile_inputs(app);
                     persist_profile_changes(app, true);
@@ -417,6 +423,18 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             let Some(name) = app.profile_selected.clone() else {
                 return Task::none();
             };
+            if app.launch_settings.scenes.rules.iter().any(|rule| rule.profile == name)
+                || app.scene_editor.references_profile(&name)
+            {
+                set_profile_error(
+                    app,
+                    format!(
+                        "{}: {name}",
+                        app.language.text(crate::domain::i18n::Text::SceneProfileInUse)
+                    ),
+                );
+                return Task::none();
+            }
             match delete_profile(&mut app.launch_settings.profiles, &name) {
                 Ok(()) => {
                     app.profile_selected =
@@ -1185,10 +1203,11 @@ fn set_playlist_error(app: &mut App, error: String) {
 }
 
 fn persist_profile_changes(app: &mut App, reload_running_daemon: bool) -> bool {
-    match config::persist_profiles_and_outputs(
+    match config::persist_profiles_outputs_and_scenes(
         &app.config_path,
         &app.launch_settings.profiles,
         &app.launch_settings.outputs,
+        &app.launch_settings.scenes,
     ) {
         Ok(()) => {
             if reload_running_daemon {

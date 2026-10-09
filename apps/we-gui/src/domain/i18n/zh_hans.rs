@@ -84,6 +84,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::SceneInvalidTime => "时间无效，请输入 HH:MM（00:00–23:59）。",
         Text::SceneToday => "今天",
         Text::SceneReloadFailed => "配置已保存，但守护进程未能热重载。下次重新启动守护进程时生效。",
+        Text::SceneProfileInUse => "此配置档正在被智能场景使用，请先修改或删除引用它的规则",
         Text::FilterAll => "全部",
         Text::FilterWeb => "网页",
         Text::FilterScene => "场景",

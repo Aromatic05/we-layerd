@@ -84,6 +84,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::SceneInvalidTime => "Invalid time. Use HH:MM (00:00–23:59).",
         Text::SceneToday => "Today",
         Text::SceneReloadFailed => "Saved on disk, but the running daemon could not reload. Restart the daemon later to apply the rules.",
+        Text::SceneProfileInUse => "Profile used by automation. Reassign or delete its scene rules first",
         Text::FilterAll => "All",
         Text::FilterWeb => "Web",
         Text::FilterScene => "Scene",

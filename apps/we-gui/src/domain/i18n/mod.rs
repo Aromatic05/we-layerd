@@ -255,6 +255,7 @@ pub(crate) enum Text {
     SceneInvalidTime,
     SceneToday,
     SceneReloadFailed,
+    SceneProfileInUse,
     FilterAll,
     FilterWeb,
     FilterScene,

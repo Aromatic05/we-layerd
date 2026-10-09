@@ -63,6 +63,18 @@ impl SceneEditor {
         self.selected.and_then(|i| self.rules.rules.get_mut(i))
     }
 
+    pub(crate) fn references_profile(&self, name: &str) -> bool {
+        self.rules.rules.iter().any(|rule| rule.profile == name)
+    }
+
+    pub(crate) fn rename_profile(&mut self, old: &str, new: &str) {
+        for rule in &mut self.rules.rules {
+            if rule.profile == old {
+                rule.profile = new.to_string();
+            }
+        }
+    }
+
     pub(crate) fn add(&mut self, profile: String) {
         self.rules.rules.push(SceneRule {
             profile,
@@ -191,5 +203,19 @@ mod tests {
         assert_eq!(editor.preview(), Some((0, "Day")));
         editor.preview_time = "18:00".into();
         assert_eq!(editor.preview(), None);
+    }
+
+    #[test]
+    fn rename_profile_rewrites_all_draft_rules_without_losing_editor_state() {
+        let settings = LaunchSettings::default();
+        let mut editor = SceneEditor::new(&settings);
+        editor.add("Work".into());
+        editor.add("Work".into());
+        editor.add("Home".into());
+        editor.rename_profile("Work", "Office");
+        assert!(editor.references_profile("Office"));
+        assert!(!editor.references_profile("Work"));
+        assert_eq!(editor.rules.rules.iter().filter(|rule| rule.profile == "Office").count(), 2);
+        assert_eq!(editor.selected, Some(2));
     }
 }

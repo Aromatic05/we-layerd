@@ -716,6 +716,28 @@ pub fn save_profiles_and_outputs(
     save_config_document(path, &document)
 }
 
+/// Apply changes to named profiles and their automation references in one atomic file replace.
+pub fn save_profiles_outputs_and_scenes(
+    path: &Path,
+    profiles: &ProfileConfig,
+    outputs: &BTreeMap<String, OutputBinding>,
+    scenes: &SceneConfig,
+) -> Result<()> {
+    scenes.validate().map_err(anyhow::Error::msg)?;
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    root.insert("profiles".into(), toml::Value::try_from(profiles)?);
+    root.insert("outputs".into(), toml::Value::try_from(outputs)?);
+    if scenes.is_empty() {
+        root.remove("scenes");
+    } else {
+        root.insert("scenes".into(), toml::Value::try_from(scenes)?);
+    }
+    save_config_document(path, &document)
+}
+
 pub fn save_playlists_profiles_and_outputs(
     path: &Path,
     playlists: &PlaylistConfig,
@@ -1429,6 +1451,37 @@ fullscreen = "pause"
         assert!(value.get("scenes").is_none());
         assert!(value.get("adaptive").is_none());
         assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/source"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn profile_rename_and_scene_references_are_persisted_together() {
+        let path = unique_temp_path("scene-profile-rename.toml");
+        fs::write(&path, "[renderer]\nsource = \"/keep\"\n\n[custom]\nnumber = 12\n").unwrap();
+        let outputs = std::collections::BTreeMap::from([(
+            "DP-1".to_string(),
+            OutputBinding::wallpaper("42", "/42"),
+        )]);
+        let mut profiles = ProfileConfig::default();
+        profiles.definitions.insert("Office".into(), OutputProfile { outputs: outputs.clone() });
+        let scenes = SceneConfig {
+            rules: vec![SceneRule {
+                profile: "Office".into(),
+                start: None,
+                end: None,
+                days: vec![],
+                power: None,
+                outputs: vec![],
+            }],
+        };
+        super::save_profiles_outputs_and_scenes(&path, &profiles, &outputs, &scenes).unwrap();
+        let restored = load_launch_settings(&path).unwrap();
+        assert_eq!(restored.profiles, profiles);
+        assert_eq!(restored.outputs, outputs);
+        assert_eq!(restored.scenes, scenes);
+        let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/keep"));
+        assert_eq!(value["custom"]["number"].as_integer(), Some(12));
         let _ = fs::remove_file(path);
     }
 }
