@@ -68,6 +68,9 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         ]
         .align_y(iced::Alignment::Center),
         row![save_button, discard_button].spacing(8),
+        checkbox(editor.rules.enabled)
+            .label(language.text(Text::SceneEnabled))
+            .on_toggle(Message::SceneEnabledToggled),
     ]
     .spacing(10);
 
@@ -192,9 +195,14 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                 ))
                 .width(Fill),
                 display_conditions,
-                button(text(language.text(Text::SceneDelete)).size(13))
-                    .on_press(Message::SceneDelete)
-                    .style(button::danger),
+                row![
+                    button(text(language.text(Text::SceneDuplicate)).size(13))
+                        .on_press(Message::SceneDuplicate),
+                    button(text(language.text(Text::SceneDelete)).size(13))
+                        .on_press(Message::SceneDelete)
+                        .style(button::danger),
+                ]
+                .spacing(8),
             ]
             .spacing(9);
             if let Err(error) = editor.rules.validate() {
@@ -357,8 +365,21 @@ fn current_status(app: &App) -> Element<'_, Message> {
     if let RuntimeStatus::Raw(raw) = &app.runtime_status {
         if let Ok(value) = toml::from_str::<toml::Value>(raw) {
             if let Some(status) = value.get("scene_runtime") {
+                if let Some(profile) = status
+                    .get("matched_profile")
+                    .and_then(toml::Value::as_str)
+                    .filter(|name| !name.is_empty())
+                {
+                    let label = if let Some(index) =
+                        status.get("matched_rule").and_then(toml::Value::as_integer)
+                    {
+                        format!("{}: #{index:02} · {profile}", language.text(Text::SceneMatch))
+                    } else {
+                        format!("{}: {profile}", language.text(Text::SceneMatch))
+                    };
+                    lines = lines.push(text(label).size(12));
+                }
                 for (key, name) in [
-                    ("matched_profile", language.text(Text::SceneMatch)),
                     ("active_profile", language.text(Text::SceneProfile)),
                     ("last_error", language.text(Text::SceneError)),
                 ] {

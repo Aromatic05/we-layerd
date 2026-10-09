@@ -189,6 +189,9 @@ each output's source and playlist cursor.
 persisted `[outputs]` bindings. Each rule can match local clock time, weekday, AC/battery power,
 and connected Wayland output names:
 
+Set `[scenes] enabled = false` to suspend automation without deleting its rules; removing this
+setting or changing it to `true` resumes rule matching. The GUI provides the same toggle.
+
 ```toml
 [[scenes.rules]]
 profile = "Desk"
@@ -219,7 +222,9 @@ configuration rules.
 
 Open **Automation** in the main `we-gui` toolbar. First create at least one named layout in
 **Profiles**; then add scene rules, select their target profile, edit time and weekday constraints,
-choose required monitors and power source, and move rules up/down to set priority. The same page
+choose required monitors and power source, duplicate a rule, and move rules up/down to set
+priority. **Enable automatic scene switching** suspends/resumes the entire rule set without
+deleting it. The same page
 configures the optional battery FPS cap and mute/pause behavior. **Save rules** validates the
 rules and updates only `[scenes]` and `[adaptive]`, keeping `[outputs]` and wallpaper settings
 intact; **Discard changes** restores the last saved rules.

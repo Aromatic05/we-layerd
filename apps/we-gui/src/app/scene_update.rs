@@ -13,6 +13,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
     if matches!(
         &message,
         Message::SceneAdd
+            | Message::SceneEnabledToggled(_)
+            | Message::SceneDuplicate
             | Message::SceneDelete
             | Message::SceneMove(_)
             | Message::SceneProfileSelected(_)
@@ -56,6 +58,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 app.scene_editor.error = Some(app.language.text(Text::SceneNoProfiles).into());
             }
         }
+        Message::SceneEnabledToggled(enabled) => app.scene_editor.rules.enabled = enabled,
+        Message::SceneDuplicate => app.scene_editor.duplicate_selected(),
         Message::SceneDelete => app.scene_editor.remove_selected(),
         Message::SceneMove(direction) => app.scene_editor.move_selected(direction),
         Message::SceneProfileSelected(profile) => {

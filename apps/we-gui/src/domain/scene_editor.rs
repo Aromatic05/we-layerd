@@ -118,6 +118,16 @@ impl SceneEditor {
         self.notice = None;
     }
 
+    /// Duplicate a rule immediately after the original to keep its priority visible.
+    pub(crate) fn duplicate_selected(&mut self) {
+        let Some(index) = self.selected else { return };
+        let Some(rule) = self.rules.rules.get(index).cloned() else { return };
+        self.rules.rules.insert(index + 1, rule);
+        self.selected = Some(index + 1);
+        self.error = None;
+        self.notice = None;
+    }
+
     pub(crate) fn move_selected(&mut self, direction: MoveDirection) {
         let Some(index) = self.selected else { return };
         let target = match direction {
@@ -203,6 +213,10 @@ mod tests {
         editor.remove_selected();
         editor.reset(&settings);
         assert!(!editor.is_dirty(&settings));
+        editor.rules.enabled = false;
+        assert!(editor.is_dirty(&settings));
+        editor.reset(&settings);
+        assert!(editor.rules.enabled);
     }
 
     #[test]
@@ -254,5 +268,24 @@ mod tests {
         editor.output_name_input = " HDMI A-1 ".into();
         assert!(editor.add_output_name());
         assert_eq!(editor.rules.rules[0].outputs, ["DP-1", "HDMI A-1"]);
+    }
+
+    #[test]
+    fn duplicating_a_rule_preserves_conditions_and_priority() {
+        let mut editor = SceneEditor::new(&LaunchSettings::default());
+        editor.add("Desk".into());
+        let selected = editor.selected_rule_mut().unwrap();
+        selected.start = Some("22:00".into());
+        selected.end = Some("06:00".into());
+        selected.days = vec![SceneDay::Fri];
+        selected.outputs = vec!["DP-1".into()];
+        editor.add("Fallback".into());
+        editor.selected = Some(0);
+        editor.duplicate_selected();
+
+        assert_eq!(editor.selected, Some(1));
+        assert_eq!(editor.rules.rules.len(), 3);
+        assert_eq!(editor.rules.rules[0], editor.rules.rules[1]);
+        assert_eq!(editor.rules.rules[2].profile, "Fallback");
     }
 }

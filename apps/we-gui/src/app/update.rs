@@ -327,6 +327,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::ScenesPressed
         | Message::SceneSelect(_)
         | Message::SceneAdd
+        | Message::SceneEnabledToggled(_)
+        | Message::SceneDuplicate
         | Message::SceneDelete
         | Message::SceneMove(_)
         | Message::SceneProfileSelected(_)

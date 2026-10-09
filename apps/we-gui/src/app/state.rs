@@ -203,6 +203,8 @@ pub(crate) enum Message {
     ScenesPressed,
     SceneSelect(usize),
     SceneAdd,
+    SceneEnabledToggled(bool),
+    SceneDuplicate,
     SceneDelete,
     SceneMove(MoveDirection),
     SceneProfileSelected(String),
