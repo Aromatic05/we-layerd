@@ -141,7 +141,17 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let playlist_state_path = playlist_state_path.clone();
             let switch_tx = switch_tx.clone();
             let scene_runtime = scene_runtime.clone();
-            move |config_path| {
+            move |config_path, automation_only| {
+                if automation_only {
+                    return schedule_scene_settings_reload(
+                        config_path,
+                        &desired_cfg,
+                        &runtime_cfg_toml,
+                        &runtime_state,
+                        &switch_tx,
+                        &scene_runtime,
+                    );
+                }
                 let mut next_cfg = Config::load(Some(config_path))?;
                 resolve_renderer_assets_path(
                     &mut next_cfg,
@@ -424,8 +434,8 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                     let Ok(cfg) = desired_cfg.lock().map(|guard| guard.clone()) else {
                         break;
                     };
-                    let needs_outputs =
-                        cfg.scenes.rules.iter().any(|rule| !rule.outputs.is_empty());
+                    let needs_outputs = cfg.scenes.enabled
+                        && cfg.scenes.rules.iter().any(|rule| !rule.outputs.is_empty());
                     if needs_outputs
                         && last_output_probe.is_none_or(|at| at.elapsed() >= Duration::from_secs(5))
                     {
@@ -618,6 +628,47 @@ fn persist_output_binding_change(
         we_core::config::save_profiles_and_outputs(path, &next_cfg.profiles, &next_cfg.outputs)?;
     }
     Ok(next_cfg)
+}
+
+fn schedule_scene_settings_reload(
+    config_path: &Path,
+    desired_cfg: &Arc<Mutex<Config>>,
+    runtime_cfg_toml: &Arc<Mutex<String>>,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    control_tx: &mpsc::Sender<ControlCommand>,
+    scene_runtime: &Arc<Mutex<SceneRuntime>>,
+) -> Result<()> {
+    let saved = Config::load(Some(config_path))?;
+    // Lock ordering matches the scheduler: scene ownership before current configuration.
+    let mut scene = scene_runtime.lock().map_err(|_| anyhow!("scene runtime lock poisoned"))?;
+    for _ in 0..3 {
+        let original =
+            desired_cfg.lock().map_err(|_| anyhow!("failed to read running scene config"))?.clone();
+        let mut next = original.clone();
+        // Preserve outputs, active profiles and playlist progress even if another runtime
+        // command changes them while an automation-only reload is being prepared.
+        next.scenes = saved.scenes.clone();
+        next.adaptive = saved.adaptive;
+        let rules_changed = original.scenes != next.scenes;
+        if original.scenes == next.scenes && original.adaptive == next.adaptive {
+            return Ok(());
+        }
+        if schedule_config_reconfigure_guarded(
+            next,
+            Some(&original),
+            desired_cfg,
+            runtime_cfg_toml,
+            runtime_state,
+            control_tx,
+        )? {
+            // Changing only battery limits must not revoke the user's manual scene override.
+            if rules_changed {
+                scene.invalidate_rules();
+            }
+            return Ok(());
+        }
+    }
+    Err(anyhow!("running config changed during scene reload; retry the reload"))
 }
 
 fn schedule_playlist_selection(
@@ -1195,7 +1246,7 @@ mod tests {
     use super::{
         handle_runtime_control_command, persist_output_binding_change, request_runtime_shutdown,
         resolve_renderer_assets_path, schedule_config_reconfigure_guarded,
-        update_playlist_active_config, RuntimePhase, RuntimeState,
+        schedule_scene_settings_reload, update_playlist_active_config, RuntimePhase, RuntimeState,
     };
     use crate::{
         config::Config,
@@ -1366,6 +1417,92 @@ mod tests {
         assert_eq!(desired.lock().unwrap().playlists.active, Some("Manual".to_string()));
         assert!(desired.lock().unwrap().outputs.is_empty());
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn scene_settings_reload_preserves_live_wallpaper_and_playlist_state() {
+        let path = temp_config_path("scene-only-reload");
+        fs::write(
+            &path,
+            "[adaptive]\non_battery_fps = 24\n\n[[scenes.rules]]\nprofile = \"Day\"\n",
+        )
+        .unwrap();
+        let mut config = Config::default();
+        config.renderer.source = "/still-running".to_string();
+        config.outputs.insert(
+            "DP-1".into(),
+            we_core::config::OutputBinding::wallpaper("42", "/my-live-wallpaper"),
+        );
+        config.playlists.active = Some("Manual".into());
+        let desired = Arc::new(Mutex::new(config.clone()));
+        let status = Arc::new(Mutex::new(config.to_toml_pretty().unwrap()));
+        let runtime = Arc::new(Mutex::new(RuntimeState::new(&config)));
+        let scene = Arc::new(Mutex::new(crate::runtime::scenes::SceneRuntime::default()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        schedule_scene_settings_reload(&path, &desired, &status, &runtime, &tx, &scene).unwrap();
+        let live = desired.lock().unwrap();
+        assert_eq!(live.renderer.source, "/still-running");
+        assert_eq!(live.outputs, config.outputs);
+        assert_eq!(live.playlists, config.playlists);
+        assert_eq!(live.adaptive.on_battery_fps, Some(24));
+        assert_eq!(live.scenes.rules[0].profile, "Day");
+        assert_eq!(rx.try_recv().unwrap(), ControlCommand::Reconfigure);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn adaptive_only_reload_preserves_manual_scene_override_and_skips_identical_reload() {
+        use we_core::{
+            config::{AdaptiveConfig, OutputBinding, SceneRule},
+            profile::OutputProfile,
+        };
+
+        let path = temp_config_path("adaptive-only-reload");
+        let mut config = Config::default();
+        config.outputs.insert("DP-1".into(), OutputBinding::wallpaper("old", "/old"));
+        config.profiles.definitions.insert(
+            "Desk".into(),
+            OutputProfile {
+                outputs: [("DP-1".into(), OutputBinding::wallpaper("desk", "/desk"))].into(),
+            },
+        );
+        config.scenes.rules.push(SceneRule {
+            profile: "Desk".into(),
+            start: None,
+            end: None,
+            days: Vec::new(),
+            power: None,
+            outputs: Vec::new(),
+        });
+        let mut automation = crate::runtime::scenes::SceneRuntime::default();
+        let active = automation.reconcile(&config, Some((0, "Desk")), |_| true).unwrap().unwrap();
+        automation.manual_override();
+        let desired = Arc::new(Mutex::new(active.clone()));
+        let status = Arc::new(Mutex::new(active.to_toml_pretty().unwrap()));
+        let runtime = Arc::new(Mutex::new(RuntimeState::new(&active)));
+        let scene = Arc::new(Mutex::new(automation));
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let adaptive = AdaptiveConfig { on_battery_fps: Some(24), ..Default::default() };
+        we_core::config::save_scene_settings(&path, &config.scenes, &adaptive).unwrap();
+        schedule_scene_settings_reload(&path, &desired, &status, &runtime, &tx, &scene).unwrap();
+        assert_eq!(rx.try_recv().unwrap(), ControlCommand::Reconfigure);
+        assert_eq!(desired.lock().unwrap().outputs, active.outputs);
+        assert_eq!(desired.lock().unwrap().adaptive.on_battery_fps, Some(24));
+        assert!(scene.lock().unwrap().render_status_toml().contains("manual_override = true"));
+        assert!(scene.lock().unwrap().render_status_toml().contains("matched_rule = 1"));
+        assert!(scene
+            .lock()
+            .unwrap()
+            .reconcile(&desired.lock().unwrap(), Some((0, "Desk")), |_| true)
+            .unwrap()
+            .is_none());
+
+        // Saving unchanged settings must not generate a redundant renderer reconfigure.
+        schedule_scene_settings_reload(&path, &desired, &status, &runtime, &tx, &scene).unwrap();
+        assert!(rx.try_recv().is_err());
+        assert!(scene.lock().unwrap().render_status_toml().contains("manual_override = true"));
+        let _ = fs::remove_file(path);
     }
 
     #[test]

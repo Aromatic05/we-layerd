@@ -1,5 +1,6 @@
 mod detail_update;
 mod init;
+mod scene_update;
 mod settings;
 mod signal;
 mod state;
@@ -169,6 +170,7 @@ mod tests {
             profile_selected: None,
             profile_new_name_input: String::new(),
             profile_name_input: String::new(),
+            scene_editor: crate::domain::scene_editor::SceneEditor::new(&LaunchSettings::default()),
             legacy_shuffle: legacy_shuffle(),
             playlist_migration_completed: true,
         };
@@ -277,6 +279,7 @@ mod tests {
             profile_selected: None,
             profile_new_name_input: String::new(),
             profile_name_input: String::new(),
+            scene_editor: crate::domain::scene_editor::SceneEditor::new(&LaunchSettings::default()),
             legacy_shuffle: legacy_shuffle(),
             playlist_migration_completed: true,
         };

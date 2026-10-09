@@ -23,6 +23,12 @@ pub enum Command {
         #[arg(long)]
         config: PathBuf,
     },
+    /// Reload scene automation and power policy without changing live wallpaper playback
+    ReloadScenes {
+        /// Path to updated TOML configuration
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Print environment diagnostics
     Doctor {
         /// Path to TOML config file

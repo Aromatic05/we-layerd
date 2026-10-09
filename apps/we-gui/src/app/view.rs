@@ -9,7 +9,7 @@ use crate::{
         i18n::Text,
         ui_state::{Pane, Sidebar},
     },
-    ui::sidebar::{detail, playlist, profile, settings},
+    ui::sidebar::{detail, playlist, profile, scenes, settings},
 };
 
 use super::{App, Message};
@@ -70,6 +70,7 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
         ),
         Sidebar::Playlist => playlist::view(app),
         Sidebar::Profile => profile::view(app),
+        Sidebar::Scenes => scenes::view(app),
         Sidebar::Detail => match app
             .selected_id
             .as_deref()

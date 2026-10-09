@@ -189,6 +189,9 @@ each output's source and playlist cursor.
 persisted `[outputs]` bindings. Each rule can match local clock time, weekday, AC/battery power,
 and connected Wayland output names:
 
+Set `[scenes] enabled = false` to suspend automation without deleting its rules; removing this
+setting or changing it to `true` resumes rule matching. The GUI provides the same toggle.
+
 ```toml
 [[scenes.rules]]
 profile = "Desk"
@@ -214,6 +217,35 @@ from fighting GUI actions. The scene overlay applies to the layer-shell backend;
 existing single-wallpaper path. Check `[scene_runtime]` in `we-layerd ctl status` for the active
 profile, manual override and the last selection error. GUI wallpaper changes preserve these
 configuration rules.
+
+### GUI automation editor
+
+Open **Automation** in the main `we-gui` toolbar. First create at least one named layout in
+**Profiles**; then add scene rules, select their target profile, edit time and weekday constraints,
+choose required monitors and power source, duplicate a rule, and move rules up/down to set
+priority. **Enable automatic scene switching** suspends/resumes the entire rule set without
+deleting it. The same page
+configures the optional battery FPS cap and mute/pause behavior. **Save rules** validates the
+rules and updates only `[scenes]` and `[adaptive]`, keeping `[outputs]` and wallpaper settings
+intact; **Discard changes** restores the last saved rules.
+
+Displays that are currently disconnected can still be used in conditions: enter their stable
+Wayland output name (for example `DP-1`) under **Required displays** and click **Add display name**.
+The newly added display is immediately selected as a required condition.
+
+The **Test conditions** section is offline: choose a clock time, weekday, power source and
+monitor set to see the first matched rule, its conditions, and the next time-based transition in
+the following seven days. The forecast assumes power/monitor connections stay unchanged. It does
+not apply profiles or touch the system wallpaper. The **Live daemon state** section is read from
+`we-layerd ctl status`, and reports the current match, applied profile, manual override, errors
+and power state when a daemon is running, including the active battery FPS cap when applicable.
+
+Saving while the new daemon is active sends `we-layerd reload-scenes --config PATH`. Unlike
+`we-layerd switch --config PATH`, this reloads **only** automation and adaptive settings without
+resetting the current display bindings or playlist state. If an older daemon does not support
+that IPC request, GUI saves the changes on disk and reports that a later daemon restart is needed.
+Renaming a Profile also updates matching scene references atomically; a Profile referenced by a
+saved or draft rule cannot be deleted until that reference is changed.
 
 ## Playlists
 

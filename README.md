@@ -44,6 +44,8 @@ It supports compositors implementing the layer-shell protocol, including niri, H
   desktop-audio spectrum to scene/web wallpapers.
 - Supports per-output focused/maximized/fullscreen application rules that can mute or pause the
   wallpaper without overriding a user's manual pause state.
+- Provides an Automation editor for ordered time/day/power/monitor-driven output profiles,
+  battery-aware frame pacing, live status, and safe offline scenario previews.
 - Configures frame rate, playback speed, audio volume, and mute state per wallpaper.
 - Can follow the output resolution or use a fixed rendering resolution.
 - Supports cover, fit, stretch, and center scaling modes, plus 0°, 90°, 180°, and 270° rotation.

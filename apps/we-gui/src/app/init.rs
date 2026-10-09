@@ -11,6 +11,7 @@ use crate::{
     domain::{
         playlist_editor::LegacyShuffleMigration,
         runtime_status::RuntimeStatus,
+        scene_editor::SceneEditor,
         settings::{ScaleModeOption, UiSettings},
         ui_state::Pane,
     },
@@ -86,6 +87,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         .or_else(|| launch_settings.profiles.definitions.keys().next().cloned());
     let profile_name_input = profile_selected.clone().unwrap_or_default();
 
+    let scene_editor = SceneEditor::new(&launch_settings);
     (
         App {
             entries: Vec::new(),
@@ -148,6 +150,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             profile_selected,
             profile_new_name_input: String::new(),
             profile_name_input,
+            scene_editor,
             legacy_shuffle: LegacyShuffleMigration {
                 enabled: preferences.shuffle_enabled,
                 interval_ms: preferences.shuffle_interval_ms,

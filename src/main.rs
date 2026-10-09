@@ -19,6 +19,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Run { config } => app::run(config.as_deref()),
         Command::Switch { config } => ipc::send_switch_config(&config),
+        Command::ReloadScenes { config } => ipc::send_reload_scene_config(&config),
         Command::Doctor { config } => app::doctor(config.as_deref()),
         Command::PrintConfig { config } => {
             let cfg = config::Config::load(config.as_deref())?;

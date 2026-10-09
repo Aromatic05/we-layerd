@@ -116,6 +116,7 @@ enum ControlRequest {
     Command(ControlCommand),
     Status,
     SwitchConfig(PathBuf),
+    ReloadSceneConfig(PathBuf),
     Playlist(PlaylistCommand),
     Profile(ProfileCommand),
 }
@@ -129,6 +130,13 @@ impl ControlRequest {
                 return None;
             }
             return Some(Self::SwitchConfig(PathBuf::from(path)));
+        }
+        if let Some(rest) = trimmed.strip_prefix("reload-scene-config ") {
+            let path = rest.trim();
+            if path.is_empty() {
+                return None;
+            }
+            return Some(Self::ReloadSceneConfig(PathBuf::from(path)));
         }
         if let Some(name) = trimmed.strip_prefix("playlist play ") {
             let name = name.trim();
@@ -203,7 +211,7 @@ impl ControlServer {
     where
         F: Fn() -> String + Send + Sync + 'static,
         H: Fn(ControlCommand) -> Result<bool> + Send + Sync + 'static,
-        S: Fn(&Path) -> Result<()> + Send + Sync + 'static,
+        S: Fn(&Path, bool) -> Result<()> + Send + Sync + 'static,
         P: Fn(PlaylistCommand) -> Result<()> + Send + Sync + 'static,
         R: Fn(ProfileCommand) -> Result<()> + Send + Sync + 'static,
     {
@@ -234,7 +242,8 @@ impl ControlServer {
                         let status = status_provider();
                         let _ = stream.write_all(status.as_bytes());
                     }
-                    ControlRequest::SwitchConfig(path) => match switch_config_handler(&path) {
+                    ControlRequest::SwitchConfig(path) => match switch_config_handler(&path, false)
+                    {
                         Ok(()) => {
                             let _ = stream.write_all(b"OK\n");
                         }
@@ -242,6 +251,16 @@ impl ControlServer {
                             let _ = stream.write_all(format!("ERR {err}\n").as_bytes());
                         }
                     },
+                    ControlRequest::ReloadSceneConfig(path) => {
+                        match switch_config_handler(&path, true) {
+                            Ok(()) => {
+                                let _ = stream.write_all(b"OK\n");
+                            }
+                            Err(err) => {
+                                let _ = stream.write_all(format!("ERR {err}\n").as_bytes());
+                            }
+                        }
+                    }
                     ControlRequest::Playlist(command) => match playlist_handler(command) {
                         Ok(()) => {
                             let _ = stream.write_all(b"OK\n");
@@ -310,6 +329,14 @@ pub fn request_running_config() -> Result<String> {
 
 pub fn send_switch_config(config_path: &Path) -> Result<()> {
     let response = send_request(&format!("switch-config {}", config_path.display()))?;
+    if response.trim_start().starts_with("ERR") {
+        return Err(anyhow!(response.trim().to_string()));
+    }
+    Ok(())
+}
+
+pub fn send_reload_scene_config(config_path: &Path) -> Result<()> {
+    let response = send_request(&format!("reload-scene-config {}", config_path.display()))?;
     if response.trim_start().starts_with("ERR") {
         return Err(anyhow!(response.trim().to_string()));
     }
@@ -501,6 +528,19 @@ fn abstract_socket_name() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{ControlRequest, OutputPlaylistAction, PlaylistCommand, ProfileCommand};
+
+    #[test]
+    fn scene_only_reload_does_not_alias_manual_config_switch() {
+        assert_eq!(
+            ControlRequest::parse("reload-scene-config /tmp/my settings/config.toml"),
+            Some(ControlRequest::ReloadSceneConfig("/tmp/my settings/config.toml".into()))
+        );
+        assert_eq!(ControlRequest::parse("reload-scene-config   "), None);
+        assert_eq!(
+            ControlRequest::parse("switch-config /tmp/config.toml"),
+            Some(ControlRequest::SwitchConfig("/tmp/config.toml".into()))
+        );
+    }
 
     #[test]
     fn playlist_ipc_preserves_named_playlists_and_rejects_empty_names() {

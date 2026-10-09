@@ -4,8 +4,9 @@ use we_core::{
     config::{
         build_config_for_wallpaper, save_config, save_force_scene_audio_loop,
         save_integrations_and_rules, save_playlists_profiles_and_outputs,
-        save_profiles_and_outputs, save_wallpapers, save_wallpapers_playlists_profiles_and_outputs,
-        IntegrationsConfig, LaunchSettings, OutputBinding, RuntimeRulesConfig,
+        save_profiles_outputs_and_scenes, save_scene_settings, save_wallpapers,
+        save_wallpapers_playlists_profiles_and_outputs, AdaptiveConfig, IntegrationsConfig,
+        LaunchSettings, OutputBinding, RuntimeRulesConfig, SceneConfig,
     },
     playlist::PlaylistConfig,
     profile::ProfileConfig,
@@ -37,6 +38,14 @@ pub(crate) fn persist_integrations_and_rules(
     save_integrations_and_rules(config_path, integrations, rules).map_err(|error| error.to_string())
 }
 
+pub(crate) fn persist_scene_settings(
+    config_path: &Path,
+    scenes: &SceneConfig,
+    adaptive: &AdaptiveConfig,
+) -> Result<(), String> {
+    save_scene_settings(config_path, scenes, adaptive).map_err(|error| error.to_string())
+}
+
 pub(crate) fn persist_wallpapers(
     config_path: &Path,
     wallpapers: &std::collections::BTreeMap<
@@ -47,12 +56,14 @@ pub(crate) fn persist_wallpapers(
     save_wallpapers(config_path, wallpapers).map_err(|error| error.to_string())
 }
 
-pub(crate) fn persist_profiles_and_outputs(
+pub(crate) fn persist_profiles_outputs_and_scenes(
     config_path: &Path,
     profiles: &ProfileConfig,
     outputs: &std::collections::BTreeMap<String, OutputBinding>,
+    scenes: &SceneConfig,
 ) -> Result<(), String> {
-    save_profiles_and_outputs(config_path, profiles, outputs).map_err(|error| error.to_string())
+    save_profiles_outputs_and_scenes(config_path, profiles, outputs, scenes)
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn persist_playlists_profiles_and_outputs(

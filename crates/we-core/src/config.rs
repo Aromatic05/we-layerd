@@ -155,15 +155,31 @@ impl AdaptiveConfig {
 }
 
 /// Ordered profile-selection conditions. The first matching entry has priority.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SceneConfig {
+    #[serde(default = "scene_enabled", skip_serializing_if = "scene_enabled_value")]
+    pub enabled: bool,
     #[serde(default)]
     pub rules: Vec<SceneRule>,
 }
 
+fn scene_enabled() -> bool {
+    true
+}
+
+fn scene_enabled_value(enabled: &bool) -> bool {
+    *enabled
+}
+
+impl Default for SceneConfig {
+    fn default() -> Self {
+        Self { enabled: true, rules: Vec::new() }
+    }
+}
+
 impl SceneConfig {
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
+        self.enabled && self.rules.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -644,6 +660,36 @@ pub fn save_integrations_and_rules(
     save_config_document(path, &document)
 }
 
+/// Save only automation-related sections, leaving unrelated wallpaper settings untouched.
+pub fn save_scene_settings(
+    path: &Path,
+    scenes: &SceneConfig,
+    adaptive: &AdaptiveConfig,
+) -> Result<()> {
+    scenes.validate().map_err(anyhow::Error::msg)?;
+    if let Some(fps) = adaptive.on_battery_fps {
+        anyhow::ensure!(
+            (1..=360).contains(&fps),
+            "adaptive.on_battery_fps must be between 1 and 360"
+        );
+    }
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    if scenes.is_empty() {
+        root.remove("scenes");
+    } else {
+        root.insert("scenes".to_string(), toml::Value::try_from(scenes)?);
+    }
+    if adaptive.is_disabled() {
+        root.remove("adaptive");
+    } else {
+        root.insert("adaptive".to_string(), toml::Value::try_from(adaptive)?);
+    }
+    save_config_document(path, &document)
+}
+
 pub fn save_playlists(path: &Path, playlists: &PlaylistConfig) -> Result<()> {
     let mut document = load_config_document(path)?;
     let Some(root) = document.as_table_mut() else {
@@ -683,6 +729,28 @@ pub fn save_profiles_and_outputs(
         "outputs".to_string(),
         toml::Value::try_from(outputs).context("failed to serialize output bindings")?,
     );
+    save_config_document(path, &document)
+}
+
+/// Apply changes to named profiles and their automation references in one atomic file replace.
+pub fn save_profiles_outputs_and_scenes(
+    path: &Path,
+    profiles: &ProfileConfig,
+    outputs: &BTreeMap<String, OutputBinding>,
+    scenes: &SceneConfig,
+) -> Result<()> {
+    scenes.validate().map_err(anyhow::Error::msg)?;
+    let mut document = load_config_document(path)?;
+    let Some(root) = document.as_table_mut() else {
+        bail!("config root in {} must be a TOML table", path.display());
+    };
+    root.insert("profiles".into(), toml::Value::try_from(profiles)?);
+    root.insert("outputs".into(), toml::Value::try_from(outputs)?);
+    if scenes.is_empty() {
+        root.remove("scenes");
+    } else {
+        root.insert("scenes".into(), toml::Value::try_from(scenes)?);
+    }
     save_config_document(path, &document)
 }
 
@@ -878,9 +946,10 @@ mod tests {
     use super::{
         build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
         save_force_scene_audio_loop, save_integrations_and_rules, save_outputs, save_playlists,
-        save_profiles_and_outputs, save_wallpapers_playlists_and_outputs, HookCommand, HooksConfig,
-        IntegrationsConfig, LaunchSettings, OutputBinding, RuntimeRuleAction, RuntimeRulesConfig,
-        ScaleMode,
+        save_profiles_and_outputs, save_scene_settings, save_wallpapers_playlists_and_outputs,
+        AdaptiveConfig, HookCommand, HooksConfig, IntegrationsConfig, LaunchSettings,
+        OutputBinding, RuntimeRuleAction, RuntimeRulesConfig, ScaleMode, SceneConfig, SceneDay,
+        ScenePower, SceneRule,
     };
     use crate::playlist::{Playlist, PlaylistConfig, PlaylistItem, PlaylistMode};
     use crate::profile::{OutputProfile, ProfileConfig};
@@ -1158,6 +1227,7 @@ outputs = ["DP-1"]
         assert_eq!(parse_clock_time("23:59"), Some(1439));
 
         let mut rules = SceneConfig {
+            enabled: true,
             rules: vec![SceneRule {
                 profile: "Desk".into(),
                 start: Some("09:00".into()),
@@ -1363,6 +1433,83 @@ fullscreen = "pause"
         let value = toml::from_str::<toml::Value>(&document).expect("valid TOML");
         assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/fallback"));
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn scene_settings_patch_preserves_unrelated_sections_and_rejects_invalid_data() {
+        let path = unique_temp_path("scene-editor.toml");
+        fs::write(&path, "[renderer]\nsource = \"/keep/source\"\n\n[custom]\nvalue = 9\n").unwrap();
+        let scenes = SceneConfig {
+            enabled: true,
+            rules: vec![SceneRule {
+                profile: "Desk".to_string(),
+                start: Some("09:00".into()),
+                end: Some("18:00".into()),
+                days: vec![SceneDay::Mon],
+                power: Some(ScenePower::Ac),
+                outputs: vec!["DP-1".into()],
+            }],
+        };
+        let adaptive =
+            AdaptiveConfig { on_battery_fps: Some(24), on_battery: RuntimeRuleAction::Mute };
+        save_scene_settings(&path, &scenes, &adaptive).unwrap();
+        let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/source"));
+        assert_eq!(value["custom"]["value"].as_integer(), Some(9));
+        assert_eq!(value["adaptive"]["on_battery_fps"].as_integer(), Some(24));
+        assert_eq!(load_launch_settings(&path).unwrap().scenes, scenes);
+
+        let mut invalid = scenes.clone();
+        invalid.rules[0].end = None;
+        assert!(save_scene_settings(&path, &invalid, &adaptive).is_err());
+        assert_eq!(load_launch_settings(&path).unwrap().scenes, scenes);
+        let mut paused = scenes.clone();
+        paused.enabled = false;
+        save_scene_settings(&path, &paused, &adaptive).unwrap();
+        assert_eq!(load_launch_settings(&path).unwrap().scenes, paused);
+        assert_eq!(paused.rules, scenes.rules);
+        let mut empty_and_paused = SceneConfig::default();
+        empty_and_paused.enabled = false;
+        save_scene_settings(&path, &empty_and_paused, &adaptive).unwrap();
+        assert_eq!(load_launch_settings(&path).unwrap().scenes, empty_and_paused);
+        save_scene_settings(&path, &SceneConfig::default(), &AdaptiveConfig::default()).unwrap();
+        let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(value.get("scenes").is_none());
+        assert!(value.get("adaptive").is_none());
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/keep/source"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn profile_rename_and_scene_references_are_persisted_together() {
+        let path = unique_temp_path("scene-profile-rename.toml");
+        fs::write(&path, "[renderer]\nsource = \"/keep\"\n\n[custom]\nnumber = 12\n").unwrap();
+        let outputs = std::collections::BTreeMap::from([(
+            "DP-1".to_string(),
+            OutputBinding::wallpaper("42", "/42"),
+        )]);
+        let mut profiles = ProfileConfig::default();
+        profiles.definitions.insert("Office".into(), OutputProfile { outputs: outputs.clone() });
+        let scenes = SceneConfig {
+            enabled: true,
+            rules: vec![SceneRule {
+                profile: "Office".into(),
+                start: None,
+                end: None,
+                days: vec![],
+                power: None,
+                outputs: vec![],
+            }],
+        };
+        super::save_profiles_outputs_and_scenes(&path, &profiles, &outputs, &scenes).unwrap();
+        let restored = load_launch_settings(&path).unwrap();
+        assert_eq!(restored.profiles, profiles);
+        assert_eq!(restored.outputs, outputs);
+        assert_eq!(restored.scenes, scenes);
+        let value = toml::from_str::<toml::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["renderer"]["source"].as_str(), Some("/keep"));
+        assert_eq!(value["custom"]["number"].as_integer(), Some(12));
         let _ = fs::remove_file(path);
     }
 }
