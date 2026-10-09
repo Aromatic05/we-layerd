@@ -3,7 +3,10 @@ use std::{collections::BTreeMap, fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use we_core::{
-    config::{HooksConfig, IntegrationsConfig, OutputBinding, RuntimeRulesConfig},
+    config::{
+        AdaptiveConfig, HooksConfig, IntegrationsConfig, OutputBinding, RuntimeRulesConfig,
+        SceneConfig,
+    },
     playlist::PlaylistConfig,
     profile::ProfileConfig,
     wallpaper::settings::{WallpaperFillMode, WallpaperSettings},
@@ -33,6 +36,10 @@ pub struct Config {
     pub integrations: IntegrationsConfig,
     #[serde(default)]
     pub rules: RuntimeRulesConfig,
+    #[serde(default, skip_serializing_if = "AdaptiveConfig::is_disabled")]
+    pub adaptive: AdaptiveConfig,
+    #[serde(default, skip_serializing_if = "SceneConfig::is_empty")]
+    pub scenes: SceneConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +254,13 @@ impl Config {
                 let max_fps = config.renderer.max_fps.unwrap_or(config.renderer.fps).clamp(1, 360);
                 config.renderer.max_fps = Some(max_fps);
                 config.renderer.fps = config.renderer.fps.min(max_fps).max(1);
+                if let Some(fps) = config.adaptive.on_battery_fps {
+                    anyhow::ensure!(
+                        (1..=360).contains(&fps),
+                        "adaptive.on_battery_fps must be between 1 and 360"
+                    );
+                }
+                config.scenes.validate().map_err(anyhow::Error::msg)?;
                 Ok(config)
             }
             None => Ok(Self::default()),
@@ -331,5 +345,21 @@ mod tests {
         let err = toml::from_str::<Config>("[general]\nbackend = \"bad\"\n")
             .expect_err("invalid backend must fail");
         assert!(err.to_string().contains("backend"));
+    }
+
+    #[test]
+    fn loaded_config_rejects_invalid_scene_windows_and_adaptive_fps() {
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+        let name = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("we-layerd-config-{}-{name}", std::process::id()));
+        fs::write(&path, "[adaptive]\non_battery_fps = 0\n").unwrap();
+        assert!(Config::load(Some(&path)).unwrap_err().to_string().contains("on_battery_fps"));
+        fs::write(&path, "[[scenes.rules]]\nprofile = \"Desk\"\nstart = \"09:00\"\n").unwrap();
+        assert!(Config::load(Some(&path)).unwrap_err().to_string().contains("start and end"));
+        let _ = fs::remove_file(path);
     }
 }

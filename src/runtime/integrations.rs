@@ -10,7 +10,7 @@ use std::{
 
 use serde::Serialize;
 use tracing::warn;
-use we_core::config::IntegrationsConfig;
+use we_core::config::{AdaptiveConfig, IntegrationsConfig, RuntimeRuleAction};
 use we_renderer::MediaState;
 
 use crate::config::Config;
@@ -18,6 +18,7 @@ use crate::config::Config;
 use super::{
     audio::{PulseAudioCapture, AUDIO_SPECTRUM_BINS},
     media::{self, MediaBridgeState},
+    power::{detect_power_state, PowerState},
     rules::{policies_for_outputs, ForeignToplevelMonitor, RuleSet, RuntimePolicy},
 };
 
@@ -33,6 +34,7 @@ pub(crate) struct OutputIntegrationSnapshot {
     pub(crate) audio: Arc<[f32]>,
     pub(crate) policy_generation: u64,
     pub(crate) policy: RuntimePolicy,
+    pub(crate) fps_limit: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +56,8 @@ struct IntegrationState {
     rules_enabled: bool,
     rules_available: bool,
     rules_error: Option<String>,
+    adaptive: AdaptiveConfig,
+    power_state: PowerState,
 }
 
 impl Default for IntegrationState {
@@ -76,6 +80,8 @@ impl Default for IntegrationState {
             rules_enabled: false,
             rules_available: false,
             rules_error: None,
+            adaptive: AdaptiveConfig::default(),
+            power_state: PowerState::Unknown,
         }
     }
 }
@@ -97,7 +103,8 @@ impl HostIntegrationRuntime {
         let handles = vec![
             spawn_media_collector(shared.clone(), desired_cfg.clone(), shutdown.clone()),
             spawn_audio_collector(shared.clone(), desired_cfg.clone(), shutdown.clone()),
-            spawn_rule_collector(shared.clone(), desired_cfg, shutdown.clone()),
+            spawn_rule_collector(shared.clone(), desired_cfg.clone(), shutdown.clone()),
+            spawn_power_collector(shared.clone(), desired_cfg, shutdown.clone()),
         ];
         Self { shared, handles, shutdown }
     }
@@ -117,15 +124,31 @@ impl HostIntegrationRuntime {
 }
 
 impl HostIntegrations {
+    pub(crate) fn power_state(&self) -> PowerState {
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).power_state
+    }
+
     pub(crate) fn snapshot_for_output(&self, output: &str) -> OutputIntegrationSnapshot {
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut policy = state.policies.get(output).copied().unwrap_or_default();
+        let fps_limit = if state.power_state == PowerState::Battery {
+            match state.adaptive.on_battery {
+                RuntimeRuleAction::Keep => {}
+                RuntimeRuleAction::Mute => policy.mute = true,
+                RuntimeRuleAction::Pause => policy.pause = true,
+            }
+            state.adaptive.on_battery_fps
+        } else {
+            None
+        };
         OutputIntegrationSnapshot {
             media_generation: state.media_generation,
             media: state.media.clone(),
             audio_generation: state.audio_generation,
             audio: Arc::clone(&state.audio),
             policy_generation: state.policy_generation,
-            policy: state.policies.get(output).copied().unwrap_or_default(),
+            policy,
+            fps_limit,
         }
     }
 
@@ -147,6 +170,10 @@ impl HostIntegrations {
             rules_enabled: bool,
             rules_available: bool,
             rules_error: &'a str,
+            power_state: &'a str,
+            adaptive_enabled: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            adaptive_fps_cap: Option<u32>,
         }
 
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -163,6 +190,13 @@ impl HostIntegrations {
                 rules_enabled: state.rules_enabled,
                 rules_available: state.rules_available,
                 rules_error: state.rules_error.as_deref().unwrap_or(""),
+                power_state: state.power_state.as_str(),
+                adaptive_enabled: !state.adaptive.is_disabled(),
+                adaptive_fps_cap: if state.power_state == PowerState::Battery {
+                    state.adaptive.on_battery_fps
+                } else {
+                    None
+                },
             },
         })
         .unwrap_or_default()
@@ -228,6 +262,15 @@ impl HostIntegrations {
         state.rules_enabled = enabled;
         state.rules_available = available;
         state.rules_error = error;
+    }
+
+    fn update_power(&self, power_state: PowerState, adaptive: AdaptiveConfig) {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.power_state != power_state || state.adaptive != adaptive {
+            state.power_state = power_state;
+            state.adaptive = adaptive;
+            state.policy_generation = state.policy_generation.wrapping_add(1);
+        }
     }
 }
 
@@ -849,6 +892,29 @@ fn spawn_rule_collector(
         .expect("failed to spawn window rule collector")
 }
 
+fn spawn_power_collector(
+    shared: HostIntegrations,
+    desired_cfg: Arc<Mutex<Config>>,
+    shutdown: Arc<AtomicBool>,
+) -> thread::JoinHandle<()> {
+    thread::Builder::new()
+        .name("we-layerd-power".to_string())
+        .spawn(move || {
+            while !shutdown.load(Ordering::Relaxed) {
+                let adaptive = desired_cfg.lock().map(|cfg| cfg.adaptive).unwrap_or_default();
+                let power = detect_power_state(std::path::Path::new("/sys/class/power_supply"));
+                shared.update_power(power, adaptive);
+                for _ in 0..20 {
+                    if shutdown.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        })
+        .expect("failed to spawn power collector")
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -864,9 +930,10 @@ mod tests {
     };
     use crate::runtime::{
         media::{MediaCandidate, MediaPlaybackState},
+        power::PowerState,
         rules::RuntimePolicy,
     };
-    use we_core::config::IntegrationsConfig;
+    use we_core::config::{AdaptiveConfig, IntegrationsConfig, RuntimeRuleAction};
 
     fn media_candidate(name: &str) -> MediaCandidate {
         MediaCandidate {
@@ -909,6 +976,29 @@ mod tests {
         assert!(!hdmi.policy.pause);
         assert!(hdmi.policy.mute);
         assert_eq!(dp.audio_generation, hdmi.audio_generation);
+    }
+
+    #[test]
+    fn adaptive_policy_merges_without_erasing_window_or_manual_control() {
+        let host = HostIntegrations::default();
+        host.update_rules(
+            true,
+            true,
+            [("DP-1".to_string(), RuntimePolicy { pause: true, mute: false })].into(),
+            None,
+        );
+        let battery =
+            AdaptiveConfig { on_battery_fps: Some(24), on_battery: RuntimeRuleAction::Mute };
+        host.update_power(PowerState::Battery, battery);
+        let snapshot = host.snapshot_for_output("DP-1");
+        assert!(snapshot.policy.pause);
+        assert!(snapshot.policy.mute);
+        assert_eq!(snapshot.fps_limit, Some(24));
+        host.update_power(PowerState::Ac, battery);
+        let snapshot = host.snapshot_for_output("DP-1");
+        assert!(snapshot.policy.pause);
+        assert!(!snapshot.policy.mute);
+        assert_eq!(snapshot.fps_limit, None);
     }
 
     #[test]

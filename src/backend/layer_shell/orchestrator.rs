@@ -121,6 +121,10 @@ fn fingerprint_output_config(config: &Config, binding: &OutputBinding) -> Result
     effective.hooks = Default::default();
     effective.integrations = Default::default();
     effective.rules = Default::default();
+    // Dynamic policies are evaluated outside the renderer worker; changing them should
+    // never restart a healthy output or reset its playlist cursor.
+    effective.adaptive = Default::default();
+    effective.scenes = Default::default();
 
     if let Some(playlist_name) = binding.playlist.as_deref() {
         // This worker's source comes from its own playlist cursor. A daemon-wide fallback/global
@@ -1024,6 +1028,15 @@ mod tests {
         config.integrations.audio_source = "custom.monitor".to_string();
         config.rules.focused = we_core::config::RuntimeRuleAction::Mute;
         config.rules.fullscreen = we_core::config::RuntimeRuleAction::Pause;
+        config.adaptive.on_battery_fps = Some(24);
+        config.scenes.rules.push(we_core::config::SceneRule {
+            profile: "Desk".to_string(),
+            start: None,
+            end: None,
+            days: vec![],
+            power: None,
+            outputs: vec![],
+        });
         let second = build_output_specs(&config, &["DP-1".to_string()]).expect("second specs");
 
         assert_eq!(first["DP-1"].fingerprint, second["DP-1"].fingerprint);

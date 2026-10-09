@@ -25,7 +25,7 @@ use crate::{
         self,
         layer_shell::state::LayerShellState,
         traits::{BackendContext, BackendKind},
-        wayland_common::{connection, registry},
+        wayland_common::{connection, outputs, registry},
     },
     config::Config,
     hooks::{self, WallpaperAppliedContext, WallpaperAppliedTrigger},
@@ -37,6 +37,7 @@ use crate::{
         control::RuntimePhase,
         integrations::{HostIntegrationRuntime, HostIntegrations},
         playlist::{self, AdvanceDirection, PlaylistRuntime, PlaylistSelection},
+        scenes::{selected_profile, LocalTime, SceneRuntime},
         status::RuntimeStatusSnapshot,
     },
 };
@@ -69,6 +70,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let current_cfg = Arc::new(Mutex::new(cfg.clone()));
     let runtime_cfg_toml = Arc::new(Mutex::new(cfg.to_toml_pretty()?));
     let runtime_state = Arc::new(Mutex::new(RuntimeState::new(&cfg)));
+    let scene_runtime = Arc::new(Mutex::new(SceneRuntime::default()));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let scheduler_stop = Arc::new(AtomicBool::new(false));
     let mut host_runtime =
@@ -88,6 +90,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         {
             let runtime_cfg_toml = runtime_cfg_toml.clone();
             let status_integrations = host_integrations.clone();
+            let status_scenes = scene_runtime.clone();
             move || {
                 let mut status = runtime_cfg_toml
                     .lock()
@@ -103,6 +106,10 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                 }
                 status.push_str("\n\n");
                 status.push_str(&status_integrations.render_status_toml());
+                if let Ok(guard) = status_scenes.lock() {
+                    status.push_str("\n\n");
+                    status.push_str(&guard.render_status_toml());
+                }
                 status
             }
         },
@@ -133,6 +140,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let playlist_runtime = playlist_runtime.clone();
             let playlist_state_path = playlist_state_path.clone();
             let switch_tx = switch_tx.clone();
+            let scene_runtime = scene_runtime.clone();
             move |config_path| {
                 let mut next_cfg = Config::load(Some(config_path))?;
                 resolve_renderer_assets_path(
@@ -146,6 +154,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                         playlist::apply_selection_to_config(&mut next_cfg, &selection)?;
                     }
                     persist_playlist_runtime(playlist_state_path.as_deref(), &runtime);
+                }
+                if let Ok(mut scene) = scene_runtime.lock() {
+                    scene.manual_override();
                 }
                 schedule_config_reconfigure(
                     next_cfg,
@@ -164,6 +175,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let playlist_state_path = playlist_state_path.clone();
             let output_playlist_tx = output_playlist_tx.clone();
             let persisted_config_path = persisted_config_path.clone();
+            let scene_runtime = scene_runtime.clone();
             move |command| {
                 if let PlaylistCommand::Output { output, action } = &command {
                     if let OutputPlaylistAction::Play(name) = action {
@@ -185,6 +197,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                             OutputBinding::playlist(name.clone()),
                             persisted_config_path.as_deref(),
                         )?;
+                        if let Ok(mut scene) = scene_runtime.lock() {
+                            scene.manual_override();
+                        }
                         schedule_config_reconfigure(
                             next_cfg,
                             &desired_cfg,
@@ -216,6 +231,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                             binding,
                             persisted_config_path.as_deref(),
                         )?;
+                        if let Ok(mut scene) = scene_runtime.lock() {
+                            scene.manual_override();
+                        }
                         schedule_config_reconfigure(
                             next_cfg,
                             &desired_cfg,
@@ -303,6 +321,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let runtime_state = runtime_state.clone();
             let profile_tx = switch_tx.clone();
             let persisted_config_path = persisted_config_path.clone();
+            let scene_runtime = scene_runtime.clone();
             move |command| match command {
                 ProfileCommand::Apply(name) => {
                     let mut next_cfg = desired_cfg
@@ -326,6 +345,9 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                             &next_cfg.profiles,
                             &next_cfg.outputs,
                         )?;
+                    }
+                    if let Ok(mut scene) = scene_runtime.lock() {
+                        scene.manual_override();
                     }
                     schedule_config_reconfigure(
                         next_cfg,
@@ -379,6 +401,91 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                 }
             }
         });
+    }
+
+    {
+        let desired_cfg = desired_cfg.clone();
+        let runtime_cfg_toml = runtime_cfg_toml.clone();
+        let runtime_state = runtime_state.clone();
+        let scene_runtime = scene_runtime.clone();
+        let host_integrations = host_integrations.clone();
+        let shutdown_requested = shutdown_requested.clone();
+        let scheduler_stop = scheduler_stop.clone();
+        let control_tx = switch_tx.clone();
+        thread::Builder::new()
+            .name("we-layerd-scenes".to_string())
+            .spawn(move || {
+                let mut connected_outputs = Vec::new();
+                let mut last_output_probe: Option<Instant> = None;
+                while !shutdown_requested.load(Ordering::Relaxed)
+                    && !scheduler_stop.load(Ordering::Relaxed)
+                {
+                    thread::sleep(Duration::from_secs(1));
+                    let Ok(cfg) = desired_cfg.lock().map(|guard| guard.clone()) else {
+                        break;
+                    };
+                    let needs_outputs =
+                        cfg.scenes.rules.iter().any(|rule| !rule.outputs.is_empty());
+                    if needs_outputs
+                        && last_output_probe.is_none_or(|at| at.elapsed() >= Duration::from_secs(5))
+                    {
+                        last_output_probe = Some(Instant::now());
+                        match outputs::list_output_names() {
+                            Ok(names) => connected_outputs = names,
+                            Err(error) => {
+                                tracing::debug!(%error, "scene output discovery unavailable");
+                                continue;
+                            }
+                        }
+                    }
+                    let Some(clock) = LocalTime::now() else {
+                        continue;
+                    };
+                    let selected = if resolve_backend(&cfg) == BackendKind::LayerShell {
+                        selected_profile(
+                            &cfg.scenes,
+                            clock,
+                            host_integrations.power_state(),
+                            &connected_outputs,
+                        )
+                    } else {
+                        None
+                    };
+                    let mut runtime = match scene_runtime.lock() {
+                        Ok(runtime) => runtime,
+                        Err(_) => break,
+                    };
+                    let previous = runtime.clone();
+                    let planned = runtime.reconcile(&cfg, selected, |source| {
+                        Path::new(source).join("project.json").is_file()
+                    });
+                    match planned {
+                        Ok(Some(next)) => {
+                            // Keep the scene state lock through commit. If another config
+                            // change wins the race, retry rather than falsely claiming the
+                            // discarded scene plan was applied or manually overridden.
+                            match schedule_config_reconfigure_guarded(
+                                next,
+                                Some(&cfg),
+                                &desired_cfg,
+                                &runtime_cfg_toml,
+                                &runtime_state,
+                                &control_tx,
+                            ) {
+                                Ok(true) => {}
+                                Ok(false) => *runtime = previous,
+                                Err(error) => {
+                                    *runtime = previous;
+                                    warn!(%error, "failed to apply scheduled scene");
+                                }
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => warn!(%error, "scheduled profile unavailable"),
+                    }
+                }
+            })
+            .context("failed to spawn scene scheduler")?;
     }
 
     loop {
@@ -535,11 +642,40 @@ fn schedule_config_reconfigure(
     runtime_state: &Arc<Mutex<RuntimeState>>,
     control_tx: &mpsc::Sender<ControlCommand>,
 ) -> Result<()> {
-    if let Ok(mut guard) = desired_cfg.lock() {
+    schedule_config_reconfigure_guarded(
+        next_cfg,
+        None,
+        desired_cfg,
+        runtime_cfg_toml,
+        runtime_state,
+        control_tx,
+    )?;
+    Ok(())
+}
+
+fn schedule_config_reconfigure_guarded(
+    next_cfg: Config,
+    expected_config: Option<&Config>,
+    desired_cfg: &Arc<Mutex<Config>>,
+    runtime_cfg_toml: &Arc<Mutex<String>>,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    control_tx: &mpsc::Sender<ControlCommand>,
+) -> Result<bool> {
+    let serialized = next_cfg.to_toml_pretty()?;
+    let expected_serialized = expected_config.map(Config::to_toml_pretty).transpose()?;
+    {
+        let mut guard = desired_cfg.lock().map_err(|_| anyhow!("desired config lock poisoned"))?;
+        // Checking only outputs misses concurrent updates to playlists, profiles and renderer
+        // settings, because the scene plan is a clone of the entire previous Config.
+        if let Some(expected) = &expected_serialized {
+            if guard.to_toml_pretty()? != *expected {
+                return Ok(false);
+            }
+        }
         *guard = next_cfg.clone();
     }
     if let Ok(mut guard) = runtime_cfg_toml.lock() {
-        *guard = next_cfg.to_toml_pretty()?;
+        *guard = serialized;
     }
     if let Ok(mut state) = runtime_state.lock() {
         if resolve_backend(&next_cfg) == BackendKind::LayerShell {
@@ -550,7 +686,8 @@ fn schedule_config_reconfigure(
     }
     control_tx
         .send(ControlCommand::Reconfigure)
-        .context("failed to schedule runtime reconfiguration")
+        .context("failed to schedule runtime reconfiguration")?;
+    Ok(true)
 }
 
 #[derive(Debug, Clone)]
@@ -1057,7 +1194,8 @@ mod tests {
 
     use super::{
         handle_runtime_control_command, persist_output_binding_change, request_runtime_shutdown,
-        resolve_renderer_assets_path, update_playlist_active_config, RuntimePhase, RuntimeState,
+        resolve_renderer_assets_path, schedule_config_reconfigure_guarded,
+        update_playlist_active_config, RuntimePhase, RuntimeState,
     };
     use crate::{
         config::Config,
@@ -1198,6 +1336,36 @@ mod tests {
 
         assert_eq!(state.phase, RuntimePhase::Running);
         assert_eq!(state.source, "/tmp/workshop/two");
+    }
+
+    #[test]
+    fn scheduled_scene_does_not_overwrite_a_concurrent_non_output_config_change() {
+        let original = Config::default();
+        let mut current = original.clone();
+        current.playlists.active = Some("Manual".into());
+        let desired = Arc::new(Mutex::new(current.clone()));
+        let status = Arc::new(Mutex::new(String::new()));
+        let runtime = Arc::new(Mutex::new(RuntimeState::new(&current)));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut proposed = original.clone();
+        proposed.outputs.insert(
+            "DP-1".into(),
+            we_core::config::OutputBinding::wallpaper("scheduled", "/scheduled"),
+        );
+
+        let applied = schedule_config_reconfigure_guarded(
+            proposed,
+            Some(&original),
+            &desired,
+            &status,
+            &runtime,
+            &tx,
+        )
+        .unwrap();
+        assert!(!applied);
+        assert_eq!(desired.lock().unwrap().playlists.active, Some("Manual".to_string()));
+        assert!(desired.lock().unwrap().outputs.is_empty());
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

@@ -37,6 +37,10 @@ pub struct AppConfig {
     pub integrations: IntegrationsConfig,
     #[serde(default)]
     pub rules: RuntimeRulesConfig,
+    #[serde(default, skip_serializing_if = "AdaptiveConfig::is_disabled")]
+    pub adaptive: AdaptiveConfig,
+    #[serde(default, skip_serializing_if = "SceneConfig::is_empty")]
+    pub scenes: SceneConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -135,6 +139,105 @@ pub struct RuntimeRulesConfig {
     pub fullscreen: RuntimeRuleAction,
 }
 
+/// Optional power-aware limits; no effect until configured.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AdaptiveConfig {
+    #[serde(default)]
+    pub on_battery_fps: Option<u32>,
+    #[serde(default)]
+    pub on_battery: RuntimeRuleAction,
+}
+
+impl AdaptiveConfig {
+    pub fn is_disabled(&self) -> bool {
+        self.on_battery_fps.is_none() && self.on_battery == RuntimeRuleAction::Keep
+    }
+}
+
+/// Ordered profile-selection conditions. The first matching entry has priority.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SceneConfig {
+    #[serde(default)]
+    pub rules: Vec<SceneRule>,
+}
+
+impl SceneConfig {
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (index, rule) in self.rules.iter().enumerate() {
+            if rule.profile.trim().is_empty() {
+                return Err(format!("scenes.rules[{index}].profile must not be empty"));
+            }
+            match (&rule.start, &rule.end) {
+                (None, None) => {}
+                (Some(start), Some(end))
+                    if parse_clock_time(start).is_some() && parse_clock_time(end).is_some() => {}
+                _ => {
+                    return Err(format!(
+                        "scenes.rules[{index}] requires start and end in HH:MM format"
+                    ))
+                }
+            }
+            if rule.outputs.iter().any(|name| name.trim().is_empty()) {
+                return Err(format!("scenes.rules[{index}].outputs contains an empty output name"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Strict HH:MM local-time parser used by both validation and scheduling.
+pub fn parse_clock_time(value: &str) -> Option<u16> {
+    let (hours, minutes) = value.split_once(':')?;
+    if hours.len() != 2
+        || minutes.len() != 2
+        || !hours.bytes().all(|byte| byte.is_ascii_digit())
+        || !minutes.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let hours = hours.parse::<u16>().ok()?;
+    let minutes = minutes.parse::<u16>().ok()?;
+    (hours < 24 && minutes < 60).then_some(hours * 60 + minutes)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SceneRule {
+    pub profile: String,
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub end: Option<String>,
+    #[serde(default)]
+    pub days: Vec<SceneDay>,
+    #[serde(default)]
+    pub power: Option<ScenePower>,
+    #[serde(default)]
+    pub outputs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SceneDay {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScenePower {
+    Ac,
+    Battery,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
@@ -212,6 +315,8 @@ pub struct LaunchSettings {
     pub profiles: ProfileConfig,
     pub integrations: IntegrationsConfig,
     pub rules: RuntimeRulesConfig,
+    pub adaptive: AdaptiveConfig,
+    pub scenes: SceneConfig,
 }
 
 fn default_interactive() -> bool {
@@ -342,6 +447,8 @@ impl Default for LaunchSettings {
             profiles: ProfileConfig::default(),
             integrations: IntegrationsConfig::default(),
             rules: RuntimeRulesConfig::default(),
+            adaptive: AdaptiveConfig::default(),
+            scenes: SceneConfig::default(),
         }
     }
 }
@@ -366,6 +473,8 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.profiles = settings.profiles.clone();
     cfg.integrations = settings.integrations.clone();
     cfg.rules = settings.rules;
+    cfg.adaptive = settings.adaptive;
+    cfg.scenes = settings.scenes.clone();
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path =
         Path::new(&settings.assets_path).join("assets").display().to_string();
@@ -454,6 +563,8 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         profiles: cfg.profiles,
         integrations: cfg.integrations,
         rules: cfg.rules,
+        adaptive: cfg.adaptive,
+        scenes: cfg.scenes,
     })
 }
 
@@ -997,6 +1108,68 @@ options_json = "{\"keep\":true}"
         assert_eq!(settings.rules.focused, RuntimeRuleAction::Keep);
         assert_eq!(settings.rules.maximized, RuntimeRuleAction::Keep);
         assert_eq!(settings.rules.fullscreen, RuntimeRuleAction::Keep);
+        assert!(settings.scenes.is_empty());
+    }
+
+    #[test]
+    fn adaptive_scenes_round_trip_through_gui_settings() {
+        let path = unique_temp_path("adaptive-scenes.toml");
+        fs::write(
+            &path,
+            r#"
+[renderer]
+source = "/tmp/workshop/content/431960/42"
+
+[adaptive]
+on_battery_fps = 24
+on_battery = "mute"
+
+[[scenes.rules]]
+profile = "Desk"
+start = "09:00"
+end = "18:00"
+days = ["mon", "wed", "fri"]
+power = "ac"
+outputs = ["DP-1"]
+"#,
+        )
+        .unwrap();
+        let settings = load_launch_settings(&path).unwrap();
+        assert_eq!(settings.adaptive.on_battery_fps, Some(24));
+        assert_eq!(settings.adaptive.on_battery, RuntimeRuleAction::Mute);
+        assert_eq!(settings.scenes.rules.len(), 1);
+        assert_eq!(settings.scenes.rules[0].profile, "Desk");
+        let rebuilt =
+            build_config(&settings, Path::new("/tmp/workshop/content/431960/42/project.json"));
+        let round_trip: super::AppConfig =
+            toml::from_str(&toml::to_string(&rebuilt).unwrap()).unwrap();
+        assert_eq!(round_trip.adaptive, settings.adaptive);
+        assert_eq!(round_trip.scenes, settings.scenes);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn scene_clock_validation_rejects_partial_or_invalid_windows() {
+        use super::{parse_clock_time, SceneConfig, SceneRule};
+        for invalid in ["24:00", "09:60", "9:00", "09:0", "09:30:00", "ab:cd"] {
+            assert!(parse_clock_time(invalid).is_none(), "{invalid}");
+        }
+        assert_eq!(parse_clock_time("00:00"), Some(0));
+        assert_eq!(parse_clock_time("23:59"), Some(1439));
+
+        let mut rules = SceneConfig {
+            rules: vec![SceneRule {
+                profile: "Desk".into(),
+                start: Some("09:00".into()),
+                end: None,
+                days: vec![],
+                power: None,
+                outputs: vec![],
+            }],
+        };
+        assert!(rules.validate().is_err());
+        rules.rules[0].end = Some("18:00".into());
+        assert!(rules.validate().is_ok());
     }
 
     #[test]
@@ -1033,6 +1206,7 @@ fullscreen = "pause"
         assert_eq!(settings.rules.focused, RuntimeRuleAction::Mute);
         assert_eq!(settings.rules.maximized, RuntimeRuleAction::Pause);
         assert_eq!(settings.rules.fullscreen, RuntimeRuleAction::Pause);
+        assert!(settings.adaptive.is_disabled());
 
         let rebuilt =
             build_config(&settings, Path::new("/tmp/workshop/content/431960/42/project.json"));

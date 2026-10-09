@@ -41,6 +41,20 @@ focused = "keep"
 maximized = "keep"
 fullscreen = "keep"
 
+# Optional battery-aware runtime limits; the existing window rules still apply.
+# [adaptive]
+# on_battery_fps = 24
+# on_battery = "keep" # "keep", "mute", or "pause"
+
+# Optional ordered scene conditions for profiles defined under [profiles.definitions].
+# [[scenes.rules]]
+# profile = "Desk"
+# start = "09:00"
+# end = "18:00"
+# days = ["mon", "tue", "wed", "thu", "fri"]
+# power = "ac"
+# outputs = ["DP-1"]
+
 # Runs asynchronously after an output presents the first frame of a successful apply or switch.
 # [hooks.wallpaper_applied]
 # command = "~/.local/bin/we-theme-sync"
