@@ -28,12 +28,12 @@ impl LocalTime {
     }
 }
 
-pub(crate) fn selected_profile(
-    scenes: &SceneConfig,
+pub(crate) fn selected_profile<'a>(
+    scenes: &'a SceneConfig,
     time: LocalTime,
     power: PowerState,
     connected_outputs: &[String],
-) -> Option<&str> {
+) -> Option<&'a str> {
     scenes
         .rules
         .iter()
