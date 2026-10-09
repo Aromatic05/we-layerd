@@ -17,6 +17,8 @@ pub(crate) struct SceneEditor {
     pub rules: SceneConfig,
     pub adaptive: AdaptiveConfig,
     pub battery_fps: String,
+    /// Wayland output name being entered even when that monitor is disconnected.
+    pub output_name_input: String,
     pub selected: Option<usize>,
     pub preview_time: String,
     pub preview_day: SceneDay,
@@ -36,6 +38,7 @@ impl SceneEditor {
                 .on_battery_fps
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
+            output_name_input: String::new(),
             selected: (!settings.scenes.rules.is_empty()).then_some(0),
             preview_time: "09:00".into(),
             preview_day: SceneDay::Mon,
@@ -52,6 +55,7 @@ impl SceneEditor {
         self.adaptive = settings.adaptive;
         self.battery_fps =
             settings.adaptive.on_battery_fps.map(|n| n.to_string()).unwrap_or_default();
+        self.output_name_input.clear();
         self.selected = previous
             .filter(|i| *i < self.rules.rules.len())
             .or_else(|| (!self.rules.rules.is_empty()).then_some(0));
@@ -61,6 +65,22 @@ impl SceneEditor {
 
     pub(crate) fn selected_rule_mut(&mut self) -> Option<&mut SceneRule> {
         self.selected.and_then(|i| self.rules.rules.get_mut(i))
+    }
+
+    /// Add a disconnected or otherwise undiscovered output as an explicit scene condition.
+    /// A repeat is a no-op; existing conditions never get duplicated.
+    pub(crate) fn add_output_name(&mut self) -> bool {
+        let name = self.output_name_input.trim().to_string();
+        if name.is_empty() || name.chars().any(char::is_whitespace) {
+            return false;
+        }
+        let Some(rule) = self.selected_rule_mut() else { return false };
+        if !rule.outputs.contains(&name) {
+            rule.outputs.push(name);
+            rule.outputs.sort();
+        }
+        self.output_name_input.clear();
+        true
     }
 
     pub(crate) fn references_profile(&self, name: &str) -> bool {
@@ -217,5 +237,20 @@ mod tests {
         assert!(!editor.references_profile("Work"));
         assert_eq!(editor.rules.rules.iter().filter(|rule| rule.profile == "Office").count(), 2);
         assert_eq!(editor.selected, Some(2));
+    }
+
+    #[test]
+    fn disconnected_output_can_be_added_without_duplicate_or_empty_conditions() {
+        let mut editor = SceneEditor::new(&LaunchSettings::default());
+        editor.add("Work".into());
+        editor.output_name_input = "  DP-1  ".into();
+        assert!(editor.add_output_name());
+        assert_eq!(editor.rules.rules[0].outputs, ["DP-1"]);
+        editor.output_name_input = "DP-1".into();
+        assert!(editor.add_output_name());
+        assert_eq!(editor.rules.rules[0].outputs, ["DP-1"]);
+        editor.output_name_input = " HDMI A-1 ".into();
+        assert!(!editor.add_output_name());
+        assert_eq!(editor.rules.rules[0].outputs, ["DP-1"]);
     }
 }

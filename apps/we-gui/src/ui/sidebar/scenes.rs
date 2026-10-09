@@ -135,6 +135,18 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                         move |value| Message::SceneOutputToggled(output.clone(), value),
                     ));
             }
+            let output_name = text_input("DP-1", &editor.output_name_input)
+                .on_input(Message::SceneOutputNameChanged)
+                .on_submit(Message::SceneAddOutput)
+                .width(Fill);
+            display_conditions = display_conditions.push(
+                row![
+                    output_name,
+                    button(text(language.text(Text::SceneAddDisplay)).size(12))
+                        .on_press(Message::SceneAddOutput),
+                ]
+                .spacing(8),
+            );
 
             let powers = power_options(language);
             let selected_power = powers.iter().find(|option| option.value == rule.power).cloned();
@@ -360,8 +372,23 @@ fn current_status(app: &App) -> Element<'_, Message> {
                     .and_then(|v| v.get("power_state"))
                     .and_then(toml::Value::as_str)
                 {
+                    let label = match power {
+                        "ac" => language.text(Text::SceneAc),
+                        "battery" => language.text(Text::SceneBattery),
+                        _ => language.text(Text::ScenePowerUnknown),
+                    };
                     lines = lines.push(
-                        text(format!("{}: {power}", language.text(Text::ScenePower))).size(12),
+                        text(format!("{}: {label}", language.text(Text::ScenePower))).size(12),
+                    );
+                }
+                if let Some(cap) = value
+                    .get("integration_runtime")
+                    .and_then(|v| v.get("adaptive_fps_cap"))
+                    .and_then(toml::Value::as_integer)
+                {
+                    lines = lines.push(
+                        text(format!("{}: {cap} FPS", language.text(Text::SceneAppliedBatteryFps)))
+                            .size(12),
                     );
                 }
                 return container(lines).padding(14).style(panel_style).into();

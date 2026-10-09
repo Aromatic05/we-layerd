@@ -212,6 +212,8 @@ pub(crate) enum Message {
     SceneDayToggled(SceneDay, bool),
     ScenePowerSelected(Option<ScenePower>),
     SceneOutputToggled(String, bool),
+    SceneOutputNameChanged(String),
+    SceneAddOutput,
     SceneBatteryFpsChanged(String),
     SceneBatteryActionSelected(RuntimeRuleAction),
     SceneSave,

@@ -336,6 +336,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         | Message::SceneDayToggled(_, _)
         | Message::ScenePowerSelected(_)
         | Message::SceneOutputToggled(_, _)
+        | Message::SceneOutputNameChanged(_)
+        | Message::SceneAddOutput
         | Message::SceneBatteryFpsChanged(_)
         | Message::SceneBatteryActionSelected(_)
         | Message::SceneSave

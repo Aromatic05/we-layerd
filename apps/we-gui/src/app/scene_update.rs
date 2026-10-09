@@ -9,6 +9,26 @@ use crate::{
 use super::{App, Message};
 
 pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
+    // Any rule edit invalidates the old saved or failed status; simulation-only controls do not.
+    if matches!(
+        &message,
+        Message::SceneAdd
+            | Message::SceneDelete
+            | Message::SceneMove(_)
+            | Message::SceneProfileSelected(_)
+            | Message::SceneStartChanged(_)
+            | Message::SceneEndChanged(_)
+            | Message::SceneAllDay
+            | Message::SceneDayToggled(_, _)
+            | Message::ScenePowerSelected(_)
+            | Message::SceneOutputToggled(_, _)
+            | Message::SceneAddOutput
+            | Message::SceneBatteryFpsChanged(_)
+            | Message::SceneBatteryActionSelected(_)
+    ) {
+        app.scene_editor.notice = None;
+        app.scene_editor.error = None;
+    }
     match message {
         Message::ScenesPressed => {
             app.sidebar =
@@ -82,6 +102,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     rule.outputs.push(name);
                     rule.outputs.sort();
                 }
+            }
+        }
+        Message::SceneOutputNameChanged(value) => app.scene_editor.output_name_input = value,
+        Message::SceneAddOutput => {
+            if !app.scene_editor.add_output_name() {
+                app.scene_editor.error = Some(app.language.text(Text::SceneInvalidDisplay).into());
             }
         }
         Message::SceneBatteryFpsChanged(value) => app.scene_editor.battery_fps = value,
