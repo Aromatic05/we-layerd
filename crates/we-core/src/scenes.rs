@@ -18,6 +18,60 @@ pub fn matching_scene<'a>(
         .find(|(_, rule)| matches_rule(rule, minute, weekday, power, connected_outputs))
 }
 
+/// Find the next rule change in the coming week, assuming power and display connections
+/// stay constant. Only rule boundaries and midnight need evaluation, not every minute.
+pub fn next_scene_transition(
+    scenes: &SceneConfig,
+    minute: u16,
+    weekday: SceneDay,
+    power: Option<ScenePower>,
+    connected_outputs: &[String],
+) -> Option<(u8, u16, Option<usize>)> {
+    if minute >= 1440 {
+        return None;
+    }
+    let days = [
+        SceneDay::Mon,
+        SceneDay::Tue,
+        SceneDay::Wed,
+        SceneDay::Thu,
+        SceneDay::Fri,
+        SceneDay::Sat,
+        SceneDay::Sun,
+    ];
+    let start_day = days.iter().position(|day| *day == weekday)?;
+    let current =
+        matching_scene(scenes, minute, weekday, power, connected_outputs).map(|(index, _)| index);
+    let mut boundaries = Vec::with_capacity(8 * (1 + scenes.rules.len() * 2));
+    for offset in 0..=7_u32 {
+        let midnight = offset * 1440;
+        boundaries.push(midnight);
+        for rule in &scenes.rules {
+            for value in [&rule.start, &rule.end].into_iter().flatten() {
+                if let Some(parsed) = parse_clock_time(value) {
+                    boundaries.push(midnight + u32::from(parsed));
+                }
+            }
+        }
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    for candidate in boundaries {
+        if candidate <= u32::from(minute) || candidate > u32::from(minute) + 7 * 1440 {
+            continue;
+        }
+        let offset = (candidate / 1440) as usize;
+        let next_minute = (candidate % 1440) as u16;
+        let next_day = days[(start_day + offset) % days.len()];
+        let selected = matching_scene(scenes, next_minute, next_day, power, connected_outputs)
+            .map(|(index, _)| index);
+        if selected != current {
+            return Some((offset as u8, next_minute, selected));
+        }
+    }
+    None
+}
+
 fn matches_rule(
     rule: &SceneRule,
     minute: u16,
@@ -68,7 +122,7 @@ fn previous_day(day: SceneDay) -> SceneDay {
 
 #[cfg(test)]
 mod tests {
-    use super::matching_scene;
+    use super::{matching_scene, next_scene_transition};
     use crate::config::{SceneConfig, SceneDay, ScenePower, SceneRule};
 
     fn rule(profile: &str, start: &str, end: &str) -> SceneRule {
@@ -128,5 +182,37 @@ mod tests {
             }],
         };
         assert!(matching_scene(&config, 720, SceneDay::Mon, None, &[]).is_none());
+    }
+
+    #[test]
+    fn next_transition_tracks_boundaries_and_weekday_rollover() {
+        let mut day = rule("Work", "09:00", "17:00");
+        day.days = vec![SceneDay::Mon];
+        let scenes = SceneConfig { rules: vec![day] };
+        assert_eq!(
+            next_scene_transition(&scenes, 10 * 60, SceneDay::Mon, None, &[]),
+            Some((0, 17 * 60, None))
+        );
+        assert_eq!(
+            next_scene_transition(&scenes, 18 * 60, SceneDay::Mon, None, &[]),
+            Some((7, 9 * 60, Some(0)))
+        );
+    }
+
+    #[test]
+    fn next_transition_considers_all_day_and_fallback_priority() {
+        let mut work = rule("Work", "00:00", "00:00");
+        work.days = vec![SceneDay::Mon];
+        let scenes = SceneConfig { rules: vec![work, rule("Fallback", "00:00", "00:00")] };
+        assert_eq!(
+            next_scene_transition(&scenes, 22 * 60, SceneDay::Mon, None, &[]),
+            Some((1, 0, Some(1)))
+        );
+        assert_eq!(
+            next_scene_transition(&scenes, 22 * 60, SceneDay::Tue, None, &[]),
+            Some((6, 0, Some(0)))
+        );
+        let never = SceneConfig { rules: vec![rule("All", "00:00", "00:00")] };
+        assert_eq!(next_scene_transition(&never, 600, SceneDay::Mon, None, &[]), None);
     }
 }

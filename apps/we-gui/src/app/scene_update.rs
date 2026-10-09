@@ -112,7 +112,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             app.scene_editor.notice = Some(if reloaded {
                 app.language.text(Text::SceneSaved).to_string()
             } else {
-                "Saved to disk. Running daemon did not accept the reload.".to_string()
+                app.language.text(Text::SceneReloadFailed).to_string()
             });
             return Task::perform(runtime::fetch_status(), Message::StatusLoaded);
         }

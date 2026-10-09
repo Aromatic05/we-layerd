@@ -6,7 +6,7 @@ use we_core::{
         SceneRule,
     },
     profile::ProfileConfig,
-    scenes::matching_scene,
+    scenes::{matching_scene, next_scene_transition},
 };
 
 use super::playlist_editor::MoveDirection;
@@ -139,6 +139,12 @@ impl SceneEditor {
         let outputs = self.preview_outputs.iter().cloned().collect::<Vec<_>>();
         matching_scene(&self.rules, minute, self.preview_day, self.preview_power, &outputs)
             .map(|(i, rule)| (i, rule.profile.as_str()))
+    }
+
+    pub(crate) fn next_transition(&self) -> Option<(u8, u16, Option<usize>)> {
+        let minute = parse_clock_time(&self.preview_time)?;
+        let outputs = self.preview_outputs.iter().cloned().collect::<Vec<_>>();
+        next_scene_transition(&self.rules, minute, self.preview_day, self.preview_power, &outputs)
     }
 }
 

@@ -250,9 +250,53 @@ fn preview(app: &App) -> Element<'_, Message> {
             format!("{} #{:02} · {profile}", language.text(Text::SceneMatch), index + 1)
         }
         None if we_core::config::parse_clock_time(&editor.preview_time).is_none() => {
-            "Invalid preview time. Use HH:MM (00:00–23:59).".to_string()
+            language.text(Text::SceneInvalidTime).to_string()
         }
         None => language.text(Text::SceneNoMatch).to_string(),
+    };
+    let why = editor
+        .preview()
+        .and_then(|(index, _)| editor.rules.rules.get(index))
+        .map(|rule| {
+            let time = match (&rule.start, &rule.end) {
+                (Some(start), Some(end)) => format!("{start}–{end}"),
+                _ => language.text(Text::SceneAllDay).to_string(),
+            };
+            let weekdays = if rule.days.is_empty() {
+                language.text(Text::SceneEveryDay).to_string()
+            } else {
+                rule.days.iter().map(|day| language.scene_day(*day)).collect::<Vec<_>>().join(" · ")
+            };
+            let power = match rule.power {
+                None => language.text(Text::SceneAny),
+                Some(ScenePower::Ac) => language.text(Text::SceneAc),
+                Some(ScenePower::Battery) => language.text(Text::SceneBattery),
+            };
+            let displays = if rule.outputs.is_empty() {
+                language.text(Text::SceneAnyDisplay).to_string()
+            } else {
+                rule.outputs.join(", ")
+            };
+            format!("{time} · {weekdays} · {power} · {displays}")
+        })
+        .unwrap_or_default();
+    let forecast = match editor.next_transition() {
+        Some((offset, minute, index)) => {
+            let day = DAYS[(editor.preview_day as usize + offset as usize) % DAYS.len()];
+            let day_label =
+                if offset == 0 { language.text(Text::SceneToday) } else { language.scene_day(day) };
+            let target = index
+                .and_then(|index| editor.rules.rules.get(index))
+                .map(|rule| rule.profile.as_str())
+                .unwrap_or(language.text(Text::SceneNoMatch));
+            format!(
+                "{}: {day_label} {:02}:{:02} → {target}",
+                language.text(Text::SceneNextSwitch),
+                minute / 60,
+                minute % 60
+            )
+        }
+        None => language.text(Text::SceneNoUpcomingSwitch).to_string(),
     };
     let mut outputs = column![text(language.text(Text::SceneDisplays)).size(12)].spacing(6);
     for output in known_outputs(app) {
@@ -281,6 +325,8 @@ fn preview(app: &App) -> Element<'_, Message> {
             .width(Fill),
             outputs,
             text(matching).size(13),
+            text(why).size(11),
+            text(forecast).size(12),
         ]
         .spacing(9),
     )
