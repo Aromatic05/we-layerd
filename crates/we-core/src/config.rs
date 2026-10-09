@@ -1108,6 +1108,68 @@ options_json = "{\"keep\":true}"
         assert_eq!(settings.rules.focused, RuntimeRuleAction::Keep);
         assert_eq!(settings.rules.maximized, RuntimeRuleAction::Keep);
         assert_eq!(settings.rules.fullscreen, RuntimeRuleAction::Keep);
+        assert!(settings.scenes.is_empty());
+    }
+
+    #[test]
+    fn adaptive_scenes_round_trip_through_gui_settings() {
+        let path = unique_temp_path("adaptive-scenes.toml");
+        fs::write(
+            &path,
+            r#"
+[renderer]
+source = "/tmp/workshop/content/431960/42"
+
+[adaptive]
+on_battery_fps = 24
+on_battery = "mute"
+
+[[scenes.rules]]
+profile = "Desk"
+start = "09:00"
+end = "18:00"
+days = ["mon", "wed", "fri"]
+power = "ac"
+outputs = ["DP-1"]
+"#,
+        )
+        .unwrap();
+        let settings = load_launch_settings(&path).unwrap();
+        assert_eq!(settings.adaptive.on_battery_fps, Some(24));
+        assert_eq!(settings.adaptive.on_battery, RuntimeRuleAction::Mute);
+        assert_eq!(settings.scenes.rules.len(), 1);
+        assert_eq!(settings.scenes.rules[0].profile, "Desk");
+        let rebuilt =
+            build_config(&settings, Path::new("/tmp/workshop/content/431960/42/project.json"));
+        let round_trip: super::AppConfig =
+            toml::from_str(&toml::to_string(&rebuilt).unwrap()).unwrap();
+        assert_eq!(round_trip.adaptive, settings.adaptive);
+        assert_eq!(round_trip.scenes, settings.scenes);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn scene_clock_validation_rejects_partial_or_invalid_windows() {
+        use super::{parse_clock_time, SceneConfig, SceneRule};
+        for invalid in ["24:00", "09:60", "9:00", "09:0", "09:30:00", "ab:cd"] {
+            assert!(parse_clock_time(invalid).is_none(), "{invalid}");
+        }
+        assert_eq!(parse_clock_time("00:00"), Some(0));
+        assert_eq!(parse_clock_time("23:59"), Some(1439));
+
+        let mut rules = SceneConfig {
+            rules: vec![SceneRule {
+                profile: "Desk".into(),
+                start: Some("09:00".into()),
+                end: None,
+                days: vec![],
+                power: None,
+                outputs: vec![],
+            }],
+        };
+        assert!(rules.validate().is_err());
+        rules.rules[0].end = Some("18:00".into());
+        assert!(rules.validate().is_ok());
     }
 
     #[test]

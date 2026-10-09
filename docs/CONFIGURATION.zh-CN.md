@@ -65,6 +65,22 @@ muted = false
 - v4 feedback 运行中变化时会重新传入 renderer，并重新绑定输出或退回 SHM
 - `prefer_dmabuf` 决定是否优先 DMA-BUF，`allow_shm_fallback` 决定无兼容组合时是否允许退回 SHM
 
+## 自适应资源策略
+
+可选的电池策略会调整实际的 renderer tick 频率，并复用原有暂停/静音控制：
+
+```toml
+[adaptive]
+on_battery_fps = 24
+on_battery = "keep" # 可选："keep"、"mute"、"pause"
+```
+
+电池帧率上限与壁纸自己的 FPS 和 `renderer.max_fps` 取较低值，不会提高帧率，
+也不需要重建 renderer session。暂停/静音会叠加到已有窗口规则；手动暂停不会
+因为切回交流电而被取消。未设置 `[adaptive]` 时功能关闭，检测不到电源状态时
+不启用节电策略。电源来自 `/sys/class/power_supply`，状态见 `we-layerd ctl status`
+的 `[integration_runtime]`。
+
 ## 多输出 layer-shell 运行时
 
 Wayland 输出使用协议版本 4 提供的稳定 `wl_output.name` 标识。每个输出拥有独立的
@@ -101,6 +117,33 @@ we-layerd playlist stop --output DP-1
 只有一个 output worker 时，`we-layerd ctl status` 继续输出兼容的 `[runtime]` /
 `[presentation]`；多屏时使用 `[output_runtime."<name>".runtime]` 与
 `[output_runtime."<name>".presentation]` 分别报告 source、播放列表 cursor 和呈现状态。
+
+### 智能场景切换
+
+可以依据本地时间、星期、电源状态和显示器名称，在已有输出 Profile 间自动切换：
+
+```toml
+[[scenes.rules]]
+profile = "Desk"
+start = "09:00"
+end = "18:00"
+days = ["mon", "tue", "wed", "thu", "fri"]
+power = "ac"
+outputs = ["DP-1"]
+
+[[scenes.rules]]
+profile = "Night"
+start = "22:00"
+end = "06:00"
+```
+
+目标 Profile 需要预先定义在 `[profiles.definitions]`，并包含有效的壁纸或播放列表。
+规则自上而下匹配，第一条命中即生效；未指定的条件表示不限制。时间窗口跨午夜时
+按开始那一天判断星期，开始和结束相同表示全天。Daemon 每秒检查条件，按需要每
+五秒更新一次显示器列表。没有规则匹配时还原自动切换前的绑定；用户手动修改输出
+或应用 Profile 时，手动修改优先，直到匹配规则发生变化。自动切换只覆盖当前运行态，
+不会修改配置文件中的 `[outputs]`。当前自动场景仅适用于 layer-shell 后端；运行状态
+见 `we-layerd ctl status` 的 `[scene_runtime]`。
 
 ## 壁纸应用 Hook
 

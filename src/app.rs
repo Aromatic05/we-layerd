@@ -444,15 +444,11 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                     };
                     match planned {
                         Ok(Some(next)) => {
-                            // A concurrent GUI/IPC change must never be replaced by a stale plan.
-                            if desired_cfg
-                                .lock()
-                                .is_ok_and(|current| current.outputs != cfg.outputs)
-                            {
-                                continue;
-                            }
-                            if let Err(error) = schedule_config_reconfigure(
+                            // Compare and update while holding one lock, so concurrent manual
+                            // changes are never overwritten by a stale scheduled selection.
+                            if let Err(error) = schedule_config_reconfigure_guarded(
                                 next,
+                                Some(&cfg.outputs),
                                 &desired_cfg,
                                 &runtime_cfg_toml,
                                 &runtime_state,
@@ -623,11 +619,35 @@ fn schedule_config_reconfigure(
     runtime_state: &Arc<Mutex<RuntimeState>>,
     control_tx: &mpsc::Sender<ControlCommand>,
 ) -> Result<()> {
-    if let Ok(mut guard) = desired_cfg.lock() {
+    schedule_config_reconfigure_guarded(
+        next_cfg,
+        None,
+        desired_cfg,
+        runtime_cfg_toml,
+        runtime_state,
+        control_tx,
+    )?;
+    Ok(())
+}
+
+fn schedule_config_reconfigure_guarded(
+    next_cfg: Config,
+    expected_outputs: Option<&BTreeMap<String, OutputBinding>>,
+    desired_cfg: &Arc<Mutex<Config>>,
+    runtime_cfg_toml: &Arc<Mutex<String>>,
+    runtime_state: &Arc<Mutex<RuntimeState>>,
+    control_tx: &mpsc::Sender<ControlCommand>,
+) -> Result<bool> {
+    let serialized = next_cfg.to_toml_pretty()?;
+    {
+        let mut guard = desired_cfg.lock().map_err(|_| anyhow!("desired config lock poisoned"))?;
+        if expected_outputs.is_some_and(|expected| &guard.outputs != expected) {
+            return Ok(false);
+        }
         *guard = next_cfg.clone();
     }
     if let Ok(mut guard) = runtime_cfg_toml.lock() {
-        *guard = next_cfg.to_toml_pretty()?;
+        *guard = serialized;
     }
     if let Ok(mut state) = runtime_state.lock() {
         if resolve_backend(&next_cfg) == BackendKind::LayerShell {
@@ -638,7 +658,8 @@ fn schedule_config_reconfigure(
     }
     control_tx
         .send(ControlCommand::Reconfigure)
-        .context("failed to schedule runtime reconfiguration")
+        .context("failed to schedule runtime reconfiguration")?;
+    Ok(true)
 }
 
 #[derive(Debug, Clone)]

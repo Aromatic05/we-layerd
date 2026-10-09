@@ -346,4 +346,20 @@ mod tests {
             .expect_err("invalid backend must fail");
         assert!(err.to_string().contains("backend"));
     }
+
+    #[test]
+    fn loaded_config_rejects_invalid_scene_windows_and_adaptive_fps() {
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+        let name = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("we-layerd-config-{}-{name}", std::process::id()));
+        fs::write(&path, "[adaptive]\non_battery_fps = 0\n").unwrap();
+        assert!(Config::load(Some(&path)).unwrap_err().to_string().contains("on_battery_fps"));
+        fs::write(&path, "[[scenes.rules]]\nprofile = \"Desk\"\nstart = \"09:00\"\n").unwrap();
+        assert!(Config::load(Some(&path)).unwrap_err().to_string().contains("start and end"));
+        let _ = fs::remove_file(path);
+    }
 }
