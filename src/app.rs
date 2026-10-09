@@ -141,8 +141,29 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let playlist_state_path = playlist_state_path.clone();
             let switch_tx = switch_tx.clone();
             let scene_runtime = scene_runtime.clone();
-            move |config_path| {
+            move |config_path, automation_only| {
                 let mut next_cfg = Config::load(Some(config_path))?;
+                if automation_only {
+                    // Keep live output bindings, playlist progression and manually selected
+                    // wallpapers intact. `switch-config` is a separate, explicit manual action.
+                    let mut scene =
+                        scene_runtime.lock().map_err(|_| anyhow!("scene runtime lock poisoned"))?;
+                    let mut current = desired_cfg
+                        .lock()
+                        .map_err(|_| anyhow!("failed to read running scene config"))?
+                        .clone();
+                    current.scenes = next_cfg.scenes;
+                    current.adaptive = next_cfg.adaptive;
+                    schedule_config_reconfigure(
+                        current,
+                        &desired_cfg,
+                        &runtime_cfg_toml,
+                        &runtime_state,
+                        &switch_tx,
+                    )?;
+                    scene.invalidate_rules();
+                    return Ok(());
+                }
                 resolve_renderer_assets_path(
                     &mut next_cfg,
                     we_core::steam::discover_wallpaper_engine_path,

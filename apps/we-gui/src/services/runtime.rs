@@ -32,6 +32,14 @@ pub fn try_switch(config_path: &Path) -> bool {
     command_succeeds_quietly(&mut command)
 }
 
+pub fn reload_scene_settings(config_path: &Path) -> bool {
+    let Ok(mut command) = layerd_command() else {
+        return false;
+    };
+    command.arg("reload-scenes").arg("--config").arg(config_path);
+    command_succeeds_quietly(&mut command)
+}
+
 pub fn send_control(action: &str) -> bool {
     let Ok(mut command) = layerd_command() else {
         return false;

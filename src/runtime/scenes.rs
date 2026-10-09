@@ -67,6 +67,16 @@ pub(crate) struct SceneRuntime {
 }
 
 impl SceneRuntime {
+    /// Force reevaluation when automation rules are edited. Keep the original output bindings
+    /// so deleting the last matching rule can restore the pre-automation wallpaper layout.
+    pub(crate) fn invalidate_rules(&mut self) {
+        self.matched = None;
+        self.last_error = None;
+        if self.applied.is_none() {
+            self.manual_override = false;
+        }
+    }
+
     /// A user explicitly applied a configuration or output profile. Discard ownership of the
     /// automatic overlay even when the selected bindings happen to be identical.
     pub(crate) fn manual_override(&mut self) {
@@ -96,7 +106,7 @@ impl SceneRuntime {
             self.applied = None;
             self.baseline = None;
         }
-        if selected == self.matched {
+        if selected == self.matched && !(selected.is_none() && self.applied.is_some()) {
             if selected.is_none() {
                 self.last_error = None;
             }
@@ -292,5 +302,45 @@ mod tests {
         );
         let applied = runtime.reconcile(&config, Some("Late"), |_| true).unwrap().unwrap();
         assert_eq!(applied.outputs["DP-1"].wallpaper_id.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn disabling_auto_rules_restores_original_bindings_after_live_reload() {
+        let mut config = Config::default();
+        let before = OutputBinding::wallpaper("old", "/old");
+        config.outputs.insert("DP-1".into(), before.clone());
+        config.profiles.definitions.insert(
+            "New".into(),
+            OutputProfile {
+                outputs: [("DP-1".into(), OutputBinding::wallpaper("new", "/new"))].into(),
+            },
+        );
+        let mut scene = SceneRuntime::default();
+        let active = scene.reconcile(&config, Some("New"), |_| true).unwrap().unwrap();
+        scene.invalidate_rules();
+        let restored = scene.reconcile(&active, None, |_| true).unwrap().unwrap();
+        assert_eq!(restored.outputs["DP-1"], before);
+    }
+
+    #[test]
+    fn edited_auto_rules_reselect_without_a_time_transition() {
+        let mut config = Config::default();
+        config.outputs.insert("DP-1".into(), OutputBinding::wallpaper("original", "/original"));
+        for name in ["First", "Second"] {
+            config.profiles.definitions.insert(
+                name.into(),
+                OutputProfile {
+                    outputs: [("DP-1".into(), OutputBinding::wallpaper(name, format!("/{name}")))]
+                        .into(),
+                },
+            );
+        }
+        let mut scene = SceneRuntime::default();
+        let active = scene.reconcile(&config, Some("First"), |_| true).unwrap().unwrap();
+        scene.invalidate_rules();
+        let switched = scene.reconcile(&active, Some("Second"), |_| true).unwrap().unwrap();
+        assert_eq!(switched.outputs["DP-1"].wallpaper_id.as_deref(), Some("Second"));
+        let restored = scene.reconcile(&switched, None, |_| true).unwrap().unwrap();
+        assert_eq!(restored.outputs["DP-1"].wallpaper_id.as_deref(), Some("original"));
     }
 }

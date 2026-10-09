@@ -107,7 +107,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             app.launch_settings.adaptive = adaptive;
             app.scene_editor.reset(&app.launch_settings);
             // Do not force-restart the user's desktop when the daemon cannot accept a reload.
-            let reloaded = !runtime::daemon_is_running() || runtime::try_switch(&app.config_path);
+            let reloaded =
+                !runtime::daemon_is_running() || runtime::reload_scene_settings(&app.config_path);
             app.scene_editor.notice = Some(if reloaded {
                 app.language.text(Text::SceneSaved).to_string()
             } else {
