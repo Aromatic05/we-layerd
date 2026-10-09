@@ -4,6 +4,7 @@ pub(crate) mod input;
 pub(crate) mod integrations;
 pub(crate) mod media;
 pub(crate) mod playlist;
+pub(crate) mod power;
 pub(crate) mod renderer_session;
 pub(crate) mod rules;
 pub(crate) mod status;

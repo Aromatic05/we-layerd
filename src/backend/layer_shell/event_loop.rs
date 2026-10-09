@@ -119,7 +119,7 @@ fn apply_pause_state(state: &mut LayerShellState, previous: bool) {
 fn apply_host_integrations(
     state: &mut LayerShellState,
     host: &crate::runtime::integrations::HostIntegrations,
-) {
+) -> Option<u32> {
     let snapshot = host.snapshot_for_output(&state.output_name);
 
     if snapshot.policy_generation != state.policy_generation {
@@ -174,6 +174,7 @@ fn apply_host_integrations(
         }
         state.audio_generation = snapshot.audio_generation;
     }
+    snapshot.fps_limit
 }
 
 fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerShellState) -> i32 {
@@ -521,7 +522,7 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
     session.play()?;
     let renderer_frame_fd = session.frame_ready_fd()?;
     state.session = Some(session);
-    apply_host_integrations(&mut state, &host_integrations);
+    let initial_fps_cap = apply_host_integrations(&mut state, &host_integrations);
     state.refresh_renderer_diagnostics();
     status_sink(state.snapshot());
 
@@ -536,7 +537,8 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
 
     let mut last_acquire_status: i32 = 1;
     let mut last_log = std::time::Instant::now();
-    let render_interval = frame_interval(cfg.renderer.fps);
+    let initial_fps = cfg.renderer.fps.min(initial_fps_cap.unwrap_or(cfg.renderer.fps)).max(1);
+    let mut render_interval = frame_interval(initial_fps);
     let mut next_tick_at = Instant::now();
 
     // Main loop
@@ -584,7 +586,16 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
             }
         }
 
-        apply_host_integrations(&mut state, &host_integrations);
+        let adaptive_fps_cap = apply_host_integrations(&mut state, &host_integrations);
+        let effective_fps =
+            cfg.renderer.fps.min(adaptive_fps_cap.unwrap_or(cfg.renderer.fps)).max(1);
+        let updated_interval = frame_interval(effective_fps);
+        if updated_interval != render_interval {
+            render_interval = updated_interval;
+            // A reduced FPS cap must not allow an immediate tick from the previous cadence.
+            next_tick_at = Instant::now() + render_interval;
+            info!(output = %state.output_name, effective_fps, "adaptive render rate changed");
+        }
 
         // Forward input events
         let input_events = state.pending_input_events.drain();

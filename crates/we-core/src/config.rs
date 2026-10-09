@@ -37,6 +37,8 @@ pub struct AppConfig {
     pub integrations: IntegrationsConfig,
     #[serde(default)]
     pub rules: RuntimeRulesConfig,
+    #[serde(default, skip_serializing_if = "AdaptiveConfig::is_disabled")]
+    pub adaptive: AdaptiveConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -135,6 +137,21 @@ pub struct RuntimeRulesConfig {
     pub fullscreen: RuntimeRuleAction,
 }
 
+/// Optional power-aware limits; no effect until configured.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AdaptiveConfig {
+    #[serde(default)]
+    pub on_battery_fps: Option<u32>,
+    #[serde(default)]
+    pub on_battery: RuntimeRuleAction,
+}
+
+impl AdaptiveConfig {
+    pub fn is_disabled(&self) -> bool {
+        self.on_battery_fps.is_none() && self.on_battery == RuntimeRuleAction::Keep
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
@@ -212,6 +229,7 @@ pub struct LaunchSettings {
     pub profiles: ProfileConfig,
     pub integrations: IntegrationsConfig,
     pub rules: RuntimeRulesConfig,
+    pub adaptive: AdaptiveConfig,
 }
 
 fn default_interactive() -> bool {
@@ -342,6 +360,7 @@ impl Default for LaunchSettings {
             profiles: ProfileConfig::default(),
             integrations: IntegrationsConfig::default(),
             rules: RuntimeRulesConfig::default(),
+            adaptive: AdaptiveConfig::default(),
         }
     }
 }
@@ -366,6 +385,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.profiles = settings.profiles.clone();
     cfg.integrations = settings.integrations.clone();
     cfg.rules = settings.rules;
+    cfg.adaptive = settings.adaptive;
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path =
         Path::new(&settings.assets_path).join("assets").display().to_string();
@@ -454,6 +474,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         profiles: cfg.profiles,
         integrations: cfg.integrations,
         rules: cfg.rules,
+        adaptive: cfg.adaptive,
     })
 }
 
@@ -1033,6 +1054,7 @@ fullscreen = "pause"
         assert_eq!(settings.rules.focused, RuntimeRuleAction::Mute);
         assert_eq!(settings.rules.maximized, RuntimeRuleAction::Pause);
         assert_eq!(settings.rules.fullscreen, RuntimeRuleAction::Pause);
+        assert!(settings.adaptive.is_disabled());
 
         let rebuilt =
             build_config(&settings, Path::new("/tmp/workshop/content/431960/42/project.json"));
