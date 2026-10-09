@@ -115,6 +115,24 @@ fullscreen = "pause"
 runtime diagnostics report media/audio renderer capability and current rule mute state. Collectors
 run outside the frame loop, and changing integration/rule settings does not recreate output workers.
 
+### Adaptive battery policy
+
+An optional policy reduces the actual renderer tick rate when the kernel reports battery power:
+
+```toml
+[adaptive]
+on_battery_fps = 24
+on_battery = "keep" # "keep", "mute", or "pause"
+```
+
+The battery cap is combined with the per-wallpaper FPS and existing global `renderer.max_fps`
+limit; it never increases FPS and does not rebuild renderer sessions. Pause and mute actions
+compose with the existing per-output window rules. A manual Pause stays in effect until manual
+Resume, even if the battery condition disappears. Settings are disabled when `[adaptive]` is
+absent; unknown power state (including many desktop systems) applies no battery policy. Power
+is detected through `/sys/class/power_supply` and shown in `we-layerd ctl status` under
+`[integration_runtime]`.
+
 Current DMA-BUF scope:
 
 - the layer-shell backend reads linux-dmabuf v4 surface feedback and falls back to v3 global modifier events
@@ -163,6 +181,38 @@ we-layerd playlist stop --output DP-1
 worker is present. With multiple workers it reports independent
 `[output_runtime."<name>".runtime]` and `[output_runtime."<name>".presentation]` tables, including
 each output's source and playlist cursor.
+
+### Automatic scene profiles
+
+`[[scenes.rules]]` selects one of the existing named output profiles without modifying the
+persisted `[outputs]` bindings. Each rule can match local clock time, weekday, AC/battery power,
+and connected Wayland output names:
+
+```toml
+[[scenes.rules]]
+profile = "Desk"
+start = "09:00"
+end = "18:00"
+days = ["mon", "tue", "wed", "thu", "fri"]
+power = "ac"
+outputs = ["DP-1"]
+
+[[scenes.rules]]
+profile = "Night"
+start = "22:00"
+end = "06:00"
+```
+
+Profiles must already be defined in `[profiles.definitions]`, including valid wallpapers or
+playlists. Rules are checked in the order written; the first match wins. Missing conditions mean
+"any"; equal start/end times mean all day, and ranges crossing midnight use the starting day's
+weekday. The runtime checks conditions once per second and refreshes required output names every
+five seconds. When nothing matches, the original bindings are restored. Manual output/profile
+changes override the automatic selection until the matching rule changes, preventing the scheduler
+from fighting GUI actions. The scene overlay applies to the layer-shell backend; GNOME uses the
+existing single-wallpaper path. Check `[scene_runtime]` in `we-layerd ctl status` for the active
+profile, manual override and the last selection error. GUI wallpaper changes preserve these
+configuration rules.
 
 ## Playlists
 

@@ -39,6 +39,8 @@ pub struct AppConfig {
     pub rules: RuntimeRulesConfig,
     #[serde(default, skip_serializing_if = "AdaptiveConfig::is_disabled")]
     pub adaptive: AdaptiveConfig,
+    #[serde(default, skip_serializing_if = "SceneConfig::is_empty")]
+    pub scenes: SceneConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -152,6 +154,90 @@ impl AdaptiveConfig {
     }
 }
 
+/// Ordered profile-selection conditions. The first matching entry has priority.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SceneConfig {
+    #[serde(default)]
+    pub rules: Vec<SceneRule>,
+}
+
+impl SceneConfig {
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (index, rule) in self.rules.iter().enumerate() {
+            if rule.profile.trim().is_empty() {
+                return Err(format!("scenes.rules[{index}].profile must not be empty"));
+            }
+            match (&rule.start, &rule.end) {
+                (None, None) => {}
+                (Some(start), Some(end))
+                    if parse_clock_time(start).is_some() && parse_clock_time(end).is_some() => {}
+                _ => {
+                    return Err(format!(
+                        "scenes.rules[{index}] requires start and end in HH:MM format"
+                    ))
+                }
+            }
+            if rule.outputs.iter().any(|name| name.trim().is_empty()) {
+                return Err(format!("scenes.rules[{index}].outputs contains an empty output name"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Strict HH:MM local-time parser used by both validation and scheduling.
+pub fn parse_clock_time(value: &str) -> Option<u16> {
+    let (hours, minutes) = value.split_once(':')?;
+    if hours.len() != 2
+        || minutes.len() != 2
+        || !hours.bytes().all(|byte| byte.is_ascii_digit())
+        || !minutes.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let hours = hours.parse::<u16>().ok()?;
+    let minutes = minutes.parse::<u16>().ok()?;
+    (hours < 24 && minutes < 60).then_some(hours * 60 + minutes)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SceneRule {
+    pub profile: String,
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub end: Option<String>,
+    #[serde(default)]
+    pub days: Vec<SceneDay>,
+    #[serde(default)]
+    pub power: Option<ScenePower>,
+    #[serde(default)]
+    pub outputs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SceneDay {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScenePower {
+    Ac,
+    Battery,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
@@ -230,6 +316,7 @@ pub struct LaunchSettings {
     pub integrations: IntegrationsConfig,
     pub rules: RuntimeRulesConfig,
     pub adaptive: AdaptiveConfig,
+    pub scenes: SceneConfig,
 }
 
 fn default_interactive() -> bool {
@@ -361,6 +448,7 @@ impl Default for LaunchSettings {
             integrations: IntegrationsConfig::default(),
             rules: RuntimeRulesConfig::default(),
             adaptive: AdaptiveConfig::default(),
+            scenes: SceneConfig::default(),
         }
     }
 }
@@ -386,6 +474,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     cfg.integrations = settings.integrations.clone();
     cfg.rules = settings.rules;
     cfg.adaptive = settings.adaptive;
+    cfg.scenes = settings.scenes.clone();
     cfg.renderer.source = project_json.parent().unwrap_or(project_json).display().to_string();
     cfg.renderer.assets_path =
         Path::new(&settings.assets_path).join("assets").display().to_string();
@@ -475,6 +564,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         integrations: cfg.integrations,
         rules: cfg.rules,
         adaptive: cfg.adaptive,
+        scenes: cfg.scenes,
     })
 }
 

@@ -7,4 +7,5 @@ pub(crate) mod playlist;
 pub(crate) mod power;
 pub(crate) mod renderer_session;
 pub(crate) mod rules;
+pub(crate) mod scenes;
 pub(crate) mod status;

@@ -25,7 +25,7 @@ use crate::{
         self,
         layer_shell::state::LayerShellState,
         traits::{BackendContext, BackendKind},
-        wayland_common::{connection, registry},
+        wayland_common::{connection, outputs, registry},
     },
     config::Config,
     hooks::{self, WallpaperAppliedContext, WallpaperAppliedTrigger},
@@ -37,6 +37,7 @@ use crate::{
         control::RuntimePhase,
         integrations::{HostIntegrationRuntime, HostIntegrations},
         playlist::{self, AdvanceDirection, PlaylistRuntime, PlaylistSelection},
+        scenes::{selected_profile, LocalTime, SceneRuntime},
         status::RuntimeStatusSnapshot,
     },
 };
@@ -69,6 +70,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let current_cfg = Arc::new(Mutex::new(cfg.clone()));
     let runtime_cfg_toml = Arc::new(Mutex::new(cfg.to_toml_pretty()?));
     let runtime_state = Arc::new(Mutex::new(RuntimeState::new(&cfg)));
+    let scene_runtime = Arc::new(Mutex::new(SceneRuntime::default()));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let scheduler_stop = Arc::new(AtomicBool::new(false));
     let mut host_runtime =
@@ -88,6 +90,7 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
         {
             let runtime_cfg_toml = runtime_cfg_toml.clone();
             let status_integrations = host_integrations.clone();
+            let status_scenes = scene_runtime.clone();
             move || {
                 let mut status = runtime_cfg_toml
                     .lock()
@@ -103,6 +106,10 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                 }
                 status.push_str("\n\n");
                 status.push_str(&status_integrations.render_status_toml());
+                if let Ok(guard) = status_scenes.lock() {
+                    status.push_str("\n\n");
+                    status.push_str(&guard.render_status_toml());
+                }
                 status
             }
         },
@@ -379,6 +386,87 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
                 }
             }
         });
+    }
+
+    {
+        let desired_cfg = desired_cfg.clone();
+        let runtime_cfg_toml = runtime_cfg_toml.clone();
+        let runtime_state = runtime_state.clone();
+        let scene_runtime = scene_runtime.clone();
+        let host_integrations = host_integrations.clone();
+        let shutdown_requested = shutdown_requested.clone();
+        let scheduler_stop = scheduler_stop.clone();
+        let control_tx = switch_tx.clone();
+        thread::Builder::new()
+            .name("we-layerd-scenes".to_string())
+            .spawn(move || {
+                let mut connected_outputs = Vec::new();
+                let mut last_output_probe: Option<Instant> = None;
+                while !shutdown_requested.load(Ordering::Relaxed)
+                    && !scheduler_stop.load(Ordering::Relaxed)
+                {
+                    thread::sleep(Duration::from_secs(1));
+                    let Ok(cfg) = desired_cfg.lock().map(|guard| guard.clone()) else {
+                        break;
+                    };
+                    let needs_outputs =
+                        cfg.scenes.rules.iter().any(|rule| !rule.outputs.is_empty());
+                    if needs_outputs
+                        && last_output_probe.is_none_or(|at| at.elapsed() >= Duration::from_secs(5))
+                    {
+                        last_output_probe = Some(Instant::now());
+                        match outputs::list_output_names() {
+                            Ok(names) => connected_outputs = names,
+                            Err(error) => {
+                                tracing::debug!(%error, "scene output discovery unavailable");
+                                continue;
+                            }
+                        }
+                    }
+                    let Some(clock) = LocalTime::now() else {
+                        continue;
+                    };
+                    let selected = if resolve_backend(&cfg) == BackendKind::LayerShell {
+                        selected_profile(
+                            &cfg.scenes,
+                            clock,
+                            host_integrations.power_state(),
+                            &connected_outputs,
+                        )
+                    } else {
+                        None
+                    };
+                    let planned = match scene_runtime.lock() {
+                        Ok(mut runtime) => runtime.reconcile(&cfg, selected, |source| {
+                            Path::new(source).join("project.json").is_file()
+                        }),
+                        Err(_) => break,
+                    };
+                    match planned {
+                        Ok(Some(next)) => {
+                            // A concurrent GUI/IPC change must never be replaced by a stale plan.
+                            if desired_cfg
+                                .lock()
+                                .is_ok_and(|current| current.outputs != cfg.outputs)
+                            {
+                                continue;
+                            }
+                            if let Err(error) = schedule_config_reconfigure(
+                                next,
+                                &desired_cfg,
+                                &runtime_cfg_toml,
+                                &runtime_state,
+                                &control_tx,
+                            ) {
+                                warn!(%error, "failed to apply scheduled scene");
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => warn!(%error, "scheduled profile unavailable"),
+                    }
+                }
+            })
+            .context("failed to spawn scene scheduler")?;
     }
 
     loop {

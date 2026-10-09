@@ -3,7 +3,10 @@ use std::{collections::BTreeMap, fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use we_core::{
-    config::{AdaptiveConfig, HooksConfig, IntegrationsConfig, OutputBinding, RuntimeRulesConfig},
+    config::{
+        AdaptiveConfig, HooksConfig, IntegrationsConfig, OutputBinding, RuntimeRulesConfig,
+        SceneConfig,
+    },
     playlist::PlaylistConfig,
     profile::ProfileConfig,
     wallpaper::settings::{WallpaperFillMode, WallpaperSettings},
@@ -35,6 +38,8 @@ pub struct Config {
     pub rules: RuntimeRulesConfig,
     #[serde(default, skip_serializing_if = "AdaptiveConfig::is_disabled")]
     pub adaptive: AdaptiveConfig,
+    #[serde(default, skip_serializing_if = "SceneConfig::is_empty")]
+    pub scenes: SceneConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,6 +260,7 @@ impl Config {
                         "adaptive.on_battery_fps must be between 1 and 360"
                     );
                 }
+                config.scenes.validate().map_err(anyhow::Error::msg)?;
                 Ok(config)
             }
             None => Ok(Self::default()),
