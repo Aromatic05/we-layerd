@@ -370,6 +370,8 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
         output,
         presentation_geometry,
         pointer_input: Default::default(),
+        pointer_surface: None,
+        input_proxy: None,
         last_input_region: None,
         buffers: BufferBookkeeping::default(),
         frame_callback: FrameCallbackState {
@@ -399,6 +401,7 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
         configured: false,
         session: None,
         interactive: cfg.general.interactive,
+        input_mode: cfg.general.input_mode,
         render_resolution_follows_output: cfg.renderer.render_width.is_none()
             && cfg.renderer.render_height.is_none(),
         pause_state: crate::runtime::rules::PauseState::default(),

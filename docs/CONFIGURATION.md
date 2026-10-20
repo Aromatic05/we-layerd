@@ -26,6 +26,7 @@ assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 ```toml
 [general]
 interactive = true
+input_mode = "direct"
 show_fps = false
 fps_report_interval_secs = 1
 scale_mode = "cover"
@@ -34,6 +35,7 @@ force_scene_audio_loop = false
 
 - backend selection is automatic: GNOME sessions use the GNOME actor-clone path; other desktops use layer-shell
 - `interactive`: when `false`, `we-layerd` sets an empty input region so the wallpaper does not consume pointer input
+- `input_mode`: `direct` (default) accepts pointer input on the wallpaper surface. `background_proxy` creates an independent transparent Background layer-shell surface that forwards input to the same renderer session (Niri backdrop workaround); this only takes effect when `interactive = true`.
 - `show_fps`: keeps the renderer FPS counters enabled in config/status
 - `force_scene_audio_loop`: opt-in override that loops visible, automatically started scene sounds authored as `single`; start-silent sounds and `random` playback are unchanged. The daemon merges this value into `scene.audio.forceLoop` without replacing other version-1 source options.
 - `scale_mode`: `fit`, `cover`, or `stretch`
@@ -41,6 +43,34 @@ force_scene_audio_loop = false
   - `cover`: fill the logical surface and crop the source region when buffer and viewport aspects differ
   - `fit`: preserve aspect ratio and shrink the viewport destination when needed
   - current `fit` limitation: the runtime uses one layer-surface plus `wp_viewporter`, so any empty area stays on the bottom/right edges instead of being centered like a full letterbox compositor scene
+
+### Interactive wallpaper in Niri's backdrop
+
+Niri deliberately ignores input on surfaces placed in its overview backdrop.
+To keep the wallpaper there and receive input on exposed desktop background
+areas, select `background_proxy` in the GUI or add the following to
+`~/.config/we-layerd/config.toml`:
+
+```toml
+[general]
+interactive = true
+input_mode = "background_proxy"
+```
+
+Match **only the wallpaper namespace** in Niri's `config.kdl`:
+
+```kdl
+layer-rule {
+    match namespace="^wallpaper-engine-renderer$"
+    place-within-backdrop true
+}
+```
+
+The input-only surface uses namespace `we-layerd-input-proxy`; do not match
+it with `place-within-backdrop`. No second renderer is launched. Normal
+window input takes precedence over the Background proxy, but the Overview
+itself remains non-interactive. This is an opt-in mode and can be disabled
+by returning to `input_mode = "direct"`.
 
 ## Renderer settings
 

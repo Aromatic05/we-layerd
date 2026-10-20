@@ -68,7 +68,7 @@ Current behavior:
 - one presenter path that supports DMA-BUF and SHM
 - presentation paced by `wl_surface.frame` callbacks
 - acquire throttled by an in-flight buffer cap
-- pointer input forwarding when `general.interactive = true`
+- pointer input forwarding when `general.interactive = true`; opt-in `background_proxy` uses a separate transparent Background input surface within the same output worker and renderer session
 - live per-output runtime status exported through `we-layerd ctl status`
 - linux-dmabuf v4 surface feedback, with v3 global modifier fallback
 - exact `(fourcc, modifier)` capability forwarding to the renderer before output binding

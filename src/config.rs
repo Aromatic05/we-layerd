@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use we_core::{
     config::{
-        AdaptiveConfig, HooksConfig, IntegrationsConfig, OutputBinding, RuntimeRulesConfig,
-        SceneConfig,
+        AdaptiveConfig, HooksConfig, InputMode, IntegrationsConfig, OutputBinding,
+        RuntimeRulesConfig, SceneConfig,
     },
     playlist::PlaylistConfig,
     profile::ProfileConfig,
@@ -48,6 +48,8 @@ pub struct GeneralConfig {
     pub backend: ConfigBackend,
     #[serde(default = "default_interactive")]
     pub interactive: bool,
+    #[serde(default)]
+    pub input_mode: InputMode,
     #[serde(default)]
     pub force_scene_audio_loop: bool,
     #[serde(default)]
@@ -182,6 +184,7 @@ impl Default for GeneralConfig {
         Self {
             backend: default_backend(),
             interactive: default_interactive(),
+            input_mode: InputMode::default(),
             force_scene_audio_loop: false,
             show_fps: false,
             fps_report_interval_secs: default_fps_report_interval_secs(),
@@ -274,7 +277,7 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConfigBackend, ScaleMode};
+    use super::{Config, ConfigBackend, InputMode, ScaleMode};
 
     #[test]
     fn default_config_uses_renderer_native_defaults() {
@@ -288,6 +291,20 @@ mod tests {
         assert_eq!(cfg.renderer.fps, 60);
         assert!(cfg.renderer.prefer_dmabuf);
         assert!(cfg.renderer.allow_shm_fallback);
+    }
+
+    #[test]
+    fn input_mode_is_opt_in_and_round_trips() {
+        let legacy: Config = toml::from_str("[general]\ninteractive = true\n").unwrap();
+        assert_eq!(legacy.general.input_mode, InputMode::Direct);
+
+        let config: Config =
+            toml::from_str("[general]\ninteractive = true\ninput_mode = \"background_proxy\"\n")
+                .unwrap();
+        assert_eq!(config.general.input_mode, InputMode::BackgroundProxy);
+        let encoded = config.to_toml_pretty().unwrap();
+        let decoded: Config = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded.general.input_mode, InputMode::BackgroundProxy);
     }
 
     #[test]

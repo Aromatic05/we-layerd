@@ -207,6 +207,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             super::settings::sync(app);
             Task::none()
         }
+        Message::InputModeSelected(mode) => {
+            app.ui_settings.input_mode = mode;
+            super::settings::sync(app);
+            Task::none()
+        }
         Message::ForceSceneAudioLoopToggled(value) => {
             if let Err(error) = config::persist_force_scene_audio_loop(&app.config_path, value) {
                 app.runtime_status = RuntimeStatus::ConfigSaveFailed(error.clone());

@@ -7,6 +7,7 @@ use std::{
     },
 };
 
+use wayland_client::backend::ObjectId;
 use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_callback::WlCallback, wl_compositor::WlCompositor, wl_output::WlOutput,
     wl_pointer::WlPointer, wl_shm::WlShm, wl_surface::WlSurface,
@@ -20,9 +21,10 @@ use wayland_protocols::wp::{
     viewporter::client::wp_viewport::WpViewport,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
-use we_core::wallpaper::WallpaperType;
+use we_core::{config::InputMode, wallpaper::WallpaperType};
 
 use crate::{
+    backend::layer_shell::input_proxy::InputProxy,
     backend::wayland_common::{
         dmabuf::DmabufFeedbackState,
         input::{PointerAxis, PointerInputState},
@@ -145,6 +147,8 @@ pub(crate) struct LayerShellState {
     pub(super) output: OutputState,
     pub(super) presentation_geometry: PresentationGeometry,
     pub(super) pointer_input: PointerInputState,
+    pub(super) pointer_surface: Option<ObjectId>,
+    pub(super) input_proxy: Option<InputProxy>,
     pub(super) last_input_region: Option<(u32, u32)>,
     pub(super) buffers: BufferBookkeeping,
     pub(super) frame_callback: FrameCallbackState,
@@ -158,6 +162,7 @@ pub(crate) struct LayerShellState {
     pub(super) configured: bool,
     pub(super) session: Option<RendererSession>,
     pub(super) interactive: bool,
+    pub(super) input_mode: InputMode,
     pub(super) render_resolution_follows_output: bool,
     pub(super) pause_state: PauseState,
     pub(super) configured_muted: bool,
@@ -406,6 +411,8 @@ impl LayerShellState {
             output,
             presentation_geometry,
             pointer_input: PointerInputState::default(),
+            pointer_surface: None,
+            input_proxy: None,
             last_input_region: None,
             buffers: BufferBookkeeping::default(),
             frame_callback: FrameCallbackState::default(),
@@ -419,6 +426,7 @@ impl LayerShellState {
             configured: false,
             session: None,
             interactive: false,
+            input_mode: InputMode::Direct,
             render_resolution_follows_output: true,
             pause_state: PauseState::default(),
             configured_muted: false,

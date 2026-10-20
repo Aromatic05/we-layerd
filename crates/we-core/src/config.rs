@@ -97,6 +97,8 @@ pub struct GeneralConfig {
     #[serde(default = "default_interactive")]
     pub interactive: bool,
     #[serde(default)]
+    pub input_mode: InputMode,
+    #[serde(default)]
     pub show_fps: bool,
     #[serde(default = "default_fps_report_interval_secs")]
     pub fps_report_interval_secs: u64,
@@ -104,6 +106,14 @@ pub struct GeneralConfig {
     pub scale_mode: ScaleMode,
     #[serde(default)]
     pub force_scene_audio_loop: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputMode {
+    #[default]
+    Direct,
+    BackgroundProxy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -318,6 +328,7 @@ pub struct LaunchSettings {
     pub prefer_dmabuf: bool,
     pub allow_shm_fallback: bool,
     pub interactive: bool,
+    pub input_mode: InputMode,
     pub fps_limit: u32,
     pub msaa_samples: u32,
     pub show_fps: bool,
@@ -432,6 +443,7 @@ impl Default for GeneralConfig {
         Self {
             backend: Backend::default(),
             interactive: default_interactive(),
+            input_mode: InputMode::default(),
             show_fps: false,
             fps_report_interval_secs: default_fps_report_interval_secs(),
             scale_mode: ScaleMode::default(),
@@ -450,6 +462,7 @@ impl Default for LaunchSettings {
             prefer_dmabuf: default_prefer_dmabuf(),
             allow_shm_fallback: default_allow_shm_fallback(),
             interactive: true,
+            input_mode: InputMode::default(),
             fps_limit: 60,
             msaa_samples: 1,
             show_fps: false,
@@ -472,6 +485,7 @@ impl Default for LaunchSettings {
 pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();
     cfg.general.interactive = settings.interactive;
+    cfg.general.input_mode = settings.input_mode;
     cfg.general.show_fps = settings.show_fps;
     cfg.general.scale_mode = settings.scale_mode;
     cfg.general.force_scene_audio_loop = settings.force_scene_audio_loop;
@@ -566,6 +580,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         prefer_dmabuf: cfg.renderer.prefer_dmabuf,
         allow_shm_fallback: cfg.renderer.allow_shm_fallback,
         interactive: cfg.general.interactive,
+        input_mode: cfg.general.input_mode,
         fps_limit: cfg.renderer.max_fps.unwrap_or(cfg.renderer.fps).clamp(1, 360),
         msaa_samples: cfg.renderer.msaa_samples.max(1),
         show_fps: cfg.general.show_fps,
@@ -947,9 +962,9 @@ mod tests {
         build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
         save_force_scene_audio_loop, save_integrations_and_rules, save_outputs, save_playlists,
         save_profiles_and_outputs, save_scene_settings, save_wallpapers_playlists_and_outputs,
-        AdaptiveConfig, HookCommand, HooksConfig, IntegrationsConfig, LaunchSettings,
-        OutputBinding, RuntimeRuleAction, RuntimeRulesConfig, ScaleMode, SceneConfig, SceneDay,
-        ScenePower, SceneRule,
+        AdaptiveConfig, AppConfig, HookCommand, HooksConfig, InputMode, IntegrationsConfig,
+        LaunchSettings, OutputBinding, RuntimeRuleAction, RuntimeRulesConfig, ScaleMode,
+        SceneConfig, SceneDay, ScenePower, SceneRule,
     };
     use crate::playlist::{Playlist, PlaylistConfig, PlaylistItem, PlaylistMode};
     use crate::profile::{OutputProfile, ProfileConfig};
@@ -1164,6 +1179,23 @@ options_json = "{\"keep\":true}"
         assert_eq!(settings.workshop_path, "/tmp/workshop/content/431960");
         assert_eq!(settings.assets_path, "/opt/wallpaper_engine");
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn input_mode_survives_gui_config_save_and_load() {
+        let legacy: AppConfig = toml::from_str("[general]\ninteractive = true\n").unwrap();
+        assert_eq!(legacy.general.input_mode, InputMode::Direct);
+
+        let settings =
+            LaunchSettings { input_mode: InputMode::BackgroundProxy, ..LaunchSettings::default() };
+        let config = build_config(&settings, Path::new("/tmp/wallpaper/project.json"));
+        assert_eq!(config.general.input_mode, InputMode::BackgroundProxy);
+
+        let path = unique_temp_path("input-proxy.toml");
+        fs::write(&path, toml::to_string_pretty(&config).unwrap()).unwrap();
+        let restored = load_launch_settings(&path).unwrap();
+        assert_eq!(restored.input_mode, InputMode::BackgroundProxy);
         let _ = fs::remove_file(path);
     }
 

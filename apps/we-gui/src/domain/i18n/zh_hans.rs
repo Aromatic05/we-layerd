@@ -123,6 +123,12 @@ pub(super) fn text(key: Text) -> &'static str {
         }
         Text::StartOnLoginManagedDescription => "由系统配置管理。",
         Text::EnableWallpaperInput => "启用壁纸输入",
+        Text::WallpaperInputMode => "壁纸输入模式",
+        Text::WallpaperInputModeDirect => "直接输入（默认）",
+        Text::WallpaperInputModeBackgroundProxy => "背景输入代理（Niri）",
+        Text::WallpaperInputModeBackgroundProxyDescription => {
+            "针对 Niri 的 place-within-backdrop 使用独立输入背景层，仅露出的桌面背景区域接收输入。"
+        }
         Text::ForceSceneAudioLoop => "强制循环场景音频",
         Text::ForceSceneAudioLoopDescription => {
             "将可见且自动开始播放的 single 场景音频改为循环；start-silent 音频保持不变。"

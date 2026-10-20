@@ -33,9 +33,11 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
     zwlr_layer_surface_v1::{Event as LayerSurfaceEvent, ZwlrLayerSurfaceV1},
 };
+use we_core::config::InputMode;
 use we_renderer::{DmabufFrame, Frame};
 
 use crate::backend::{
+    layer_shell::input_proxy,
     layer_shell::state::{DmabufKey, DmabufPlaneKey, LayerShellState, WaylandBuffer},
     wayland_common::{input::PointerAxis, output::FRACTIONAL_SCALE_DENOMINATOR},
 };
@@ -202,7 +204,21 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerShellState {
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let is_proxy = state
+            .input_proxy
+            .as_ref()
+            .is_some_and(|proxy| proxy.layer_surface.id() == layer_surface.id());
         match event {
+            LayerSurfaceEvent::Configure { serial, width, height } if is_proxy => {
+                layer_surface.ack_configure(serial);
+                if let Some(proxy) = state.input_proxy.as_mut() {
+                    proxy.configured = true;
+                    proxy.configured_size = (width, height);
+                }
+                if let Err(error) = input_proxy::update(state, qh) {
+                    tracing::warn!(%error, "failed updating input proxy");
+                }
+            }
             LayerSurfaceEvent::Configure { serial, width, height } => {
                 layer_surface.ack_configure(serial);
                 state.configured = true;
@@ -213,6 +229,13 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for LayerShellState {
                 state.update_render_extent();
                 state.update_viewport_destination();
                 update_input_region(state, qh, true);
+                if let Err(error) = input_proxy::update(state, qh) {
+                    tracing::warn!(%error, "failed updating input proxy");
+                }
+            }
+            LayerSurfaceEvent::Closed if is_proxy => {
+                tracing::warn!("input proxy surface closed by compositor");
+                input_proxy::close(state);
             }
             LayerSurfaceEvent::Closed => state.running = false,
             _ => {}
@@ -299,6 +322,7 @@ impl Dispatch<WlSeat, ()> for LayerShellState {
                 state.objects.pointer = Some(seat.get_pointer(qh, ()));
             } else if !has_pointer {
                 state.pointer_left();
+                state.pointer_surface = None;
                 if let Some(pointer) = state.objects.pointer.take() {
                     release_wayland_pointer(pointer);
                 }
@@ -319,11 +343,38 @@ impl Dispatch<WlPointer, ()> for LayerShellState {
         if !state.interactive {
             return;
         }
+        if !matches!(&event, wl_pointer::Event::Enter { .. } | wl_pointer::Event::Leave { .. })
+            && state.pointer_surface.is_none()
+        {
+            return;
+        }
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
-                state.pointer_entered(surface_x, surface_y);
+            wl_pointer::Event::Enter { surface, surface_x, surface_y, .. } => {
+                let on_wallpaper = state
+                    .objects
+                    .surface
+                    .as_ref()
+                    .is_some_and(|wallpaper| wallpaper.id() == surface.id());
+                let on_proxy = state
+                    .input_proxy
+                    .as_ref()
+                    .is_some_and(|proxy| proxy.surface.id() == surface.id());
+                if input_proxy::accepts_pointer_surface(state.input_mode, on_wallpaper, on_proxy) {
+                    if state.pointer_surface.as_ref().is_some_and(|id| *id != surface.id()) {
+                        state.pointer_left();
+                    }
+                    state.pointer_surface = Some(surface.id());
+                    state.pointer_entered(surface_x, surface_y);
+                } else if state.pointer_surface.take().is_some() {
+                    state.pointer_left();
+                }
             }
-            wl_pointer::Event::Leave { .. } => state.pointer_left(),
+            wl_pointer::Event::Leave { surface, .. } => {
+                if state.pointer_surface.as_ref() == Some(&surface.id()) {
+                    state.pointer_surface = None;
+                    state.pointer_left();
+                }
+            }
             wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
                 state.pointer_moved(surface_x, surface_y);
             }
@@ -578,6 +629,8 @@ pub(super) fn begin_stop_teardown(state: &mut LayerShellState) -> Result<()> {
     state.objects.frame_callback = None;
     state.pending_input_events.clear();
     state.clear_pointer_input();
+    state.pointer_surface = None;
+    input_proxy::detach(state);
     if let Some(pointer) = state.objects.pointer.take() {
         release_wayland_pointer(pointer);
     }
@@ -676,6 +729,7 @@ pub(super) fn init_wayland(
         wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
     );
     state.objects.layer_surface = Some(layer_surface);
+    input_proxy::create(state, qh, &layer_shell, viewporter.as_ref())?;
 
     if seat.is_some() {
         state.objects.pointer = None;
@@ -688,16 +742,28 @@ pub(super) fn init_wayland(
 // Input region helper
 // ---------------------------------------------------------------------------
 
+fn wallpaper_input_region(
+    interactive: bool,
+    mode: InputMode,
+    viewport_size: (u32, u32),
+) -> (u32, u32) {
+    if interactive && mode == InputMode::Direct {
+        viewport_size
+    } else {
+        (0, 0)
+    }
+}
+
 pub(super) fn update_input_region(
     state: &mut LayerShellState,
     qh: &QueueHandle<LayerShellState>,
     commit: bool,
 ) {
-    let desired = if state.interactive {
-        (state.presentation_geometry.viewport_width, state.presentation_geometry.viewport_height)
-    } else {
-        (0, 0)
-    };
+    let desired = wallpaper_input_region(
+        state.interactive,
+        state.input_mode,
+        (state.presentation_geometry.viewport_width, state.presentation_geometry.viewport_height),
+    );
     if state.last_input_region == Some(desired) {
         return;
     }
@@ -721,7 +787,18 @@ pub(super) fn update_input_region(
 
 #[cfg(test)]
 mod tests {
-    use super::{reusable_identity_matches, to_opaque_drm_fourcc};
+    use super::{reusable_identity_matches, to_opaque_drm_fourcc, wallpaper_input_region};
+    use we_core::config::InputMode;
+
+    #[test]
+    fn proxy_mode_makes_visible_wallpaper_input_transparent() {
+        let size = (1920, 1080);
+        assert_eq!(wallpaper_input_region(true, InputMode::Direct, size), size);
+        assert_eq!(wallpaper_input_region(true, InputMode::BackgroundProxy, size), (0, 0));
+        assert_eq!(wallpaper_input_region(false, InputMode::Direct, size), (0, 0));
+        assert_eq!(wallpaper_input_region(false, InputMode::BackgroundProxy, size), (0, 0));
+    }
+
     use crate::backend::layer_shell::state::{DmabufKey, DmabufPlaneKey};
 
     #[test]

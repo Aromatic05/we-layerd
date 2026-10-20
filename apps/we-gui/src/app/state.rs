@@ -178,6 +178,7 @@ pub(crate) enum Message {
     WorkshopPathPicked(Option<PathBuf>),
     FpsLimitChanged(String),
     InteractiveToggled(bool),
+    InputModeSelected(we_core::config::InputMode),
     ForceSceneAudioLoopToggled(bool),
     ShowFpsToggled(bool),
     ScaleModeSelected(ScaleModeOption),

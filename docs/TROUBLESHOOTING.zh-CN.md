@@ -45,6 +45,7 @@ third_party/wallpaper-engine-renderer
 - 确认 `general.interactive = true`
 - 确认壁纸本身支持交互
 - 多输出模式下，指针事件会转发给当前获得焦点的 layer surface 对应 session
+- Niri 使用 `place-within-backdrop` 时可配置 `general.input_mode = "background_proxy"`，Niri 的 layer-rule 只能匹配 `wallpaper-engine-renderer`，不要将 `we-layerd-input-proxy` 也放入 Backdrop。详见[配置](./CONFIGURATION.zh-CN.md#niri-backdrop-交互式壁纸)。
 
 ## DMA-BUF 不工作
 

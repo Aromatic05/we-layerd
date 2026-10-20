@@ -123,6 +123,12 @@ pub(super) fn text(key: Text) -> &'static str {
         }
         Text::StartOnLoginManagedDescription => "Managed by system configuration.",
         Text::EnableWallpaperInput => "Enable wallpaper input",
+        Text::WallpaperInputMode => "Wallpaper input mode",
+        Text::WallpaperInputModeDirect => "Direct (default)",
+        Text::WallpaperInputModeBackgroundProxy => "Background proxy (Niri)",
+        Text::WallpaperInputModeBackgroundProxyDescription => {
+            "Use an input-only background surface with Niri place-within-backdrop. Only exposed background areas receive input."
+        }
         Text::ForceSceneAudioLoop => "Force loop scene audio",
         Text::ForceSceneAudioLoopDescription => {
             "Loops visible, automatically started scene sounds authored as single; start-silent sounds are unchanged."

@@ -1,4 +1,4 @@
-use we_core::config::{RuntimeRuleAction, ScaleMode};
+use we_core::config::{InputMode, RuntimeRuleAction, ScaleMode};
 
 #[derive(Debug, Clone)]
 pub(crate) struct UiSettings {
@@ -9,6 +9,7 @@ pub(crate) struct UiSettings {
     pub prefer_dmabuf: bool,
     pub allow_shm_fallback: bool,
     pub interactive: bool,
+    pub input_mode: InputMode,
     pub force_scene_audio_loop: bool,
     pub fps_limit: String,
     pub show_fps: bool,

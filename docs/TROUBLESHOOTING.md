@@ -49,6 +49,7 @@ third_party/wallpaper-engine-renderer
 - Ensure `general.interactive = true`
 - Confirm the wallpaper itself is interactive
 - If the compositor never sends pointer focus to the wallpaper surface, events will not be forwarded
+- With Niri `place-within-backdrop`, use `general.input_mode = "background_proxy"` and match only the `wallpaper-engine-renderer` namespace in Niri layer rules (see [Configuration](./CONFIGURATION.md#interactive-wallpaper-in-niris-backdrop)). The input proxy namespace must stay outside the backdrop.
 
 ## DMA-BUF does not work
 

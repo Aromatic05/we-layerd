@@ -1,5 +1,7 @@
 [general]
 interactive = true
+# Optional: "direct" (default) or "background_proxy" (Niri backdrop input).
+input_mode = "direct"
 show_fps = false
 fps_report_interval_secs = 1
 scale_mode = "cover"

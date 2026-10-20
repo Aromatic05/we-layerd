@@ -25,6 +25,7 @@ assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 ```toml
 [general]
 interactive = true
+input_mode = "direct"
 show_fps = false
 fps_report_interval_secs = 1
 scale_mode = "cover"
@@ -33,9 +34,35 @@ force_scene_audio_loop = false
 
 - 后端自动选择：GNOME 会话走 GNOME actor clone，其它桌面环境走 layer-shell
 - `interactive`：为 `false` 时会设置空 input region，让壁纸不阻挡桌面鼠标交互
+- `input_mode`：默认 `direct`，直接从壁纸 Surface 接收输入；可选 `background_proxy`，使用独立的透明 Background Surface 转发输入到同一个 Renderer Session（适用于 Niri Backdrop），仅在 `interactive = true` 时生效。
 - `show_fps`：保留 FPS 统计开关
 - `force_scene_audio_loop`：默认关闭；开启后会循环原本设为 `single`、可见且自动开始播放的 scene 声音，不改变 start-silent 声音和 `random` 播放。守护进程会把它安全合并到 `scene.audio.forceLoop`，并保留其它版本 1 source options。
 - `scale_mode`：`fit`、`cover`、`stretch`
+
+### Niri Backdrop 交互式壁纸
+
+Niri 不会向放入 `place-within-backdrop` 的 Surface 发送输入事件。希望壁纸
+仍在 Backdrop 中展示，同时在可见桌面背景区域交互，可在 GUI 中选择
+`background_proxy`，或者在 `~/.config/we-layerd/config.toml` 中配置：
+
+```toml
+[general]
+interactive = true
+input_mode = "background_proxy"
+```
+
+Niri 的 `config.kdl` 中只匹配壁纸本身的 Namespace：
+
+```kdl
+layer-rule {
+    match namespace="^wallpaper-engine-renderer$"
+    place-within-backdrop true
+}
+```
+
+输入代理 Namespace 为 `we-layerd-input-proxy`，不能将其也放入 Backdrop。
+代理不创建第二份渲染器；普通窗口继续优先接收输入，但 Niri Overview 内的
+壁纸仍不支持交互。恢复 `input_mode = "direct"` 即可关闭该功能。
 
 ## Renderer 设置
 

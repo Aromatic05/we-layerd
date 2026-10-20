@@ -11,7 +11,7 @@ use iced::{
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
     Background, Border, Color, Element, Fill, Theme,
 };
-use we_core::config::RuntimeRuleAction;
+use we_core::config::{InputMode, RuntimeRuleAction};
 
 pub fn build_settings_overlay<'a>(
     ui_settings: &'a UiSettings,
@@ -33,6 +33,15 @@ pub fn build_settings_overlay<'a>(
     ];
     let selected_scale =
         scale_options.iter().find(|option| option.value == ui_settings.scale_mode).cloned();
+    let input_mode_options = vec![
+        Localized::new(InputMode::Direct, language.text(Text::WallpaperInputModeDirect)),
+        Localized::new(
+            InputMode::BackgroundProxy,
+            language.text(Text::WallpaperInputModeBackgroundProxy),
+        ),
+    ];
+    let selected_input_mode =
+        input_mode_options.iter().find(|option| option.value == ui_settings.input_mode).cloned();
     let rule_options = vec![
         Localized::new(RuntimeRuleAction::Keep, language.text(Text::RuleKeep)),
         Localized::new(RuntimeRuleAction::Mute, language.text(Text::RuleMute)),
@@ -161,6 +170,17 @@ pub fn build_settings_overlay<'a>(
                 .style(md_checkbox_style),
         )
         .id("settings.wallpaper-input"),
+        text(language.text(Text::WallpaperInputMode)).size(14),
+        container(
+            pick_list(input_mode_options, selected_input_mode, |option| {
+                Message::InputModeSelected(option.value)
+            })
+            .padding([14, 10])
+            .style(md_pick_list_style)
+            .menu_style(md_menu_style),
+        )
+        .id("settings.wallpaper-input-mode"),
+        text(language.text(Text::WallpaperInputModeBackgroundProxyDescription)).size(12),
         container(
             checkbox(ui_settings.force_scene_audio_loop)
                 .label(language.text(Text::ForceSceneAudioLoop))
