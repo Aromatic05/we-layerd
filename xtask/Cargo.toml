@@ -2,3 +2,4 @@
 name = "xtask"
 version = "0.2.10"
 edition = "2021"
+license = "GPL-2.0-or-later"

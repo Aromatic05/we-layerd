@@ -1,20 +1,20 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: we-layerd
 Source: https://github.com/Aromatic05/we-layerd
-Disclaimer: The upstream source tree currently does not publish a project
- license. This packaging is intended for local testing and is not suitable for
- redistribution until the project adopts a license.
 
 Files: *
 Copyright: 2026 we-layerd contributors
-License: all-rights-reserved
- No permission to copy, modify, or redistribute the we-layerd source is
- granted by the current repository contents.
+License: GPL-2+
 
 Files: debian/*
 Copyright: 2026 we-layerd contributors
-License: all-rights-reserved
- This packaging follows the licensing status of the upstream repository.
+License: GPL-2+
+
+Files: third_party/wallpaper-engine-renderer/*
+ usr/lib/libwallpaper-engine-renderer.so
+ usr/lib/we-cef-helper
+Copyright: wallpaper-engine-renderer contributors
+License: GPL-2
 
 Files: usr/lib/cef/*
 Copyright: Chromium Embedded Framework and Chromium contributors
@@ -29,6 +29,14 @@ License: NCSA and Microsoft notices
  /usr/share/doc/we-layerd/third-party/DXC-LICENSE-MS.txt and
  /usr/share/doc/we-layerd/third-party/DXC-LICENSE-LLVM.txt.
 
-License: all-rights-reserved
- All rights are reserved unless and until the upstream project publishes a
- license granting redistribution rights.
+License: GPL-2+
+ The we-layerd project code may be redistributed and modified under version 2
+ of the GNU General Public License or, at your option, any later version.
+ On Debian systems, the full GPL version 2 text is available at
+ /usr/share/common-licenses/GPL-2.
+
+License: GPL-2
+ The bundled wallpaper-engine-renderer carries the GNU General Public License,
+ version 2. Its upstream license file is retained separately.
+ On Debian systems, the full GPL version 2 text is available at
+ /usr/share/common-licenses/GPL-2.

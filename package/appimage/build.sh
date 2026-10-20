@@ -109,6 +109,10 @@ install -Dm0644 "${vendor_dir}/dxc/LICENSE-MS.txt" \
   "${appdir}/usr/share/licenses/we-layerd/DXC-LICENSE-MS.txt"
 install -Dm0644 "${vendor_dir}/dxc/LICENSE-LLVM.txt" \
   "${appdir}/usr/share/licenses/we-layerd/DXC-LICENSE-LLVM.txt"
+install -Dm0644 "${source_dir}/LICENSE" \
+  "${appdir}/usr/share/licenses/we-layerd/LICENSE"
+install -Dm0644 "${source_dir}/third_party/wallpaper-engine-renderer/LICENSE" \
+  "${appdir}/usr/share/licenses/we-layerd/RENDERER-LICENSE"
 
 multiarch="$(gcc -print-multiarch)"
 nss_library_dir="${NSS_LIBRARY_DIR:-/usr/lib/${multiarch}}"

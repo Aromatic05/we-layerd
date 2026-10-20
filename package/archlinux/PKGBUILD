@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc='Wayland daemon and GUI for running Wallpaper Engine wallpapers through wallpaper-engine-renderer'
 arch=('x86_64')
 url='https://github.com/Aromatic05/we-layerd'
-license=('custom:unlicensed')
+license=('GPL-2.0-or-later' 'GPL-2.0-only')
 depends=(
   'cef'
   'directx-shader-compiler'
@@ -86,4 +86,7 @@ package() {
   install -Dm755 \
     target/we-renderer-upstream/install/lib/we-cef-helper \
     "${pkgdir}/usr/lib/we-cef-helper"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 third_party/wallpaper-engine-renderer/LICENSE \
+    "${pkgdir}/usr/share/licenses/${pkgname}/RENDERER-LICENSE"
 }

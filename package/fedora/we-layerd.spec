@@ -5,7 +5,7 @@ Version:        0.2.10
 Release:        1%{?dist}
 Summary:        Native Wallpaper Engine wallpaper daemon for Wayland
 
-License:        LicenseRef-Unlicensed
+License:        GPL-2.0-or-later AND GPL-2.0-only
 URL:            https://github.com/Aromatic05/we-layerd
 Source0:        %{name}-%{version}.tar.xz
 Source1:        linux_dxc_2026_05_26.x86_64.tar.gz
@@ -58,9 +58,6 @@ Wayland. It supports layer-shell compositors and GNOME, DMA-BUF and SHM
 presentation, interactive pointer input, video wallpapers, web wallpapers,
 and a companion GUI.
 
-The project source currently has no published license. This spec is intended
-for local package builds until the project adopts a distributable license.
-
 %prep
 %autosetup -p1
 mkdir -p .deps/dxc
@@ -112,6 +109,10 @@ install -Dm0644 .deps/dxc/LICENSE-MS.txt \
   %{buildroot}%{_licensedir}/%{name}/DXC-LICENSE-MS.txt
 install -Dm0644 .deps/dxc/LICENSE-LLVM.txt \
   %{buildroot}%{_licensedir}/%{name}/DXC-LICENSE-LLVM.txt
+install -Dm0644 LICENSE \
+  %{buildroot}%{_licensedir}/%{name}/LICENSE
+install -Dm0644 third_party/wallpaper-engine-renderer/LICENSE \
+  %{buildroot}%{_licensedir}/%{name}/RENDERER-LICENSE
 
 patchelf --set-rpath '$ORIGIN/we-layerd/dxc' \
   %{buildroot}%{_prefix}/lib/libwallpaper-engine-renderer.so
@@ -134,6 +135,8 @@ readelf -d %{buildroot}%{_prefix}/lib/libwallpaper-engine-renderer.so \
 %{_prefix}/lib/systemd/user/we-layerd.service
 %license %{_licensedir}/%{name}/DXC-LICENSE-MS.txt
 %license %{_licensedir}/%{name}/DXC-LICENSE-LLVM.txt
+%license %{_licensedir}/%{name}/LICENSE
+%license %{_licensedir}/%{name}/RENDERER-LICENSE
 
 %changelog
 * Mon Oct 05 2026 Aromatic05 <noreply@example.invalid> - 0.2.10-1

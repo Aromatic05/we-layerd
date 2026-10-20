@@ -150,6 +150,8 @@ rustPlatform.buildRustPackage {
     install -Dm644 apps/we-gui/assets/we-gui-logo.svg \
       $out/share/icons/hicolor/scalable/apps/we-gui.svg
     install -Dm644 contrib/systemd/we-layerd.service $out/lib/systemd/user/we-layerd.service
+    install -Dm644 LICENSE $out/share/licenses/we-layerd/LICENSE
+    install -Dm644 ${rendererSrc}/LICENSE $out/share/licenses/we-layerd/RENDERER-LICENSE
     substituteInPlace $out/lib/systemd/user/we-layerd.service \
       --replace-fail /usr/bin/we-layerd $out/bin/we-layerd
   '';
@@ -169,6 +171,7 @@ rustPlatform.buildRustPackage {
   meta = {
     description = "Wayland daemon and GUI for Wallpaper Engine wallpapers";
     homepage = "https://github.com/Aromatic05/we-layerd";
+    license = [ lib.licenses.gpl2Plus lib.licenses.gpl2Only ];
     platforms = [ "x86_64-linux" ];
     mainProgram = "we-layerd";
   };

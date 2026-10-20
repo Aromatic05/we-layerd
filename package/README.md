@@ -30,4 +30,8 @@ The flake also exports `nixosModules.default`, with `services.we-layerd.enable` 
 
 The distro-specific build scripts resolve the repository root themselves, verify external downloads, and place all temporary build state under their own `out/` directory. See [`docs/BUILDING.md`](../docs/BUILDING.md) or [`docs/BUILDING.zh-CN.md`](../docs/BUILDING.zh-CN.md) for dependency installation and distrobox validation.
 
-The repository currently has no project license file. These definitions are therefore local test packages, not submission-ready Fedora or Ubuntu packages.
+The we-layerd project code is licensed under `GPL-2.0-or-later`. The bundled
+wallpaper-engine-renderer retains its own GPL v2 license, and other third-party
+components retain their respective upstream licenses. Distribution packages
+include the applicable project and renderer license texts alongside their
+existing third-party notices.

@@ -91,6 +91,14 @@ GUI 会探测常见 Steam 路径、打开创意工坊壁纸库、保存壁纸设
 - 本地安装 Wallpaper Engine，并已下载创意工坊壁纸。
 - 当前基于 CEF 的网页壁纸 helper 仅支持 Linux x86_64。
 
+## 许可证
+
+we-layerd 项目代码采用 GNU 通用公共许可证第 2 版或（由使用者选择）任何后续版本
+（`GPL-2.0-or-later`），完整条款见 [LICENSE](../LICENSE)。
+
+[wallpaper-engine-renderer](../third_party/wallpaper-engine-renderer/LICENSE)
+子模块及其他第三方组件仍适用其各自的上游许可证，不因主项目的授权而改变。
+
 ## 其他文档
 
 - [构建与安装](./BUILDING.zh-CN.md)

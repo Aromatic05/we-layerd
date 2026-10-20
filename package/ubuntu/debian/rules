@@ -101,6 +101,10 @@ override_dh_auto_install:
 		$(PACKAGE_ROOT)/usr/share/doc/we-layerd/third-party/DXC-LICENSE-MS.txt
 	install -Dm0644 $(DXC_ROOT)/LICENSE-LLVM.txt \
 		$(PACKAGE_ROOT)/usr/share/doc/we-layerd/third-party/DXC-LICENSE-LLVM.txt
+	install -Dm0644 LICENSE \
+		$(PACKAGE_ROOT)/usr/share/doc/we-layerd/LICENSE
+	install -Dm0644 third_party/wallpaper-engine-renderer/LICENSE \
+		$(PACKAGE_ROOT)/usr/share/doc/we-layerd/third-party/RENDERER-LICENSE.txt
 
 	patchelf --set-rpath '$$ORIGIN/we-layerd/dxc' \
 		$(PRIVATE_LIB)/libwallpaper-engine-renderer.so

@@ -88,6 +88,16 @@ The GUI detects common Steam paths, opens the Workshop library, saves wallpaper 
 - A local Wallpaper Engine installation and downloaded Workshop wallpapers.
 - Linux x86_64 for the current CEF-based web wallpaper helper.
 
+## License
+
+The we-layerd project code is licensed under the GNU General Public License,
+version 2 or (at your option) any later version (`GPL-2.0-or-later`). See
+[LICENSE](./LICENSE).
+
+The [wallpaper-engine-renderer](./third_party/wallpaper-engine-renderer/LICENSE)
+submodule and other third-party components retain their respective upstream
+licenses. The project's license does not replace those terms.
+
 ## Documentation
 
 - [Building and installation](./docs/BUILDING.md)
