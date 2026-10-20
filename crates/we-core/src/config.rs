@@ -267,8 +267,13 @@ pub enum ScenePower {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
+    // Older GUI versions serialized the implicit default as layer_shell.
     #[default]
+    #[serde(alias = "layer_shell")]
+    Auto,
+    #[serde(rename = "force_layer_shell")]
     LayerShell,
+    Gnome,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -329,6 +334,7 @@ pub struct LaunchSettings {
     pub allow_shm_fallback: bool,
     pub interactive: bool,
     pub input_mode: InputMode,
+    pub backend: Backend,
     pub fps_limit: u32,
     pub msaa_samples: u32,
     pub show_fps: bool,
@@ -463,6 +469,7 @@ impl Default for LaunchSettings {
             allow_shm_fallback: default_allow_shm_fallback(),
             interactive: true,
             input_mode: InputMode::default(),
+            backend: Backend::default(),
             fps_limit: 60,
             msaa_samples: 1,
             show_fps: false,
@@ -486,6 +493,7 @@ pub fn build_config(settings: &LaunchSettings, project_json: &Path) -> AppConfig
     let mut cfg = AppConfig::default();
     cfg.general.interactive = settings.interactive;
     cfg.general.input_mode = settings.input_mode;
+    cfg.general.backend = settings.backend;
     cfg.general.show_fps = settings.show_fps;
     cfg.general.scale_mode = settings.scale_mode;
     cfg.general.force_scene_audio_loop = settings.force_scene_audio_loop;
@@ -581,6 +589,7 @@ pub fn load_launch_settings(path: &Path) -> Result<LaunchSettings> {
         allow_shm_fallback: cfg.renderer.allow_shm_fallback,
         interactive: cfg.general.interactive,
         input_mode: cfg.general.input_mode,
+        backend: cfg.general.backend,
         fps_limit: cfg.renderer.max_fps.unwrap_or(cfg.renderer.fps).clamp(1, 360),
         msaa_samples: cfg.renderer.msaa_samples.max(1),
         show_fps: cfg.general.show_fps,
@@ -962,9 +971,9 @@ mod tests {
         build_config, build_config_for_wallpaper, load_launch_settings, merge_scene_source_options,
         save_force_scene_audio_loop, save_integrations_and_rules, save_outputs, save_playlists,
         save_profiles_and_outputs, save_scene_settings, save_wallpapers_playlists_and_outputs,
-        AdaptiveConfig, AppConfig, HookCommand, HooksConfig, InputMode, IntegrationsConfig,
-        LaunchSettings, OutputBinding, RuntimeRuleAction, RuntimeRulesConfig, ScaleMode,
-        SceneConfig, SceneDay, ScenePower, SceneRule,
+        AdaptiveConfig, AppConfig, Backend, HookCommand, HooksConfig, InputMode,
+        IntegrationsConfig, LaunchSettings, OutputBinding, RuntimeRuleAction, RuntimeRulesConfig,
+        ScaleMode, SceneConfig, SceneDay, ScenePower, SceneRule,
     };
     use crate::playlist::{Playlist, PlaylistConfig, PlaylistItem, PlaylistMode};
     use crate::profile::{OutputProfile, ProfileConfig};
@@ -1196,6 +1205,20 @@ options_json = "{\"keep\":true}"
         fs::write(&path, toml::to_string_pretty(&config).unwrap()).unwrap();
         let restored = load_launch_settings(&path).unwrap();
         assert_eq!(restored.input_mode, InputMode::BackgroundProxy);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn backend_mode_survives_gui_round_trip_and_reads_legacy_config() {
+        let legacy: AppConfig = toml::from_str("[general]\nbackend = \"layer_shell\"\n").unwrap();
+        assert_eq!(legacy.general.backend, Backend::Auto);
+        assert_eq!(AppConfig::default().general.backend, Backend::Auto);
+
+        let path = unique_temp_path("gnome-backend.toml");
+        let settings = LaunchSettings { backend: Backend::Gnome, ..LaunchSettings::default() };
+        let config = build_config(&settings, Path::new("/tmp/wallpaper/project.json"));
+        fs::write(&path, toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(load_launch_settings(&path).unwrap().backend, Backend::Gnome);
         let _ = fs::remove_file(path);
     }
 

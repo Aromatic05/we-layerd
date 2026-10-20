@@ -5,3 +5,4 @@ pub(crate) mod output;
 pub(crate) mod outputs;
 pub(crate) mod registry;
 pub(crate) mod shm;
+pub(crate) mod surface_role;

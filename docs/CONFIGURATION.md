@@ -25,6 +25,7 @@ assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 
 ```toml
 [general]
+backend = "auto"
 interactive = true
 input_mode = "direct"
 show_fps = false
@@ -33,7 +34,7 @@ scale_mode = "cover"
 force_scene_audio_loop = false
 ```
 
-- backend selection is automatic: GNOME sessions use the GNOME actor-clone path; other desktops use layer-shell
+- `backend`: `auto` (default) selects the GNOME extension renderer window on GNOME sessions and layer-shell elsewhere; `gnome` forces the GNOME window bridge and `force_layer_shell` explicitly forces layer-shell. Older GUI-generated `backend = "layer_shell"` is accepted as an alias for `auto`. The GNOME bridge currently registers one renderer window and requires the GNOME Shell extension to be active.
 - `interactive`: when `false`, `we-layerd` sets an empty input region so the wallpaper does not consume pointer input
 - `input_mode`: `direct` (default) accepts pointer input on the wallpaper surface. `background_proxy` creates an independent transparent Background layer-shell surface that forwards input to the same renderer session (Niri backdrop workaround); this only takes effect when `interactive = true`.
 - `show_fps`: keeps the renderer FPS counters enabled in config/status

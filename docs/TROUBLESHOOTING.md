@@ -44,6 +44,12 @@ third_party/wallpaper-engine-renderer
   - `last_present_backend`
   - `in_flight_buffers`
 
+## GNOME selects layer-shell or shows no wallpaper
+
+- Use `backend = "auto"` (default) in `[general]`; older `backend = "layer_shell"` files are interpreted as auto.
+- Run `we-layerd doctor --config ~/.config/we-layerd/config.toml`. On a GNOME session, `OK backend = gnome` and `OK gnome_extension` should appear. Mutter does not expose `zwlr_layer_shell_v1`, which the GNOME backend does not require.
+- Install/enable the bundled GNOME Shell extension and check its D-Bus name `io.github.weLayerd.Gnome`. You may also force the GNOME backend using `backend = "gnome"`.
+
 ## Pointer interaction does not work
 
 - Ensure `general.interactive = true`

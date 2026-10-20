@@ -1,4 +1,7 @@
 [general]
+# "auto" selects GNOME or layer-shell based on the desktop environment.
+# "gnome" and "force_layer_shell" are explicit overrides.
+backend = "auto"
 interactive = true
 # Optional: "direct" (default) or "background_proxy" (Niri backdrop input).
 input_mode = "direct"

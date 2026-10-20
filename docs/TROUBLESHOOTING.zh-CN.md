@@ -40,6 +40,12 @@ third_party/wallpaper-engine-renderer
 - 确认 `renderer.assets_path` 指向 Wallpaper Engine 的 `assets/` 目录
 - 使用 `we-layerd ctl status` 查看当前 source 和 error 字段
 
+## GNOME 错误选择 layer-shell 或壁纸不显示
+
+- `[general]` 中使用默认 `backend = "auto"`；旧版 `backend = "layer_shell"` 按自动选择解释。
+- 执行 `we-layerd doctor --config ~/.config/we-layerd/config.toml`；GNOME 会话应看到 `OK backend = gnome` 和 `OK gnome_extension`，无需 `zwlr_layer_shell_v1`。
+- 确保已安装并启用 GNOME Shell 扩展，其 D-Bus 名称为 `io.github.weLayerd.Gnome`；可用 `backend = "gnome"` 显式指定。
+
 ## 指针交互无效
 
 - 确认 `general.interactive = true`

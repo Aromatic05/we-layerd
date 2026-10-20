@@ -102,6 +102,7 @@ mod tests {
         assert!(launch_settings.allow_shm_fallback);
         assert!(!launch_settings.interactive);
         assert_eq!(launch_settings.input_mode, we_core::config::InputMode::BackgroundProxy);
+        assert_eq!(launch_settings.backend, we_core::config::Backend::Auto);
         assert!(launch_settings.force_scene_audio_loop);
         assert_eq!(launch_settings.scale_mode, ScaleMode::Stretch);
     }

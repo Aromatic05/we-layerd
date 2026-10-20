@@ -17,6 +17,7 @@ use wayland_protocols::wp::{
     linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     viewporter::client::wp_viewporter::WpViewporter,
 };
+use wayland_protocols::xdg::shell::client::xdg_wm_base::XdgWmBase;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 use we_core::{
     install_layout::{expand_tilde, resolve_renderer_library},
@@ -32,7 +33,7 @@ use crate::{
             surface,
         },
         traits::BackendContext,
-        wayland_common::{connection, output::OutputState, registry},
+        wayland_common::{connection, output::OutputState, registry, surface_role::SurfaceRole},
     },
     ipc::{ControlCommand, RuntimeLoopExit},
     runtime::{
@@ -309,6 +310,14 @@ fn exit_runtime_loop(
 }
 
 pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result<RuntimeLoopExit> {
+    run_output_with_role(ctx, target_output, SurfaceRole::LayerShell)
+}
+
+pub(crate) fn run_output_with_role(
+    ctx: BackendContext<'_>,
+    target_output: &str,
+    role: SurfaceRole<'_>,
+) -> Result<RuntimeLoopExit> {
     if ctx.shutdown_requested.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(RuntimeLoopExit::Stop);
     }
@@ -325,6 +334,15 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
     let compositor: WlCompositor =
         globals.bind(&qh, 4..=6, ()).context("failed to bind wl_compositor")?;
     let layer_shell = globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=5, ()).ok();
+    let xdg_wm_base = if matches!(role, SurfaceRole::XdgToplevel { .. }) {
+        Some(
+            globals
+                .bind::<XdgWmBase, _, _>(&qh, 1..=6, ())
+                .context("xdg_wm_base unavailable for GNOME window bridge")?,
+        )
+    } else {
+        None
+    };
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).context("failed to bind wl_shm")?;
 
     let dmabuf_global =
@@ -401,7 +419,12 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
         configured: false,
         session: None,
         interactive: cfg.general.interactive,
-        input_mode: cfg.general.input_mode,
+        // GNOME uses a native XDG window and not a layer-shell input proxy.
+        input_mode: if matches!(role, SurfaceRole::XdgToplevel { .. }) {
+            we_core::config::InputMode::Direct
+        } else {
+            cfg.general.input_mode
+        },
         render_resolution_follows_output: cfg.renderer.render_width.is_none()
             && cfg.renderer.render_height.is_none(),
         pause_state: crate::runtime::rules::PauseState::default(),
@@ -433,6 +456,8 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
         selected_output,
         output_count,
         layer_shell,
+        xdg_wm_base,
+        role,
         shm,
         dmabuf,
         dmabuf_version,
@@ -442,7 +467,7 @@ pub(crate) fn run_output(ctx: BackendContext<'_>, target_output: &str) -> Result
     )?;
     status_sink(state.snapshot());
 
-    // Commit the initial empty buffer and input region so layer-shell can configure the surface.
+    // Commit without a buffer so layer-shell or xdg-shell can configure the surface.
     surface::update_input_region(&mut state, &qh, true);
 
     // Wait for the first configure

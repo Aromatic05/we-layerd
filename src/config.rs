@@ -12,7 +12,8 @@ use we_core::{
     wallpaper::settings::{WallpaperFillMode, WallpaperSettings},
 };
 
-use crate::backend::{gnome::protocol, traits::BackendKind};
+use crate::backend::gnome::protocol;
+pub use we_core::config::Backend as ConfigBackend;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -75,23 +76,6 @@ pub enum ScaleMode {
     Stretch,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfigBackend {
-    #[default]
-    LayerShell,
-    Gnome,
-}
-
-impl ConfigBackend {
-    pub fn kind(self) -> BackendKind {
-        match self {
-            Self::LayerShell => BackendKind::LayerShell,
-            Self::Gnome => BackendKind::Gnome,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RendererConfig {
     #[serde(default = "default_renderer_library_path")]
@@ -136,7 +120,7 @@ fn default_interactive() -> bool {
 }
 
 fn default_backend() -> ConfigBackend {
-    ConfigBackend::LayerShell
+    ConfigBackend::default()
 }
 
 fn default_fps_report_interval_secs() -> u64 {
@@ -282,7 +266,7 @@ mod tests {
     #[test]
     fn default_config_uses_renderer_native_defaults() {
         let cfg = Config::default();
-        assert_eq!(cfg.general.backend, ConfigBackend::LayerShell);
+        assert_eq!(cfg.general.backend, ConfigBackend::Auto);
         assert_eq!(cfg.gnome.extension_dbus_name, "io.github.weLayerd.Gnome");
         assert!(cfg.general.interactive);
         assert!(!cfg.general.force_scene_audio_loop);
@@ -354,7 +338,17 @@ mod tests {
     fn config_accepts_layer_shell_backend() {
         let cfg: Config = toml::from_str("[general]\nbackend = \"layer_shell\"\n")
             .expect("valid layer_shell backend");
-        assert_eq!(cfg.general.backend, ConfigBackend::LayerShell);
+        assert_eq!(cfg.general.backend, ConfigBackend::Auto);
+        let forced: Config = toml::from_str("[general]\nbackend = \"force_layer_shell\"\n")
+            .expect("explicit layer-shell override");
+        assert_eq!(forced.general.backend, ConfigBackend::LayerShell);
+    }
+
+    #[test]
+    fn gnome_backend_is_supported_explicitly() {
+        let cfg: Config = toml::from_str("[general]\nbackend = \"gnome\"\n").unwrap();
+        assert_eq!(cfg.general.backend, ConfigBackend::Gnome);
+        assert_eq!(Config::default().general.backend, ConfigBackend::Auto);
     }
 
     #[test]

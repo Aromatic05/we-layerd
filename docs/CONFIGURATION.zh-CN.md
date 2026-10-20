@@ -24,6 +24,7 @@ assets_path = "/path/to/Steam/steamapps/common/wallpaper_engine/assets"
 
 ```toml
 [general]
+backend = "auto"
 interactive = true
 input_mode = "direct"
 show_fps = false
@@ -32,7 +33,7 @@ scale_mode = "cover"
 force_scene_audio_loop = false
 ```
 
-- 后端自动选择：GNOME 会话走 GNOME actor clone，其它桌面环境走 layer-shell
+- `backend`：默认 `auto`，GNOME 会话使用扩展窗口代理后端，其他桌面使用 layer-shell；`gnome` 和 `force_layer_shell` 可显式指定。旧版 GUI 写出的 `backend = "layer_shell"` 会按 `auto` 处理。GNOME 窗口代理目前只注册一个 Renderer 窗口，需要 GNOME Shell 扩展处于活动状态。
 - `interactive`：为 `false` 时会设置空 input region，让壁纸不阻挡桌面鼠标交互
 - `input_mode`：默认 `direct`，直接从壁纸 Surface 接收输入；可选 `background_proxy`，使用独立的透明 Background Surface 转发输入到同一个 Renderer Session（适用于 Niri Backdrop），仅在 `interactive = true` 时生效。
 - `show_fps`：保留 FPS 统计开关

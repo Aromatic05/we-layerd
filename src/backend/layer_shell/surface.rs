@@ -29,6 +29,11 @@ use wayland_protocols::wp::{
     },
     viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter},
 };
+use wayland_protocols::xdg::shell::client::{
+    xdg_surface::{Event as XdgSurfaceEvent, XdgSurface},
+    xdg_toplevel::{Event as XdgToplevelEvent, XdgToplevel},
+    xdg_wm_base::{Event as XdgWmBaseEvent, XdgWmBase},
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
     zwlr_layer_surface_v1::{Event as LayerSurfaceEvent, ZwlrLayerSurfaceV1},
@@ -39,7 +44,9 @@ use we_renderer::{DmabufFrame, Frame};
 use crate::backend::{
     layer_shell::input_proxy,
     layer_shell::state::{DmabufKey, DmabufPlaneKey, LayerShellState, WaylandBuffer},
-    wayland_common::{input::PointerAxis, output::FRACTIONAL_SCALE_DENOMINATOR},
+    wayland_common::{
+        input::PointerAxis, output::FRACTIONAL_SCALE_DENOMINATOR, surface_role::SurfaceRole,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -190,6 +197,78 @@ impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for LayerShellState {
                     }
                 }
             }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<XdgWmBase, ()> for LayerShellState {
+    fn event(
+        _state: &mut Self,
+        wm_base: &XdgWmBase,
+        event: XdgWmBaseEvent,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let XdgWmBaseEvent::Ping { serial } = event {
+            wm_base.pong(serial);
+        }
+    }
+}
+
+impl Dispatch<XdgSurface, ()> for LayerShellState {
+    fn event(
+        state: &mut Self,
+        xdg_surface: &XdgSurface,
+        event: XdgSurfaceEvent,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let XdgSurfaceEvent::Configure { serial } = event {
+            xdg_surface.ack_configure(serial);
+            state.configured = true;
+            if state.output.logical_width == 0 {
+                state.output.logical_width = state.output.fallback_width;
+            }
+            if state.output.logical_height == 0 {
+                state.output.logical_height = state.output.fallback_height;
+            }
+            state.update_render_extent();
+            state.update_viewport_destination();
+            update_input_region(state, qh, true);
+        }
+    }
+}
+
+fn configure_xdg_toplevel(state: &mut LayerShellState, width: i32, height: i32) {
+    // A zero dimension asks the client to choose its size; retain the last
+    // valid size rather than resetting it during transient GNOME reconfigures.
+    if width > 0 {
+        state.output.logical_width = width as u32;
+    }
+    if height > 0 {
+        state.output.logical_height = height as u32;
+    }
+    state.update_render_extent();
+    state.update_viewport_destination();
+}
+
+impl Dispatch<XdgToplevel, ()> for LayerShellState {
+    fn event(
+        state: &mut Self,
+        _toplevel: &XdgToplevel,
+        event: XdgToplevelEvent,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            XdgToplevelEvent::Configure { width, height, .. } => {
+                configure_xdg_toplevel(state, width, height);
+            }
+            XdgToplevelEvent::Close => state.running = false,
             _ => {}
         }
     }
@@ -654,6 +733,8 @@ pub(super) fn init_wayland(
     selected_output: WlOutput,
     output_count: u32,
     layer_shell: Option<ZwlrLayerShellV1>,
+    xdg_wm_base: Option<XdgWmBase>,
+    role: SurfaceRole<'_>,
     shm: WlShm,
     dmabuf: Option<ZwpLinuxDmabufV1>,
     dmabuf_version: u32,
@@ -707,29 +788,45 @@ pub(super) fn init_wayland(
         tracing::info!("fractional-scale-v1 unavailable, falling back to wl_output integer scale");
     }
 
-    let layer_shell = layer_shell.ok_or_else(|| anyhow!("zwlr_layer_shell_v1 unavailable"))?;
-    let layer_surface = layer_shell.get_layer_surface(
-        surface,
-        state.objects.output.as_ref(),
-        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
-        "wallpaper-engine-renderer".to_string(),
-        qh,
-        (),
-    );
-    layer_surface.set_anchor(
-        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
-            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Bottom
-            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left
-            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Right,
-    );
-    layer_surface.set_size(0, 0);
-    layer_surface.set_exclusive_zone(-1);
-    layer_surface.set_margin(0, 0, 0, 0);
-    layer_surface.set_keyboard_interactivity(
-        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
-    );
-    state.objects.layer_surface = Some(layer_surface);
-    input_proxy::create(state, qh, &layer_shell, viewporter.as_ref())?;
+    match role {
+        SurfaceRole::LayerShell => {
+            let layer_shell =
+                layer_shell.ok_or_else(|| anyhow!("zwlr_layer_shell_v1 unavailable"))?;
+            let layer_surface = layer_shell.get_layer_surface(
+                surface,
+                state.objects.output.as_ref(),
+                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
+                "wallpaper-engine-renderer".to_string(),
+                qh,
+                (),
+            );
+            layer_surface.set_anchor(
+                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
+                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Bottom
+                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left
+                    | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Right,
+            );
+            layer_surface.set_size(0, 0);
+            layer_surface.set_exclusive_zone(-1);
+            layer_surface.set_margin(0, 0, 0, 0);
+            layer_surface.set_keyboard_interactivity(
+                wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
+            );
+            state.objects.layer_surface = Some(layer_surface);
+            input_proxy::create(state, qh, &layer_shell, viewporter.as_ref())?;
+        }
+        SurfaceRole::XdgToplevel { title, app_id } => {
+            let wm_base = xdg_wm_base.ok_or_else(|| anyhow!("xdg_wm_base unavailable"))?;
+            let xdg_surface = wm_base.get_xdg_surface(surface, qh, ());
+            let toplevel = xdg_surface.get_toplevel(qh, ());
+            toplevel.set_title(title.to_string());
+            toplevel.set_app_id(app_id.to_string());
+            toplevel.set_fullscreen(state.objects.output.as_ref());
+            state.objects.xdg_wm_base = Some(wm_base);
+            state.objects.xdg_surface = Some(xdg_surface);
+            state.objects.xdg_toplevel = Some(toplevel);
+        }
+    }
 
     if seat.is_some() {
         state.objects.pointer = None;
@@ -787,7 +884,12 @@ pub(super) fn update_input_region(
 
 #[cfg(test)]
 mod tests {
-    use super::{reusable_identity_matches, to_opaque_drm_fourcc, wallpaper_input_region};
+    use super::{
+        configure_xdg_toplevel, reusable_identity_matches, to_opaque_drm_fourcc,
+        wallpaper_input_region,
+    };
+    use crate::backend::layer_shell::state::LayerShellState;
+    use crate::config::ScaleMode;
     use we_core::config::InputMode;
 
     #[test]
@@ -800,6 +902,27 @@ mod tests {
     }
 
     use crate::backend::layer_shell::state::{DmabufKey, DmabufPlaneKey};
+
+    #[test]
+    fn gnome_window_resize_uses_xdg_configure_dimensions() {
+        let mut state = LayerShellState::test_default(ScaleMode::Stretch);
+        configure_xdg_toplevel(&mut state, 2560, 1440);
+        assert_eq!((state.output.logical_width, state.output.logical_height), (2560, 1440));
+        assert_eq!(
+            (state.output.geometry.viewport_width, state.output.geometry.viewport_height),
+            (2560, 1440)
+        );
+
+        // xdg-shell uses zero dimensions to let the client choose a size.
+        configure_xdg_toplevel(&mut state, 0, 0);
+        assert_eq!((state.output.logical_width, state.output.logical_height), (2560, 1440));
+
+        configure_xdg_toplevel(&mut state, 1920, 1080);
+        assert_eq!(
+            (state.output.geometry.viewport_width, state.output.geometry.viewport_height),
+            (1920, 1080)
+        );
+    }
 
     #[test]
     fn exported_rgba_formats_are_presented_as_opaque() {

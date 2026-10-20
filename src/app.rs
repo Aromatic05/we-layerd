@@ -861,8 +861,42 @@ fn backend_name(backend: BackendKind) -> &'static str {
     backend.as_config_str()
 }
 
+fn desktop_is_gnome(values: impl IntoIterator<Item = String>) -> bool {
+    values.into_iter().any(|value| {
+        value
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|part| part.eq_ignore_ascii_case("GNOME"))
+    })
+}
+
+fn is_gnome_session() -> bool {
+    desktop_is_gnome(
+        ["XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION"]
+            .into_iter()
+            .filter_map(|name| std::env::var(name).ok()),
+    )
+}
+
+fn resolve_backend_for_session(
+    configured: we_core::config::Backend,
+    gnome_session: bool,
+) -> BackendKind {
+    use we_core::config::Backend;
+    match configured {
+        Backend::Auto => {
+            if gnome_session {
+                BackendKind::Gnome
+            } else {
+                BackendKind::LayerShell
+            }
+        }
+        Backend::LayerShell => BackendKind::LayerShell,
+        Backend::Gnome => BackendKind::Gnome,
+    }
+}
+
 fn resolve_backend(cfg: &Config) -> BackendKind {
-    cfg.general.backend.kind()
+    resolve_backend_for_session(cfg.general.backend, is_gnome_session())
 }
 
 fn env_var_enabled(name: &str) -> bool {
@@ -1164,6 +1198,10 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     }
 
     if backend == BackendKind::Gnome {
+        match backend::gnome::dbus::ping_extension(&cfg.gnome.extension_dbus_name) {
+            Ok(version) => lines.push(format!("OK gnome_extension = {version}")),
+            Err(error) => lines.push(format!("ERR gnome_extension = {error}")),
+        }
         let backend_impl = backend::create_backend(backend);
         lines.push(format!("OK backend.kind = {}", backend_name(backend_impl.kind())));
         let capabilities = backend_impl.capabilities();
@@ -1244,15 +1282,33 @@ mod tests {
     };
 
     use super::{
-        handle_runtime_control_command, persist_output_binding_change, request_runtime_shutdown,
-        resolve_renderer_assets_path, schedule_config_reconfigure_guarded,
-        schedule_scene_settings_reload, update_playlist_active_config, RuntimePhase, RuntimeState,
+        desktop_is_gnome, handle_runtime_control_command, persist_output_binding_change,
+        request_runtime_shutdown, resolve_backend_for_session, resolve_renderer_assets_path,
+        schedule_config_reconfigure_guarded, schedule_scene_settings_reload,
+        update_playlist_active_config, RuntimePhase, RuntimeState,
     };
     use crate::{
         config::Config,
         ipc::{ControlCommand, RuntimeLoopExit},
     };
-    use we_core::playlist::{Playlist, PlaylistConfig};
+    use we_core::{
+        config::Backend,
+        playlist::{Playlist, PlaylistConfig},
+    };
+
+    #[test]
+    fn gnome_auto_detection_and_explicit_backend_overrides() {
+        use crate::backend::traits::BackendKind;
+        assert!(desktop_is_gnome(["GNOME".to_string()]));
+        assert!(desktop_is_gnome(["ubuntu:GNOME".to_string()]));
+        assert!(desktop_is_gnome(["gnome-classic".to_string()]));
+        assert!(!desktop_is_gnome(["KDE".to_string()]));
+        assert!(!desktop_is_gnome(["notgnome".to_string()]));
+        assert_eq!(resolve_backend_for_session(Backend::Auto, true), BackendKind::Gnome);
+        assert_eq!(resolve_backend_for_session(Backend::Auto, false), BackendKind::LayerShell);
+        assert_eq!(resolve_backend_for_session(Backend::Gnome, false), BackendKind::Gnome);
+        assert_eq!(resolve_backend_for_session(Backend::LayerShell, true), BackendKind::LayerShell);
+    }
 
     fn temp_config_path(label: &str) -> std::path::PathBuf {
         let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
