@@ -84,7 +84,8 @@ fn renderer_fill_mode(value: we_core::wallpaper::settings::WallpaperFillMode) ->
 }
 
 fn can_present_next_frame(state: &LayerShellState) -> bool {
-    !state.pause_state.effective()
+    state.running
+        && !state.pause_state.effective()
         && !state.stopping
         && state.frame_callback.ready_for_next_frame
         && !state.frame_callback.pending
@@ -188,6 +189,15 @@ fn poll_timeout(now: Instant, next_tick_at: Instant, state: &LayerShellState) ->
     }
 
     100
+}
+
+fn poll_wayland(poll_fds: &mut [libc::pollfd; 2], timeout_ms: i32) -> Result<i32> {
+    let result =
+        unsafe { libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as libc::nfds_t, timeout_ms) };
+    if result > 0 && (poll_fds[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL)) != 0 {
+        anyhow::bail!("Wayland connection disconnected (poll revents: {:#x})", poll_fds[0].revents);
+    }
+    Ok(result)
 }
 
 fn flush_wayland_stop(conn: &Connection, state: &mut LayerShellState) -> Result<()> {
@@ -571,6 +581,12 @@ pub(crate) fn run_output_with_role(
 
     // Main loop
     loop {
+        if !state.running {
+            let exit = exit_runtime_loop(&conn, &mut state, RuntimeLoopExit::Stop, "Stop")?;
+            status_sink(state.snapshot());
+            return Ok(exit);
+        }
+
         // Handle control commands
         while let Ok(cmd) = control_rx.try_recv() {
             match cmd {
@@ -698,11 +714,6 @@ pub(crate) fn run_output_with_role(
         let Some(read_guard) = event_queue.prepare_read() else {
             state.collect_released_buffers();
             status_sink(state.snapshot());
-            if !state.running {
-                let exit = exit_runtime_loop(&conn, &mut state, RuntimeLoopExit::Stop, "Stop")?;
-                status_sink(state.snapshot());
-                return Ok(exit);
-            }
             continue;
         };
 
@@ -720,9 +731,7 @@ pub(crate) fn run_output_with_role(
             },
         ];
         let timeout_ms = poll_timeout(Instant::now(), next_tick_at, &state);
-        let poll_result = unsafe {
-            libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as libc::nfds_t, timeout_ms)
-        };
+        let poll_result = poll_wayland(&mut poll_fds, timeout_ms)?;
 
         if poll_result < 0 {
             let err = std::io::Error::last_os_error();
@@ -737,11 +746,6 @@ pub(crate) fn run_output_with_role(
             while event_queue.dispatch_pending(&mut state).unwrap_or(0) > 0 {}
             state.collect_released_buffers();
             status_sink(state.snapshot());
-            continue;
-        }
-        if (poll_fds[0].revents & (libc::POLLERR | libc::POLLHUP)) != 0 {
-            state.running = false;
-            drop(read_guard);
             continue;
         }
         if (poll_fds[1].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL)) != 0 {
@@ -787,19 +791,44 @@ pub(crate) fn run_output_with_role(
 
         state.collect_released_buffers();
         status_sink(state.snapshot());
-
-        if !state.running {
-            let exit = exit_runtime_loop(&conn, &mut state, RuntimeLoopExit::Stop, "Stop")?;
-            status_sink(state.snapshot());
-            return Ok(exit);
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{renderer_poll_events, LayerShellState};
+    use std::{os::fd::AsRawFd, os::unix::net::UnixStream};
+
+    use super::{poll_wayland, renderer_poll_events, LayerShellState};
     use crate::config::ScaleMode;
+    use wayland_client::Connection;
+
+    #[test]
+    fn disconnected_wayland_poll_fails() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(client).unwrap();
+        let mut queue = connection.new_event_queue::<LayerShellState>();
+        let mut state = LayerShellState::test_default(ScaleMode::Cover);
+        drop(server);
+
+        queue.flush().unwrap();
+        assert_eq!(queue.dispatch_pending(&mut state).unwrap(), 0);
+        let guard = queue.prepare_read().unwrap();
+        let mut fds = [
+            libc::pollfd {
+                fd: guard.connection_fd().as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd { fd: -1, events: 0, revents: 0 },
+        ];
+        assert!(poll_wayland(&mut fds, 100).is_err());
+        assert_ne!(fds[0].revents & libc::POLLHUP, 0);
+        drop(guard);
+
+        fds[0].fd = i32::MAX;
+        assert!(poll_wayland(&mut fds, 100).is_err());
+        assert_ne!(fds[0].revents & libc::POLLNVAL, 0);
+    }
 
     #[test]
     fn renderer_frame_fd_is_not_polled_while_presentation_is_backpressured() {
@@ -820,6 +849,10 @@ mod tests {
 
         state.frame_callback.ready_for_next_frame = true;
         state.buffers.max_in_flight = 0;
+        assert_eq!(renderer_poll_events(&state), 0);
+
+        state.buffers.max_in_flight = 3;
+        state.running = false;
         assert_eq!(renderer_poll_events(&state), 0);
     }
 }
