@@ -192,10 +192,20 @@ struct OutputWorker {
     control_tx: mpsc::Sender<ControlCommand>,
     desired_cfg: Arc<Mutex<Config>>,
     playlist_runtime: Arc<Mutex<Option<PlaylistRuntime>>>,
+    pending_status: Arc<Mutex<Option<RuntimeStatusSnapshot>>>,
     stop_scheduler: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
     scheduler_handle: Option<thread::JoinHandle<()>>,
     retry_at: Option<Instant>,
+}
+
+impl OutputWorker {
+    fn flush_status(&self, sink: &mut dyn FnMut(RuntimeStatusSnapshot)) {
+        let snapshot = self.pending_status.lock().unwrap().take();
+        if let Some(snapshot) = snapshot {
+            sink(snapshot);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -217,13 +227,14 @@ impl Drop for OutputWorker {
     }
 }
 
-enum WorkerEvent {
-    Status { instance_id: u64, snapshot: Box<RuntimeStatusSnapshot> },
-    Exited { output: String, instance_id: u64, error: Option<String> },
+struct WorkerExit {
+    output: String,
+    instance_id: u64,
+    error: Option<String>,
 }
 
 pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
-    let (worker_event_tx, worker_event_rx) = mpsc::channel::<WorkerEvent>();
+    let (worker_event_tx, worker_event_rx) = mpsc::channel::<WorkerExit>();
     let output_playlist_rx = ctx.output_playlist_rx.take();
     let mut workers = BTreeMap::<String, OutputWorker>::new();
     let mut failed_start_retries = BTreeMap::<String, FailedStartRetry>::new();
@@ -297,53 +308,43 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
             }
         }
 
-        while let Ok(event) = worker_event_rx.try_recv() {
-            match event {
-                WorkerEvent::Status { instance_id, snapshot } => {
-                    let current_instance = workers
-                        .get(&snapshot.output_name)
-                        .is_some_and(|worker| worker.instance_id == instance_id);
-                    if current_instance {
-                        (ctx.status_sink)(*snapshot);
-                    }
-                }
-                WorkerEvent::Exited { output, instance_id, error } => {
-                    let current_instance = workers
-                        .get(&output)
-                        .is_some_and(|worker| worker.instance_id == instance_id);
-                    if !current_instance {
-                        continue;
-                    }
-                    let error =
-                        error.unwrap_or_else(|| "output runtime exited unexpectedly".to_string());
-                    warn!(
-                        output = %output,
-                        error = %error,
-                        "output runtime failed without stopping other outputs"
-                    );
-                    let mut snapshot = RuntimeStatusSnapshot {
-                        output_name: output.clone(),
-                        ..RuntimeStatusSnapshot::default()
-                    };
-                    if let Some(worker) = workers.get_mut(&output) {
-                        if let Ok(config) = worker.desired_cfg.lock() {
-                            snapshot.output_source = config.renderer.source.clone();
-                        }
-                        if let Ok(runtime) = worker.playlist_runtime.lock() {
-                            if let Some(runtime) = runtime.as_ref() {
-                                snapshot.output_playlist_active =
-                                    runtime.active_name().map(str::to_string);
-                                snapshot.output_playlist_index =
-                                    runtime.current_selection().map(|selection| selection.index);
-                            }
-                        }
-                        worker.handle.take();
-                        worker.retry_at = Some(Instant::now() + Duration::from_secs(3));
-                    }
-                    snapshot.frame_stats.last_error = Some(error);
-                    (ctx.status_sink)(snapshot);
-                }
+        for worker in workers.values() {
+            worker.flush_status(ctx.status_sink);
+        }
+
+        while let Ok(WorkerExit { output, instance_id, error }) = worker_event_rx.try_recv() {
+            let current_instance =
+                workers.get(&output).is_some_and(|worker| worker.instance_id == instance_id);
+            if !current_instance {
+                continue;
             }
+            let error = error.unwrap_or_else(|| "output runtime exited unexpectedly".to_string());
+            warn!(
+                output = %output,
+                error = %error,
+                "output runtime failed without stopping other outputs"
+            );
+            let mut snapshot = RuntimeStatusSnapshot {
+                output_name: output.clone(),
+                ..RuntimeStatusSnapshot::default()
+            };
+            if let Some(worker) = workers.get_mut(&output) {
+                worker.flush_status(ctx.status_sink);
+                if let Ok(config) = worker.desired_cfg.lock() {
+                    snapshot.output_source = config.renderer.source.clone();
+                }
+                if let Ok(runtime) = worker.playlist_runtime.lock() {
+                    if let Some(runtime) = runtime.as_ref() {
+                        snapshot.output_playlist_active = runtime.active_name().map(str::to_string);
+                        snapshot.output_playlist_index =
+                            runtime.current_selection().map(|selection| selection.index);
+                    }
+                }
+                worker.handle.take();
+                worker.retry_at = Some(Instant::now() + Duration::from_secs(3));
+            }
+            snapshot.frame_stats.last_error = Some(error);
+            (ctx.status_sink)(snapshot);
         }
 
         if last_discovery.elapsed() >= Duration::from_secs(1) {
@@ -366,7 +367,7 @@ fn reconcile_live_workers(
     ctx: &mut BackendContext<'_>,
     workers: &mut BTreeMap<String, OutputWorker>,
     failed_start_retries: &mut BTreeMap<String, FailedStartRetry>,
-    worker_event_tx: &mpsc::Sender<WorkerEvent>,
+    worker_event_tx: &mpsc::Sender<WorkerExit>,
 ) -> Result<()> {
     let discovered = outputs::list_output_names()?;
     let desired_config = ctx
@@ -501,7 +502,7 @@ fn spawn_worker(
     spec: OutputSpec,
     shutdown_requested: Arc<AtomicBool>,
     host_integrations: crate::runtime::integrations::HostIntegrations,
-    worker_event_tx: mpsc::Sender<WorkerEvent>,
+    worker_event_tx: mpsc::Sender<WorkerExit>,
 ) -> Result<OutputWorker> {
     let output_name = spec.output_name.clone();
     let instance_id = WORKER_INSTANCE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -511,7 +512,9 @@ fn spawn_worker(
     let desired_cfg = Arc::new(Mutex::new(initial_config));
     let (control_tx, control_rx) = mpsc::channel::<ControlCommand>();
     let stop_scheduler = Arc::new(AtomicBool::new(false));
+    let pending_status = Arc::new(Mutex::new(None));
 
+    let worker_pending_status = pending_status.clone();
     let worker_desired_cfg = desired_cfg.clone();
     let worker_playlist_runtime = playlist_runtime.clone();
     let worker_stop_scheduler = stop_scheduler.clone();
@@ -542,8 +545,7 @@ fn spawn_worker(
                                 runtime.current_selection().map(|selection| selection.index);
                         }
                     }
-                    let _ = worker_event_tx
-                        .send(WorkerEvent::Status { instance_id, snapshot: Box::new(snapshot) });
+                    *worker_pending_status.lock().unwrap() = Some(snapshot);
                 };
                 let worker_context = BackendContext {
                     cfg: &config,
@@ -562,11 +564,7 @@ fn spawn_worker(
             };
             worker_stop_scheduler.store(true, Ordering::Relaxed);
             let error = result.err().map(|error| error.to_string());
-            let _ = worker_event_tx.send(WorkerEvent::Exited {
-                output: worker_output,
-                instance_id,
-                error,
-            });
+            let _ = worker_event_tx.send(WorkerExit { output: worker_output, instance_id, error });
         })
         .context("failed to spawn output runtime worker")?;
 
@@ -597,6 +595,7 @@ fn spawn_worker(
         control_tx,
         desired_cfg,
         playlist_runtime,
+        pending_status,
         stop_scheduler,
         handle: Some(handle),
         scheduler_handle,
@@ -819,6 +818,7 @@ mod tests {
     use crate::config::Config;
     use crate::ipc::{ControlCommand, OutputPlaylistAction};
     use crate::runtime::playlist::PlaylistRuntime;
+    use crate::runtime::status::RuntimeStatusSnapshot;
     use we_core::{
         config::OutputBinding,
         playlist::{Playlist, PlaylistConfig, PlaylistItem},
@@ -830,6 +830,38 @@ mod tests {
         reconcile_workers, reconfigure_worker_in_place, FailedStartRetry, OutputAction,
         OutputWorker,
     };
+
+    #[test]
+    fn status_callback_can_publish() {
+        let (control_tx, _control_rx) = mpsc::channel();
+        let worker = OutputWorker {
+            instance_id: 1,
+            fingerprint: String::new(),
+            control_tx,
+            desired_cfg: Arc::new(Mutex::new(Config::default())),
+            playlist_runtime: Arc::new(Mutex::new(None)),
+            pending_status: Arc::new(Mutex::new(Some(RuntimeStatusSnapshot::default()))),
+            stop_scheduler: Arc::new(AtomicBool::new(false)),
+            handle: None,
+            scheduler_handle: None,
+            retry_at: None,
+        };
+
+        let mut delivered = 0;
+        worker.flush_status(&mut |_| {
+            delivered += 1;
+            let mut pending = worker.pending_status.try_lock().expect("status lock released");
+            let mut snapshot = RuntimeStatusSnapshot::default();
+            snapshot.frame_stats.presented = 42;
+            *pending = Some(snapshot);
+        });
+        worker.flush_status(&mut |snapshot| {
+            delivered += 1;
+            assert_eq!(snapshot.frame_stats.presented, 42);
+        });
+        worker.flush_status(&mut |_| panic!("status delivered twice"));
+        assert_eq!(delivered, 2);
+    }
 
     #[test]
     fn discovered_outputs_get_independent_workers_with_stable_names() {
@@ -900,6 +932,7 @@ mod tests {
             control_tx,
             desired_cfg: Arc::new(Mutex::new(initial.config)),
             playlist_runtime: Arc::new(Mutex::new(None)),
+            pending_status: Arc::new(Mutex::new(None)),
             stop_scheduler: Arc::new(AtomicBool::new(false)),
             handle: Some(thread::spawn(|| {})),
             scheduler_handle: None,
@@ -941,6 +974,7 @@ mod tests {
             control_tx,
             desired_cfg: Arc::new(Mutex::new(initial.config)),
             playlist_runtime: Arc::new(Mutex::new(None)),
+            pending_status: Arc::new(Mutex::new(None)),
             stop_scheduler: Arc::new(AtomicBool::new(false)),
             handle: Some(thread::spawn(|| {})),
             scheduler_handle: None,
