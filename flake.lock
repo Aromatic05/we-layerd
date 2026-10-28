@@ -19,17 +19,17 @@
     "renderer": {
       "flake": false,
       "locked": {
-        "lastModified": 1791468782,
-        "narHash": "sha256-QMkJFR8e4x3XKUsC0AagCBKToNeevWZfEK7pffUd7J0=",
+        "lastModified": 1793086987,
+        "narHash": "sha256-4x2Z06PP5Qm0ZuPHiWGxyfn2p8lRoHc05wsMBx7gft4=",
         "owner": "Aromatic05",
         "repo": "wallpaper-engine-renderer",
-        "rev": "90f74d503dacbb580633493724cf0f8983f3bd1d",
+        "rev": "b2e01e421adc8fade6d1b4d124d5f7fec3463094",
         "type": "github"
       },
       "original": {
         "owner": "Aromatic05",
         "repo": "wallpaper-engine-renderer",
-        "rev": "90f74d503dacbb580633493724cf0f8983f3bd1d",
+        "rev": "b2e01e421adc8fade6d1b4d124d5f7fec3463094",
         "type": "github"
       }
     },
