@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
     renderer = {
-      url = "github:Aromatic05/wallpaper-engine-renderer/90f74d503dacbb580633493724cf0f8983f3bd1d";
+      url = "github:Aromatic05/wallpaper-engine-renderer/b2e01e421adc8fade6d1b4d124d5f7fec3463094";
       flake = false;
     };
     rendererEigen = {
@@ -67,7 +67,7 @@
       };
       mkRendererSource =
         pkgs:
-        pkgs.runCommand "wallpaper-engine-renderer-source-90f74d5" { } ''
+        pkgs.runCommand "wallpaper-engine-renderer-source-b2e01e4" { } ''
           mkdir -p "$out"
           cp -a ${renderer}/. "$out/"
           chmod -R u+w "$out"
