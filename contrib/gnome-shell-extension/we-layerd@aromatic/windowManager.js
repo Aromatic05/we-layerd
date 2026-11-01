@@ -37,6 +37,13 @@ class ManagedWindow {
                 this._window.unminimize();
         }));
 
+        this._signals.push(window.connect('notify::fullscreen', () => {
+            if (this._disposed)
+                return;
+            if (this._window.fullscreen)
+                this._window.unmake_fullscreen();
+        }));
+
         this._refresh();
     }
 
@@ -45,6 +52,8 @@ class ManagedWindow {
             return;
 
         this._window.unmake_above();
+        if (this._window.fullscreen)
+            this._window.unmake_fullscreen();
         this._window.stick();
         this._queueLower();
     }
