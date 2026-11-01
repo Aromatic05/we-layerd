@@ -949,6 +949,14 @@ fn run_runtime_loop(cfg: &Config, inputs: RuntimeLoopInputs<'_>) -> Result<Runti
     }
 
     let backend = resolve_backend(&cfg);
+    // The GNOME backend pins a single renderer surface and cannot consume
+    // per-output bindings; adopt the first wallpaper binding's source so
+    // configs written for the LayerShell multi-output model still work.
+    if backend == BackendKind::Gnome {
+        if let Some(source) = cfg.outputs.values().find_map(|binding| binding.source.clone()) {
+            cfg.renderer.source = source;
+        }
+    }
     if cfg.renderer.source.trim().is_empty()
         && !(backend == BackendKind::LayerShell && !cfg.outputs.is_empty())
     {
