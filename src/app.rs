@@ -950,11 +950,24 @@ fn run_runtime_loop(cfg: &Config, inputs: RuntimeLoopInputs<'_>) -> Result<Runti
 
     let backend = resolve_backend(&cfg);
     // The GNOME backend pins a single renderer surface and cannot consume
-    // per-output bindings; adopt the first wallpaper binding's source so
-    // configs written for the LayerShell multi-output model still work.
+    // per-output bindings; adopt the first wallpaper binding (including its
+    // wallpaper profile: fps, volume, mute, fill mode...) so configs written
+    // for the LayerShell multi-output model still work.
     if backend == BackendKind::Gnome {
-        if let Some(source) = cfg.outputs.values().find_map(|binding| binding.source.clone()) {
-            cfg.renderer.source = source;
+        if let Some(binding) = cfg
+            .outputs
+            .values()
+            .find(|binding| binding.source.is_some())
+            .cloned()
+        {
+            playlist::apply_selection_to_config(
+                &mut cfg,
+                &PlaylistSelection {
+                    index: 0,
+                    wallpaper_id: binding.wallpaper_id.unwrap_or_default(),
+                    source: binding.source.unwrap_or_default(),
+                },
+            )?;
         }
     }
     if cfg.renderer.source.trim().is_empty()
