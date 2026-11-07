@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use zbus::blocking::{Connection, Proxy};
 
 use crate::backend::gnome::protocol;
@@ -15,6 +15,20 @@ pub(crate) fn ping_extension(bus_name: &str) -> Result<String> {
     proxy
         .call::<_, _, String>(protocol::PING_METHOD, &())
         .map_err(|_| extension_unreachable_error())
+}
+
+/// Queries the extension for (output, activated, maximized, fullscreen) of
+/// every regular toplevel so window rules can run without wlr protocols.
+pub(crate) fn get_window_states(
+    connection: &Connection,
+    bus_name: &str,
+) -> Result<Vec<(String, bool, bool, bool)>> {
+    let proxy =
+        Proxy::new(connection, bus_name, protocol::OBJECT_PATH, protocol::WINDOW_BRIDGE_INTERFACE)
+            .map_err(|_| extension_unreachable_error())?;
+    proxy
+        .call(protocol::GET_WINDOW_STATES_METHOD, &())
+        .context("failed to query GNOME window states")
 }
 
 /// Keeps the GNOME extension's actor-clone target registered until the window

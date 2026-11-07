@@ -19,7 +19,10 @@ use super::{
     audio::{PulseAudioCapture, AUDIO_SPECTRUM_BINS},
     media::{self, MediaBridgeState},
     power::{detect_power_state, PowerState},
-    rules::{policies_for_outputs, ForeignToplevelMonitor, RuleSet, RuntimePolicy},
+    rules::{
+        policies_for_outputs, ForeignToplevelMonitor, GnomeToplevelMonitor, RuleSet, RuntimePolicy,
+        ToplevelActivity,
+    },
 };
 
 const INTEGRATION_SUPERVISOR_POLL: Duration = Duration::from_millis(50);
@@ -833,6 +836,23 @@ fn spawn_audio_collector(
         .expect("failed to spawn audio spectrum collector")
 }
 
+enum ToplevelMonitor {
+    Foreign(ForeignToplevelMonitor),
+    Gnome(GnomeToplevelMonitor),
+}
+
+impl ToplevelMonitor {
+    fn poll(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<(Vec<String>, Vec<ToplevelActivity>), anyhow::Error> {
+        match self {
+            Self::Foreign(monitor) => monitor.poll(timeout),
+            Self::Gnome(monitor) => monitor.poll(timeout),
+        }
+    }
+}
+
 fn spawn_rule_collector(
     shared: HostIntegrations,
     desired_cfg: Arc<Mutex<Config>>,
@@ -841,11 +861,18 @@ fn spawn_rule_collector(
     thread::Builder::new()
         .name("we-layerd-window-rules".to_string())
         .spawn(move || {
-            let mut monitor = None;
+            let mut monitor: Option<ToplevelMonitor> = None;
             while !shutdown.load(Ordering::Relaxed) {
-                let rules = desired_cfg
+                let (rules, gnome_bus_name) = desired_cfg
                     .lock()
-                    .map(|config| RuleSet::from(config.rules))
+                    .map(|config| {
+                        let gnome = crate::app::resolve_backend(&config)
+                            == crate::backend::traits::BackendKind::Gnome;
+                        (
+                            RuleSet::from(config.rules),
+                            gnome.then(|| config.gnome.extension_dbus_name.clone()),
+                        )
+                    })
                     .unwrap_or_default();
                 if rules.is_keep() {
                     monitor = None;
@@ -854,8 +881,25 @@ fn spawn_rule_collector(
                     continue;
                 }
 
+                let monitor_matches_backend = match (&monitor, &gnome_bus_name) {
+                    (Some(ToplevelMonitor::Gnome(monitor)), Some(bus_name)) => {
+                        monitor.bus_name() == bus_name
+                    }
+                    (Some(ToplevelMonitor::Foreign(_)), None) => true,
+                    _ => false,
+                };
+                if !monitor_matches_backend {
+                    monitor = None;
+                }
+
                 if monitor.is_none() {
-                    match ForeignToplevelMonitor::connect() {
+                    let connect_result = match &gnome_bus_name {
+                        Some(bus_name) => {
+                            GnomeToplevelMonitor::connect(bus_name).map(ToplevelMonitor::Gnome)
+                        }
+                        None => ForeignToplevelMonitor::connect().map(ToplevelMonitor::Foreign),
+                    };
+                    match connect_result {
                         Ok(value) => monitor = Some(value),
                         Err(error) => {
                             shared.update_rules(

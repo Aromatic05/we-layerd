@@ -388,6 +388,58 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for ForeignToplevelProbe {
     }
 }
 
+/// GNOME has no wlr foreign-toplevel protocol. The we-layerd shell extension
+/// already tracks every window, so the rule collector polls its D-Bus bridge
+/// instead and maps the reply onto the same ToplevelActivity shape.
+pub(crate) struct GnomeToplevelMonitor {
+    connection: zbus::blocking::Connection,
+    bus_name: String,
+}
+
+impl GnomeToplevelMonitor {
+    pub(crate) fn bus_name(&self) -> &str {
+        &self.bus_name
+    }
+
+    pub(crate) fn connect(bus_name: &str) -> Result<Self> {
+        let connection = zbus::blocking::Connection::session()
+            .map_err(|_| crate::backend::gnome::dbus::extension_unreachable_error())?;
+        crate::backend::gnome::dbus::ping_extension(bus_name)?;
+        Ok(Self { connection, bus_name: bus_name.to_string() })
+    }
+
+    pub(crate) fn poll(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<(Vec<String>, Vec<ToplevelActivity>)> {
+        // Keep the collector cadence in line with the Wayland monitor.
+        std::thread::sleep(timeout);
+        let states =
+            crate::backend::gnome::dbus::get_window_states(&self.connection, &self.bus_name)?;
+        Ok(gnome_activities(states))
+    }
+}
+
+fn gnome_activities(
+    states: Vec<(String, bool, bool, bool)>,
+) -> (Vec<String>, Vec<ToplevelActivity>) {
+    let mut outputs = BTreeSet::new();
+    let mut activities = Vec::with_capacity(states.len());
+    for (output, activated, maximized, fullscreen) in states {
+        if output.is_empty() {
+            continue;
+        }
+        outputs.insert(output.clone());
+        activities.push(ToplevelActivity {
+            outputs: vec![output],
+            activated,
+            maximized,
+            fullscreen,
+        });
+    }
+    (outputs.into_iter().collect(), activities)
+}
+
 fn decode_toplevel_states(raw: &[u8]) -> (bool, bool, bool) {
     let mut maximized = false;
     let mut activated = false;
@@ -421,10 +473,46 @@ fn foreign_toplevel_poll_disconnect(revents: libc::c_short) -> Option<&'static s
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_toplevel_states, foreign_toplevel_poll_disconnect, policies_for_outputs,
-        ForeignToplevelProbe, PauseState, RuleAction, RuleSet, RuntimePolicy, ToplevelActivity,
-        ToplevelRecord,
+        decode_toplevel_states, foreign_toplevel_poll_disconnect, gnome_activities,
+        policies_for_outputs, ForeignToplevelProbe, PauseState, RuleAction, RuleSet, RuntimePolicy,
+        ToplevelActivity, ToplevelRecord,
     };
+
+    #[test]
+    fn gnome_window_states_keep_output_identity_and_rule_precedence() {
+        let (outputs, windows) = gnome_activities(vec![
+            ("DP-1".into(), false, true, false),
+            ("eDP-1".into(), true, false, false),
+            ("DP-1".into(), false, false, true),
+            ("".into(), true, true, true),
+        ]);
+        assert_eq!(outputs, ["DP-1", "eDP-1"]);
+        assert_eq!(windows.len(), 3, "unresolved output names are ignored");
+        let policies = policies_for_outputs(
+            RuleSet {
+                focused: RuleAction::Mute,
+                maximized: RuleAction::Pause,
+                fullscreen: RuleAction::Pause,
+            },
+            outputs,
+            &windows,
+        );
+        assert_eq!(policies["DP-1"], RuntimePolicy { pause: true, mute: false });
+        assert_eq!(policies["eDP-1"], RuntimePolicy { pause: false, mute: true });
+    }
+
+    #[test]
+    fn gnome_empty_window_reply_releases_previous_rules() {
+        let (outputs, windows) = gnome_activities(Vec::new());
+        assert!(outputs.is_empty());
+        assert!(windows.is_empty());
+        let policies = policies_for_outputs(
+            RuleSet { focused: RuleAction::Pause, ..RuleSet::default() },
+            outputs,
+            &windows,
+        );
+        assert!(policies.is_empty());
+    }
 
     #[test]
     fn foreign_toplevel_state_array_decodes_protocol_values() {
