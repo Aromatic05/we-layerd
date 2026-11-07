@@ -130,6 +130,7 @@ mod tests {
             show_settings: true,
             sidebar: None,
             detail_tab: DetailTab::Actions,
+            property_filter: Default::default(),
             playback_paused: false,
             playback_running: false,
             search_query: String::new(),
@@ -239,6 +240,7 @@ mod tests {
             show_settings: false,
             sidebar: None,
             detail_tab: DetailTab::Actions,
+            property_filter: Default::default(),
             playback_paused: false,
             playback_running: true,
             search_query: String::new(),
@@ -410,5 +412,161 @@ mod tests {
         assert_eq!(lines[1], "ctl status");
         assert_eq!(lines[2], format!("run --config {}", config.display()));
         fs::remove_dir_all(temp).expect("remove test directory");
+    }
+    fn property_test_app() -> App {
+        let nonce =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let temp =
+            std::env::temp_dir().join(format!("we-gui-property-{}-{nonce}", std::process::id()));
+        App {
+            entries: Vec::new(),
+            selected_id: None,
+            selected_schema: UserPropertySchema { entries: Vec::new() },
+            resolution_width: String::new(),
+            resolution_height: String::new(),
+            config_path: temp.join("config.toml"),
+            runtime_child: None,
+            viewport_width: 1280.0,
+            layerd_available: true,
+            launch_settings: LaunchSettings::default(),
+            ui_settings: test_ui_settings(),
+            show_settings: false,
+            sidebar: None,
+            detail_tab: DetailTab::Actions,
+            property_filter: Default::default(),
+            playback_paused: false,
+            playback_running: false,
+            search_query: String::new(),
+            type_filter: None,
+            filtered_entry_indices: Vec::new(),
+            panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(
+                Pane::Library,
+            )),
+            animated_previews: HashMap::new(),
+            gif_preview_desired: Default::default(),
+            gif_preview_loading: Default::default(),
+            gif_preview_failed: Default::default(),
+            gif_preview_generation: 0,
+            library_scroll_y: 0.0,
+            library_viewport_width: 860.0,
+            library_viewport_height: 720.0,
+            library_scan: Default::default(),
+            tray: None,
+            main_window_id: None,
+            theme: Theme::Dark,
+            runtime_shutdown: true,
+            outputs: Vec::new(),
+            selected_outputs: Default::default(),
+            running_source: None,
+            language: Language::English,
+            preferences_path: None,
+            runtime_status: RuntimeStatus::DaemonNotRunning,
+            autostart_enabled: false,
+            autostart_system_managed: false,
+            autostart_pending: false,
+            autostart_error: None,
+            preferences_generation: 0,
+            playlist_selected: None,
+            playlist_new_name_input: String::new(),
+            playlist_name_input: String::new(),
+            playlist_default_duration_input: String::new(),
+            playlist_entry_duration_inputs: Vec::new(),
+            runtime_playlist_active: None,
+            runtime_playlist_index: None,
+            runtime_outputs: Default::default(),
+            profile_selected: None,
+            profile_new_name_input: String::new(),
+            profile_name_input: String::new(),
+            scene_editor: crate::domain::scene_editor::SceneEditor::new(&LaunchSettings::default()),
+            legacy_shuffle: legacy_shuffle(),
+            playlist_migration_completed: true,
+        }
+    }
+
+    fn property_fixture(app: &mut App) {
+        let root = app.config_path.parent().unwrap().join("workshop");
+        for id in ["100", "200"] {
+            let directory = root.join(id);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                directory.join("project.json"),
+                r#"{"title":"Fixture","type":"scene","file":"scene.pkg","general":{"properties":{
+                "enabled":{"type":"bool","value":false},
+                "amount":{"type":"slider","value":1,"condition":"enabled.value"},
+                "image":{"type":"file","value":"base.png"},
+                "note":{"type":"text","text":"Instructions","value":"Read me"}
+            }}}"#,
+            )
+            .unwrap();
+        }
+        app.entries = we_core::wallpaper::scan_workshop_wallpapers(&root).unwrap();
+        app.entries.sort_by(|a, b| a.id.cmp(&b.id));
+        let _ = update::update(app, Message::SelectWallpaper(0));
+    }
+
+    #[test]
+    fn property_filters_are_transient_and_clear_preserves_internal_mode() {
+        use crate::ui::sidebar::detail::DetailMessage;
+        let mut app = property_test_app();
+        property_fixture(&mut app);
+        let before = std::fs::read(&app.config_path).unwrap();
+        let profiles = app.launch_settings.wallpapers.clone();
+        for message in [
+            DetailMessage::PropertySearchChanged("amount".into()),
+            DetailMessage::ModifiedPropertiesToggled(true),
+            DetailMessage::InternalPropertiesToggled(true),
+        ] {
+            let _ = super::detail_update::update(&mut app, message);
+        }
+        assert_eq!(app.property_filter.query, "amount");
+        assert!(app.property_filter.modified_only && app.property_filter.show_internal);
+        assert_eq!(app.launch_settings.wallpapers, profiles);
+        assert_eq!(std::fs::read(&app.config_path).unwrap(), before);
+        let _ = super::detail_update::update(&mut app, DetailMessage::ClearPropertyFilters);
+        assert!(app.property_filter.query.is_empty());
+        assert!(!app.property_filter.modified_only);
+        assert!(app.property_filter.show_internal);
+        assert_eq!(std::fs::read(&app.config_path).unwrap(), before);
+        // Selecting the same wallpaper preserves filters; switching wallpapers clears them.
+        let _ = update::update(&mut app, Message::SelectWallpaper(0));
+        assert!(app.property_filter.show_internal);
+        let _ = update::update(&mut app, Message::SelectWallpaper(1));
+        assert!(app.property_filter.query.is_empty());
+        assert!(!app.property_filter.modified_only && !app.property_filter.show_internal);
+        std::fs::remove_dir_all(app.config_path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn individual_reset_keeps_other_edits_and_global_reset_clears_hidden_and_unknown_overrides() {
+        use crate::ui::sidebar::detail::DetailMessage;
+        let mut app = property_test_app();
+        property_fixture(&mut app);
+        for (key, value) in [
+            ("amount", serde_json::json!(5)),
+            ("image", serde_json::json!("custom.png")),
+            ("unknown", serde_json::json!(true)),
+            ("enabled", serde_json::json!(false)),
+        ] {
+            let _ = super::detail_update::update(
+                &mut app,
+                DetailMessage::PropertyChanged { key: key.into(), value },
+            );
+        }
+        let _ =
+            super::detail_update::update(&mut app, DetailMessage::ResetProperty("amount".into()));
+        let profile = &app.launch_settings.wallpapers["100"];
+        assert!(!profile.user_properties.contains_key("amount"));
+        assert_eq!(profile.user_properties["image"], "custom.png");
+        assert_eq!(app.selected_schema.values_json(&profile.user_properties)["amount"], 1);
+        let persisted = we_core::config::load_launch_settings(&app.config_path).unwrap();
+        assert_eq!(persisted.wallpapers["100"].user_properties, profile.user_properties);
+        app.property_filter.query = "no matching rows".into();
+        app.property_filter.modified_only = true;
+        let _ = super::detail_update::update(&mut app, DetailMessage::ResetProperties);
+        assert!(app.launch_settings.wallpapers["100"].user_properties.is_empty());
+        assert!(we_core::config::load_launch_settings(&app.config_path).unwrap().wallpapers["100"]
+            .user_properties
+            .is_empty());
+        std::fs::remove_dir_all(app.config_path.parent().unwrap()).unwrap();
     }
 }

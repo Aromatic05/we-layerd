@@ -42,6 +42,11 @@ pub enum DetailMessage {
     PickPath { key: String, directory: bool },
     PathPicked { key: String, path: Option<String> },
     ResetProperties,
+    PropertySearchChanged(String),
+    ModifiedPropertiesToggled(bool),
+    InternalPropertiesToggled(bool),
+    ClearPropertyFilters,
+    ResetProperty(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +65,7 @@ pub struct DetailViewState<'a> {
     pub entry: &'a WallpaperEntry,
     pub settings: &'a WallpaperSettings,
     pub schema: &'a UserPropertySchema,
+    pub property_filter: &'a crate::domain::property_search::PropertyFilter,
     pub resolution_width: &'a str,
     pub resolution_height: &'a str,
     pub active_tab: DetailTab,
@@ -75,6 +81,7 @@ pub fn view(state: DetailViewState<'_>) -> Element<'_, DetailMessage> {
         entry,
         settings,
         schema,
+        property_filter,
         resolution_width,
         resolution_height,
         active_tab,
@@ -110,7 +117,9 @@ pub fn view(state: DetailViewState<'_>) -> Element<'_, DetailMessage> {
             selected_outputs,
             language,
         ),
-        DetailTab::UserProperties => properties::view(schema, settings, language),
+        DetailTab::UserProperties => {
+            properties::view(schema, settings, property_filter, &entry.id, language)
+        }
     };
 
     let actions = container(
@@ -150,24 +159,34 @@ pub fn view(state: DetailViewState<'_>) -> Element<'_, DetailMessage> {
     .width(Fill)
     .align_x(Horizontal::Right);
 
+    let mut content = column![
+        column![text(&entry.title).size(24), text(entry.id.as_str()).size(12)].spacing(4),
+        tabs,
+    ]
+    .spacing(18);
+    if active_tab == DetailTab::UserProperties {
+        content = content.push(properties::toolbar(schema, settings, property_filter, language));
+    }
     container(
-        column![
-            column![text(&entry.title).size(24), text(entry.id.as_str()).size(12)].spacing(4),
-            tabs,
-            scrollable(container(body).padding(iced::Padding {
-                top: 0.0,
-                right: 18.0,
-                bottom: 0.0,
-                left: 0.0
-            }))
-            .height(Fill)
-            .direction(iced::widget::scrollable::Direction::Vertical(
-                iced::widget::scrollable::Scrollbar::new().width(12).margin(6).scroller_width(6)
-            ))
-            .style(scrollbar::md_style),
-            actions,
-        ]
-        .spacing(18),
+        content
+            .push(
+                scrollable(container(body).padding(iced::Padding {
+                    top: 0.0,
+                    right: 18.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                }))
+                .id("detail.body")
+                .height(Fill)
+                .direction(iced::widget::scrollable::Direction::Vertical(
+                    iced::widget::scrollable::Scrollbar::new()
+                        .width(12)
+                        .margin(6)
+                        .scroller_width(6),
+                ))
+                .style(scrollbar::md_style),
+            )
+            .push(actions),
     )
     .width(Fill)
     .height(Fill)

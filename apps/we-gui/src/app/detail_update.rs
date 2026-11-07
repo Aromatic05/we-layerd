@@ -16,6 +16,23 @@ pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) ->
         return super::update::update(app, Message::PlayPressed);
     }
     match message {
+        DetailMessage::PropertySearchChanged(query) => {
+            app.property_filter.query = query;
+            return property_search_top();
+        }
+        DetailMessage::ModifiedPropertiesToggled(value) => {
+            app.property_filter.modified_only = value;
+            return property_search_top();
+        }
+        DetailMessage::InternalPropertiesToggled(value) => {
+            app.property_filter.show_internal = value;
+            return property_search_top();
+        }
+        DetailMessage::ClearPropertyFilters => {
+            app.property_filter.query.clear();
+            app.property_filter.modified_only = false;
+            return property_search_top();
+        }
         DetailMessage::SelectTab(tab) => {
             app.detail_tab = tab;
             return Task::none();
@@ -56,6 +73,10 @@ pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) ->
         | DetailMessage::TogglePlayback
         | DetailMessage::Stop
         | DetailMessage::ToggleOutput(_)
+        | DetailMessage::PropertySearchChanged(_)
+        | DetailMessage::ModifiedPropertiesToggled(_)
+        | DetailMessage::InternalPropertiesToggled(_)
+        | DetailMessage::ClearPropertyFilters
         | DetailMessage::SelectTab(_) => {
             unreachable!("detail action handled before profile mutation")
         }
@@ -93,6 +114,13 @@ pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) ->
         DetailMessage::PropertyChanged { key, value } => {
             profile.user_properties.insert(key, value);
         }
+        DetailMessage::ResetProperty(key) => {
+            if app.selected_schema.entries.iter().any(|property| {
+                property.key == key && crate::domain::property_search::is_editable(property)
+            }) {
+                profile.user_properties.remove(&key);
+            }
+        }
         DetailMessage::PathPicked { key, path } => {
             if let Some(path) = path {
                 profile.user_properties.insert(key, serde_json::Value::String(path));
@@ -108,6 +136,13 @@ pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) ->
         eprintln!("failed to save config: {error}");
     }
     Task::none()
+}
+
+fn property_search_top() -> Task<Message> {
+    iced::widget::operation::scroll_to(
+        "detail.body",
+        iced::widget::scrollable::AbsoluteOffset { x: Some(0.0), y: Some(0.0) },
+    )
 }
 
 fn sync_fixed_resolution(profile: &mut WallpaperSettings, width: &str, height: &str) {

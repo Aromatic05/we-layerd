@@ -19,6 +19,7 @@ pub struct UserProperty {
     pub precision: Option<u32>,
     pub options: Vec<UserPropertyOption>,
     pub order: f64,
+    pub condition: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,10 +92,10 @@ fn parse_entry(key: &str, descriptor: &Value) -> Option<UserProperty> {
         "slider" => UserPropertyKind::Slider,
         "combo" => UserPropertyKind::Combo,
         "color" => UserPropertyKind::Color,
-        "text" | "textinput" => UserPropertyKind::Text,
+        "textinput" => UserPropertyKind::Text,
         "file" | "replacetexture" | "texture" | "scenetexture" => UserPropertyKind::File,
         "directory" => UserPropertyKind::Directory,
-        "html" => UserPropertyKind::Html,
+        "html" | "text" => UserPropertyKind::Html,
         _ => UserPropertyKind::Unsupported(raw_kind),
     };
     let options = descriptor
@@ -128,6 +129,12 @@ fn parse_entry(key: &str, descriptor: &Value) -> Option<UserProperty> {
         precision: descriptor.get("precision").and_then(Value::as_u64).map(|value| value as u32),
         options,
         order: descriptor.get("order").and_then(Value::as_f64).unwrap_or_default(),
+        condition: descriptor
+            .get("condition")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|condition| !condition.is_empty())
+            .map(ToOwned::to_owned),
     })
 }
 
@@ -163,5 +170,39 @@ mod tests {
         .expect("schema should parse");
         let values = schema.values_json(&BTreeMap::from([("speed".to_owned(), json!(2.0))]));
         assert_eq!(values, json!({"enabled":true,"speed":2.0}));
+    }
+    #[test]
+    fn static_text_is_read_only_while_textinput_remains_editable() {
+        let schema = UserPropertySchema::from_project_json(
+            r#"{"general":{"properties":{
+            "label":{"type":"text","text":"<b>Instructions</b>","value":"Read me"},
+            "caption":{"type":"textinput","text":"Caption","value":"Hello"}
+        }}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            schema.entries.iter().find(|p| p.key == "label").unwrap().kind,
+            UserPropertyKind::Html
+        );
+        assert_eq!(
+            schema.entries.iter().find(|p| p.key == "caption").unwrap().kind,
+            UserPropertyKind::Text
+        );
+    }
+
+    #[test]
+    fn retains_display_conditions_and_distinguishes_static_labels_from_text_inputs() {
+        let schema = UserPropertySchema::from_project_json(r#"{"general":{"properties":{
+            "enabled":{"type":"bool","value":false},
+            "label":{"type":"text","text":"<b>Instructions</b>","value":""},
+            "caption":{"type":"textinput","text":"Caption","value":"Hello","condition":"enabled.value == true"}
+        }}}"#).unwrap();
+        let caption = schema.entries.iter().find(|p| p.key == "caption").unwrap();
+        assert_eq!(caption.condition.as_deref(), Some("enabled.value == true"));
+        assert_eq!(caption.kind, UserPropertyKind::Text);
+        assert_eq!(
+            schema.entries.iter().find(|p| p.key == "label").unwrap().kind,
+            UserPropertyKind::Html
+        );
     }
 }
