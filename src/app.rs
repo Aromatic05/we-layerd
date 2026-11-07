@@ -926,6 +926,37 @@ struct RuntimeLoopInputs<'a> {
     host_integrations: HostIntegrations,
 }
 
+// GNOME owns one renderer surface. GUI output bindings override the global source
+// fallback, except while a global playlist owns the current renderer selection.
+fn prepare_backend_source(cfg: &mut Config, backend: BackendKind) -> Result<()> {
+    if backend == BackendKind::Gnome && cfg.playlists.active.is_none() {
+        let selection = cfg.outputs.values().find_map(|binding| {
+            // Per-output playlists belong to the LayerShell orchestrator, not this fallback.
+            if binding.playlist.is_some() {
+                return None;
+            }
+            let wallpaper_id = binding.wallpaper_id.as_ref().filter(|id| !id.trim().is_empty())?;
+            let source = binding.source.as_ref().filter(|source| !source.trim().is_empty())?;
+            Some(PlaylistSelection {
+                index: 0,
+                wallpaper_id: wallpaper_id.clone(),
+                source: source.clone(),
+            })
+        });
+        if let Some(selection) = selection {
+            playlist::apply_selection_to_config(cfg, &selection)?;
+        }
+    }
+    if cfg.renderer.source.trim().is_empty()
+        && !(backend == BackendKind::LayerShell && !cfg.outputs.is_empty())
+    {
+        return Err(anyhow!(
+            "renderer.source is required when no per-output bindings are configured"
+        ));
+    }
+    Ok(())
+}
+
 fn run_runtime_loop(cfg: &Config, inputs: RuntimeLoopInputs<'_>) -> Result<RuntimeLoopExit> {
     let RuntimeLoopInputs {
         desired_cfg,
@@ -949,34 +980,7 @@ fn run_runtime_loop(cfg: &Config, inputs: RuntimeLoopInputs<'_>) -> Result<Runti
     }
 
     let backend = resolve_backend(&cfg);
-    // The GNOME backend pins a single renderer surface and cannot consume
-    // per-output bindings; adopt the first wallpaper binding (including its
-    // wallpaper profile: fps, volume, mute, fill mode...) so configs written
-    // for the LayerShell multi-output model still work.
-    if backend == BackendKind::Gnome {
-        if let Some(binding) = cfg
-            .outputs
-            .values()
-            .find(|binding| binding.source.is_some())
-            .cloned()
-        {
-            playlist::apply_selection_to_config(
-                &mut cfg,
-                &PlaylistSelection {
-                    index: 0,
-                    wallpaper_id: binding.wallpaper_id.unwrap_or_default(),
-                    source: binding.source.unwrap_or_default(),
-                },
-            )?;
-        }
-    }
-    if cfg.renderer.source.trim().is_empty()
-        && !(backend == BackendKind::LayerShell && !cfg.outputs.is_empty())
-    {
-        return Err(anyhow!(
-            "renderer.source is required when no per-output bindings are configured"
-        ));
-    }
+    prepare_backend_source(&mut cfg, backend)?;
 
     info!(
         backend = backend_name(backend),
@@ -1334,6 +1338,203 @@ mod tests {
     fn temp_config_path(label: &str) -> std::path::PathBuf {
         let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
         std::env::temp_dir().join(format!("we-layerd-{label}-{}-{suffix}.toml", std::process::id()))
+    }
+
+    #[test]
+    fn gnome_output_only_config_applies_the_selected_wallpaper_profile() {
+        let path = temp_config_path("gnome-output-profile");
+        fs::write(
+            &path,
+            r#"
+[general]
+backend = "gnome"
+[renderer]
+max_fps = 30
+[outputs.DP-1]
+wallpaper_id = "42"
+source = "/wallpapers/42"
+[wallpapers.42]
+fps = 48
+speed = 1.25
+volume = 0.125
+muted = true
+msaa_samples = 4
+fill_mode = "fit"
+rotation_degrees = "deg90"
+render_resolution = { fixed = { width = 800, height = 600 } }
+user_properties = { enabled = false }
+"#,
+        )
+        .unwrap();
+        let mut cfg = Config::load(Some(&path)).unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(cfg.renderer.source.is_empty());
+        // The same helper runs before backend creation; no Wayland or GNOME session needed.
+        super::prepare_backend_source(&mut cfg, crate::backend::traits::BackendKind::Gnome)
+            .unwrap();
+        assert_eq!(cfg.renderer.source, "/wallpapers/42");
+        assert_eq!(cfg.renderer.fps, 30);
+        assert_eq!(cfg.renderer.speed, 1.25);
+        assert_eq!(cfg.renderer.volume, 0.125);
+        assert!(cfg.renderer.muted);
+        assert_eq!(cfg.renderer.msaa_samples, 4);
+        assert_eq!(cfg.renderer.fill_mode, we_core::wallpaper::settings::WallpaperFillMode::Fit);
+        assert_eq!(cfg.renderer.rotation_degrees, 90);
+        assert_eq!((cfg.renderer.render_width, cfg.renderer.render_height), (Some(800), Some(600)));
+        let options: serde_json::Value =
+            serde_json::from_str(cfg.renderer.options_json.as_deref().unwrap()).unwrap();
+        assert_eq!(options["scene"]["userProperties"]["enabled"], false);
+    }
+
+    #[test]
+    fn gnome_output_binding_overrides_a_stale_global_fallback_and_its_settings() {
+        let mut cfg = Config::default();
+        cfg.renderer.source = "/wallpapers/global".into();
+        cfg.renderer.speed = 0.75;
+        cfg.renderer.volume = 0.25;
+        cfg.outputs.insert(
+            "DP-1".into(),
+            we_core::config::OutputBinding::wallpaper("42", "/wallpapers/42"),
+        );
+        cfg.wallpapers.insert(
+            "42".into(),
+            we_core::wallpaper::settings::WallpaperSettings {
+                muted: true,
+                speed: 2.0,
+                ..Default::default()
+            },
+        );
+        super::prepare_backend_source(&mut cfg, crate::backend::traits::BackendKind::Gnome)
+            .unwrap();
+        assert_eq!(cfg.renderer.source, "/wallpapers/42");
+        assert!(cfg.renderer.muted);
+        assert_eq!(cfg.renderer.speed, 2.0);
+        assert_eq!(cfg.renderer.volume, 1.0);
+    }
+
+    #[test]
+    fn gnome_without_an_eligible_binding_keeps_its_global_fallback() {
+        use we_core::config::OutputBinding;
+        for binding in [
+            OutputBinding::default(),
+            OutputBinding::playlist("Daily"),
+            OutputBinding { source: Some("/partial".into()), ..Default::default() },
+            OutputBinding::wallpaper("42", " "),
+            OutputBinding {
+                playlist: Some("Daily".into()),
+                ..OutputBinding::wallpaper("42", "/mixed")
+            },
+        ] {
+            let mut cfg = Config::default();
+            cfg.renderer.source = "/wallpapers/fallback".into();
+            cfg.renderer.volume = 0.125;
+            cfg.outputs.insert("DP-1".into(), binding);
+            let before = cfg.to_toml_pretty().unwrap();
+            super::prepare_backend_source(&mut cfg, crate::backend::traits::BackendKind::Gnome)
+                .unwrap();
+            assert_eq!(cfg.to_toml_pretty().unwrap(), before);
+        }
+        let mut cfg = Config::default();
+        cfg.renderer.source = "/wallpapers/fallback".into();
+        let before = cfg.to_toml_pretty().unwrap();
+        super::prepare_backend_source(&mut cfg, crate::backend::traits::BackendKind::Gnome)
+            .unwrap();
+        assert_eq!(cfg.to_toml_pretty().unwrap(), before);
+    }
+
+    #[test]
+    fn gnome_active_global_playlist_keeps_its_current_selection_despite_old_output_bindings() {
+        let mut cfg = Config::default();
+        cfg.playlists.active = Some("Daily".into());
+        cfg.outputs.insert(
+            "DP-1".into(),
+            we_core::config::OutputBinding::wallpaper("old", "/wallpapers/old"),
+        );
+        cfg.wallpapers.insert(
+            "current".into(),
+            we_core::wallpaper::settings::WallpaperSettings {
+                volume: 0.25,
+                speed: 1.5,
+                muted: true,
+                ..Default::default()
+            },
+        );
+        // Startup and playlist advancement apply selections through this same helper.
+        crate::runtime::playlist::apply_selection_to_config(
+            &mut cfg,
+            &crate::runtime::playlist::PlaylistSelection {
+                index: 1,
+                wallpaper_id: "current".into(),
+                source: "/wallpapers/current".into(),
+            },
+        )
+        .unwrap();
+        let before = cfg.to_toml_pretty().unwrap();
+        super::prepare_backend_source(&mut cfg, crate::backend::traits::BackendKind::Gnome)
+            .unwrap();
+        assert_eq!(cfg.to_toml_pretty().unwrap(), before);
+        assert_eq!(cfg.renderer.source, "/wallpapers/current");
+        assert_eq!(cfg.renderer.volume, 0.25);
+    }
+
+    #[test]
+    fn gnome_adoption_skips_incomplete_blank_and_playlist_bindings() {
+        use we_core::config::OutputBinding;
+        let invalid = [
+            OutputBinding::default(),
+            OutputBinding::playlist("Daily"),
+            OutputBinding { source: Some("/source-only".into()), ..Default::default() },
+            OutputBinding { wallpaper_id: Some("id-only".into()), ..Default::default() },
+            OutputBinding::wallpaper("", "/empty-id"),
+            OutputBinding::wallpaper("42", " \t"),
+            OutputBinding {
+                playlist: Some("Daily".into()),
+                ..OutputBinding::wallpaper("42", "/mixed")
+            },
+        ];
+        for binding in invalid {
+            let mut cfg = Config::default();
+            cfg.outputs.insert("A-invalid".into(), binding);
+            cfg.outputs.insert("B-valid".into(), OutputBinding::wallpaper("good", "/valid"));
+            cfg.outputs.insert("C-valid".into(), OutputBinding::wallpaper("later", "/later"));
+            cfg.wallpapers.insert(
+                "good".into(),
+                we_core::wallpaper::settings::WallpaperSettings {
+                    muted: true,
+                    ..Default::default()
+                },
+            );
+            super::prepare_backend_source(&mut cfg, crate::backend::traits::BackendKind::Gnome)
+                .unwrap();
+            assert_eq!(cfg.renderer.source, "/valid");
+            assert!(cfg.renderer.muted);
+        }
+    }
+
+    #[test]
+    fn gnome_without_a_usable_source_stays_rejected_and_layer_shell_keeps_its_bindings() {
+        use crate::backend::traits::BackendKind;
+        use we_core::config::OutputBinding;
+        for outputs in [
+            Default::default(),
+            [("DP-1".into(), OutputBinding::playlist("Daily"))].into(),
+            [(
+                "DP-1".into(),
+                OutputBinding { source: Some("/partial".into()), ..Default::default() },
+            )]
+            .into(),
+            [("DP-1".into(), OutputBinding::wallpaper("42", ""))].into(),
+        ] {
+            let mut cfg = Config { outputs, ..Config::default() };
+            let before = cfg.to_toml_pretty().unwrap();
+            assert!(super::prepare_backend_source(&mut cfg, BackendKind::Gnome).is_err());
+            assert_eq!(cfg.to_toml_pretty().unwrap(), before);
+        }
+        let mut cfg = Config::default();
+        cfg.outputs.insert("DP-1".into(), OutputBinding::wallpaper("42", "/wallpapers/42"));
+        let before = cfg.to_toml_pretty().unwrap();
+        super::prepare_backend_source(&mut cfg, BackendKind::LayerShell).unwrap();
+        assert_eq!(cfg.to_toml_pretty().unwrap(), before);
     }
 
     #[test]
