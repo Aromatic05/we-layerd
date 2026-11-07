@@ -51,6 +51,9 @@ class ManagedWindow {
         if (this._disposed || !this._window)
             return;
 
+        // skip_from_window_list keeps the window mapped when the user toggles
+        // "show desktop" (e.g. Super+D): mutter only hides regular windows.
+        this._window.hide_from_window_list?.();
         this._window.unmake_above();
         if (this._window.fullscreen)
             this._window.unmake_fullscreen();
