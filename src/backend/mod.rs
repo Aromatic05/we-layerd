@@ -62,6 +62,7 @@ mod tests {
         assert!(xml.contains(super::gnome::protocol::PING_METHOD));
         assert!(xml.contains(super::gnome::protocol::REGISTER_WINDOW_METHOD));
         assert!(xml.contains(super::gnome::protocol::UNREGISTER_WINDOW_METHOD));
+        assert!(xml.contains(super::gnome::protocol::GET_WINDOW_STATES_METHOD));
         assert!(xml.contains(super::gnome::protocol::WINDOW_BRIDGE_INTERFACE));
         assert!(xml.contains(super::gnome::protocol::VIDEO_BRIDGE_INTERFACE));
     }

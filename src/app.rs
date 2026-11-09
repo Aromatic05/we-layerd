@@ -895,7 +895,7 @@ fn resolve_backend_for_session(
     }
 }
 
-fn resolve_backend(cfg: &Config) -> BackendKind {
+pub(crate) fn resolve_backend(cfg: &Config) -> BackendKind {
     resolve_backend_for_session(cfg.general.backend, is_gnome_session())
 }
 

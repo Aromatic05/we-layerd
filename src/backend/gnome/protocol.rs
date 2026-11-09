@@ -8,3 +8,4 @@ pub(crate) const PING_METHOD: &str = "Ping";
 pub(crate) const REGISTER_WINDOW_METHOD: &str = "RegisterWindow";
 #[allow(dead_code)]
 pub(crate) const UNREGISTER_WINDOW_METHOD: &str = "UnregisterWindow";
+pub(crate) const GET_WINDOW_STATES_METHOD: &str = "GetWindowStates";
