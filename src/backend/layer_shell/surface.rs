@@ -689,11 +689,13 @@ pub(super) fn present_frame(
     } else {
         surface.damage(0, 0, i32::MAX, i32::MAX);
     }
-    let callback = surface.frame(qh, ());
+    if state.frame_callback.gated {
+        let callback = surface.frame(qh, ());
+        state.objects.frame_callback = Some(callback);
+        state.frame_callback.pending = true;
+        state.frame_callback.ready_for_next_frame = false;
+    }
     surface.commit();
-    state.objects.frame_callback = Some(callback);
-    state.frame_callback.pending = true;
-    state.frame_callback.ready_for_next_frame = false;
     state.frame_stats.presented = state.frame_stats.presented.saturating_add(1);
     state.frame_stats.in_flight_count = state.buffers.in_flight.len() + 1;
     state.buffers.in_flight.push(entry);

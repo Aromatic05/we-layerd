@@ -87,8 +87,8 @@ fn can_present_next_frame(state: &LayerShellState) -> bool {
     state.running
         && !state.pause_state.effective()
         && !state.stopping
-        && state.frame_callback.ready_for_next_frame
-        && !state.frame_callback.pending
+        && (!state.frame_callback.gated
+            || (state.frame_callback.ready_for_next_frame && !state.frame_callback.pending))
         && state.buffers.in_flight.len() < state.buffers.max_in_flight
 }
 
@@ -406,6 +406,7 @@ pub(crate) fn run_output_with_role(
             pending: false,
             ready_for_next_frame: true,
             last_done_msec: None,
+            gated: matches!(role, SurfaceRole::LayerShell),
         },
         frame_stats: Default::default(),
         diagnostics: RuntimeDiagnostics {
@@ -796,9 +797,17 @@ pub(crate) fn run_output_with_role(
 
 #[cfg(test)]
 mod tests {
-    use std::{os::fd::AsRawFd, os::unix::net::UnixStream};
+    use std::{
+        io::Write,
+        os::fd::AsRawFd,
+        os::unix::net::UnixStream,
+        time::{Duration, Instant},
+    };
 
-    use super::{poll_wayland, renderer_poll_events, LayerShellState};
+    use super::{
+        can_present_next_frame, frame_interval, poll_timeout, poll_wayland, renderer_poll_events,
+        LayerShellState,
+    };
     use crate::config::ScaleMode;
     use wayland_client::Connection;
 
@@ -854,5 +863,87 @@ mod tests {
         state.buffers.max_in_flight = 3;
         state.running = false;
         assert_eq!(renderer_poll_events(&state), 0);
+    }
+
+    #[test]
+    fn layer_shell_waits_for_callbacks_but_occluded_xdg_windows_keep_the_render_clock() {
+        let mut state = LayerShellState::test_default(ScaleMode::Cover);
+        state.frame_callback.pending = true;
+        state.frame_callback.ready_for_next_frame = false;
+        let now = Instant::now();
+        let deadline = now + frame_interval(50);
+
+        assert!(!can_present_next_frame(&state));
+        assert_eq!(renderer_poll_events(&state), 0);
+        assert_eq!(poll_timeout(now, deadline, &state), 100);
+
+        // Mutter can withhold frame callbacks while this output's renderer is
+        // occluded. Only XDG windows ignore that clock, never buffer ownership.
+        state.frame_callback.gated = false;
+        assert!(can_present_next_frame(&state));
+        assert_eq!(renderer_poll_events(&state), libc::POLLIN);
+        assert_eq!(poll_timeout(now, deadline, &state), 20);
+        assert_eq!(poll_timeout(deadline, deadline, &state), 0);
+        // Even without a redraw notification, the next render tick has a finite
+        // deadline rather than waiting indefinitely for a compositor callback.
+        assert_eq!(poll_timeout(deadline, deadline + frame_interval(50), &state), 20);
+
+        state.frame_callback.gated = true;
+        state.frame_callback.pending = false;
+        state.frame_callback.ready_for_next_frame = true;
+        assert!(can_present_next_frame(&state));
+    }
+
+    #[test]
+    fn ungated_frame_notifications_do_not_spin_while_paused_stopping_or_backpressured() {
+        let mut state = LayerShellState::test_default(ScaleMode::Cover);
+        state.frame_callback.gated = false;
+        state.frame_callback.pending = true;
+        state.frame_callback.ready_for_next_frame = false;
+        let (client, mut producer) = UnixStream::pair().unwrap();
+        let now = Instant::now();
+        let deadline = now + frame_interval(50);
+        let poll_frame_ready = |state: &LayerShellState| {
+            let mut fds = [
+                libc::pollfd { fd: -1, events: 0, revents: 0 },
+                libc::pollfd {
+                    fd: client.as_raw_fd(),
+                    events: renderer_poll_events(state),
+                    revents: 0,
+                },
+            ];
+            poll_wayland(&mut fds, 0).unwrap()
+        };
+        // With no redraw, the notification fd stays quiet; the timeout supplies
+        // the render clock. A queued frame wakes an active, occluded XDG window.
+        assert_eq!(poll_frame_ready(&state), 0);
+        assert_eq!(poll_timeout(now, deadline, &state), 20);
+        producer.write_all(&[1]).unwrap();
+        assert_eq!(poll_frame_ready(&state), 1);
+
+        for manually_paused in [true, false] {
+            state.pause_state.set_manual(manually_paused);
+            state.pause_state.set_rule(!manually_paused);
+            assert!(!can_present_next_frame(&state));
+            assert_eq!(poll_frame_ready(&state), 0);
+            assert_eq!(poll_timeout(deadline, now, &state), 100);
+        }
+        state.pause_state.set_rule(false);
+        assert_eq!(poll_frame_ready(&state), 1);
+
+        state.buffers.max_in_flight = state.buffers.in_flight.len();
+        assert!(!can_present_next_frame(&state));
+        assert_eq!(poll_frame_ready(&state), 0);
+        assert_eq!(poll_timeout(deadline, now, &state), 100);
+        state.buffers.max_in_flight = 3;
+        state.stopping = true;
+        assert_eq!(poll_frame_ready(&state), 0);
+        state.stopping = false;
+        state.running = false;
+        assert_eq!(poll_frame_ready(&state), 0);
+        // The same unread notification is available after resuming presentation.
+        state.running = true;
+        assert_eq!(poll_frame_ready(&state), 1);
+        assert_eq!(poll_timeout(now, now + Duration::from_millis(20), &state), 20);
     }
 }

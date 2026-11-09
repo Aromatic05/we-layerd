@@ -127,6 +127,10 @@ pub(super) struct FrameCallbackState {
     pub(super) pending: bool,
     pub(super) ready_for_next_frame: bool,
     pub(super) last_done_msec: Option<u32>,
+    /// Layer-shell presentation waits for compositor frame callbacks. GNOME
+    /// XDG windows instead use the render interval: callbacks can stop while
+    /// the original window is occluded even though its background clone is used.
+    pub(super) gated: bool,
 }
 
 pub(super) struct BufferBookkeeping {
@@ -421,7 +425,7 @@ impl LayerShellState {
             input_proxy: None,
             last_input_region: None,
             buffers: BufferBookkeeping::default(),
-            frame_callback: FrameCallbackState::default(),
+            frame_callback: FrameCallbackState { gated: true, ..FrameCallbackState::default() },
             frame_stats: FrameStats::default(),
             diagnostics: RuntimeDiagnostics::default(),
             dmabuf_feedback: DmabufFeedbackState::default(),
