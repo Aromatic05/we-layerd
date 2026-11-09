@@ -10,6 +10,7 @@ class ManagedWindow {
         this._signals = [];
         this._disposed = false;
         this._lowerLaterId = 0;
+        this._hiddenFromWindowList = false;
 
         this._signals.push(window.connect_after('shown', () => {
             if (this._disposed)
@@ -53,7 +54,10 @@ class ManagedWindow {
 
         // skip_from_window_list keeps the window mapped when the user toggles
         // "show desktop" (e.g. Super+D): mutter only hides regular windows.
-        this._window.hide_from_window_list?.();
+        if (this._window.hide_from_window_list && this._window.show_in_window_list) {
+            this._window.hide_from_window_list();
+            this._hiddenFromWindowList = true;
+        }
         this._window.unmake_above();
         if (this._window.fullscreen)
             this._window.unmake_fullscreen();
@@ -88,6 +92,10 @@ class ManagedWindow {
             this._window.disconnect(signal);
         });
         this._signals = [];
+        if (this._hiddenFromWindowList) {
+            this._window.show_in_window_list();
+            this._hiddenFromWindowList = false;
+        }
         this._window = null;
     }
 }

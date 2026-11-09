@@ -11,11 +11,14 @@ class WindowStub {
         this.above = true;
         this.minimized = false;
         this.hiddenFromWindowList = false;
+        this.restoreCount = 0;
         this.signals = new Map();
         this.nextSignal = 1;
         this.lowerCount = 0;
-        if (!nativeWindowList)
+        if (!nativeWindowList) {
             this.hide_from_window_list = undefined;
+            this.show_in_window_list = undefined;
+        }
     }
 
     connect(signal, callback) {
@@ -40,6 +43,7 @@ class WindowStub {
     stick() { this.sticky = true; }
     lower() { ++this.lowerCount; }
     hide_from_window_list() { this.hiddenFromWindowList = true; }
+    show_in_window_list() { this.hiddenFromWindowList = false; ++this.restoreCount; }
     get_title() { return 'Renderer'; }
     get_pid() { return 123; }
 }
@@ -127,6 +131,9 @@ test('show desktop excludes the renderer while minimizing ordinary windows', asy
     wallpaper.emit('shown');
     assert.equal(wallpaper.hiddenFromWindowList, true);
     shell.manager.disable();
+    assert.equal(wallpaper.hiddenFromWindowList, false);
+    assert.equal(wallpaper.restoreCount, 1);
+    assert.equal(ordinary.restoreCount, 0);
 });
 
 test('older shells without the native hide API still enforce fullscreen and minimize recovery', async () => {
@@ -148,9 +155,14 @@ test('disable and unregister disconnect callbacks and cancel deferred lowering',
     assert.equal(wallpaper.signals.size, 0);
     assert.equal(shell.timeouts.size, 0);
     assert.equal(wallpaper.managed, null);
+    assert.equal(wallpaper.hiddenFromWindowList, false);
+    assert.equal(wallpaper.restoreCount, 1);
     matches = true;
     shell.manager.refreshMatches();
+    assert.equal(wallpaper.hiddenFromWindowList, true);
     shell.manager.disable();
+    assert.equal(wallpaper.hiddenFromWindowList, false);
+    assert.equal(wallpaper.restoreCount, 2);
     assert.equal(wallpaper.signals.size, 0);
     assert.equal(shell.timeouts.size, 0);
     wallpaper.fullscreen = true;
