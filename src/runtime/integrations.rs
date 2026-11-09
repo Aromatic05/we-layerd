@@ -842,13 +842,11 @@ enum ToplevelMonitor {
 }
 
 impl ToplevelMonitor {
-    fn poll(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<(Vec<String>, Vec<ToplevelActivity>), anyhow::Error> {
+    fn poll(&mut self) -> Result<(Vec<String>, Vec<ToplevelActivity>), anyhow::Error> {
         match self {
-            Self::Foreign(monitor) => monitor.poll(timeout),
-            Self::Gnome(monitor) => monitor.poll(timeout),
+            // The wlr poll wakes on events; the GNOME monitor sleeps before each D-Bus query.
+            Self::Foreign(monitor) => monitor.poll(Duration::from_millis(250)),
+            Self::Gnome(monitor) => monitor.poll(Duration::from_millis(50)),
         }
     }
 }
@@ -914,7 +912,7 @@ fn spawn_rule_collector(
                     }
                 }
 
-                let result = monitor.as_mut().expect("monitor").poll(Duration::from_millis(250));
+                let result = monitor.as_mut().expect("monitor").poll();
                 match result {
                     Ok((outputs, toplevels)) => {
                         shared.update_rules(

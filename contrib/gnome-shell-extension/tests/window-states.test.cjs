@@ -24,7 +24,7 @@ function window(options = {}) {
 
 function states(windows, focus = windows[0], target = {pid: 50, title: 'Renderer', wmClass: 'renderer'}) {
     const context = vm.createContext({
-        Extension: class {}, Meta: {WindowType: {NORMAL: 0, DIALOG: 2, MODAL_DIALOG: 3}},
+        Extension: class {}, Meta: {WindowType: {NORMAL: 0, DESKTOP: 1, DOCK: 2, DIALOG: 3, MODAL_DIALOG: 4}},
         global: {
             display: {list_all_windows: () => windows, get_focus_window: () => focus},
             workspace_manager: {get_active_workspace: () => 'active'},
@@ -53,7 +53,7 @@ test('inactive workspaces, minimized windows, renderer and non-normal windows ar
     const hidden = window({active: false, maximized: true});
     const minimized = window({visible: false, fullscreen: true});
     const renderer = window({pid: 50, title: 'Renderer', wmClass: 'renderer'});
-    assert.deepEqual(states([normal, sticky, hidden, minimized, renderer, window({type: 1})], normal), [
+    assert.deepEqual(states([normal, sticky, hidden, minimized, renderer, window({type: 1}), window({type: 2})], normal), [
         ['eDP-1', true, false, false], ['eDP-1', false, false, false],
     ]);
 });
@@ -63,7 +63,7 @@ test('unregistered renderer does not publish rule activity', () => {
 });
 
 test('focus on application dialogs remains active for focused-window rules', () => {
-    for (const type of [2, 3]) {
+    for (const type of [3, 4]) {
         const parent = window();
         const dialog = window({pid: 11, type});
         assert.deepEqual(states([parent, dialog], dialog), [
