@@ -1083,6 +1083,40 @@ fn handle_runtime_control_command(
     }
 }
 
+fn renderer_source_doctor_line(cfg: &Config, backend: BackendKind) -> String {
+    let mut effective = cfg.clone();
+    if backend == BackendKind::Gnome {
+        let preparation = (|| -> Result<()> {
+            // The runtime selects the global playlist before preparing the GNOME backend.
+            if effective.playlists.active.is_some() {
+                let mut playlist_runtime = PlaylistRuntime::new(effective.playlists.clone(), 0);
+                if let Some(selection) =
+                    select_initial_playlist_item(&mut playlist_runtime, Instant::now())
+                {
+                    playlist::apply_selection_to_config(&mut effective, &selection)?;
+                }
+            }
+            prepare_backend_source(&mut effective, backend)
+        })();
+        if let Err(error) = preparation {
+            return format!("ERR renderer.source = {error}");
+        }
+    }
+
+    let source_path = expand_tilde(&effective.renderer.source);
+    if effective.renderer.source.trim().is_empty() {
+        if effective.outputs.is_empty() {
+            "ERR renderer.source = empty".to_string()
+        } else {
+            format!("OK renderer.source = per-output bindings ({})", effective.outputs.len())
+        }
+    } else if source_path.is_dir() {
+        format!("OK renderer.source = {}", source_path.display())
+    } else {
+        format!("ERR renderer.source = missing {}", source_path.display())
+    }
+}
+
 pub fn doctor(config_path: Option<&Path>) -> Result<()> {
     let (cfg, loaded_from) = load_doctor_config(config_path)?;
     let mut lines = Vec::new();
@@ -1133,18 +1167,7 @@ pub fn doctor(config_path: Option<&Path>) -> Result<()> {
         Err(err) => lines.push(format!("ERR renderer_library = {err}")),
     }
 
-    let source_path = expand_tilde(&cfg.renderer.source);
-    if cfg.renderer.source.trim().is_empty() {
-        if cfg.outputs.is_empty() {
-            lines.push("ERR renderer.source = empty".to_string());
-        } else {
-            lines.push(format!("OK renderer.source = per-output bindings ({})", cfg.outputs.len()));
-        }
-    } else if source_path.is_dir() {
-        lines.push(format!("OK renderer.source = {}", source_path.display()));
-    } else {
-        lines.push(format!("ERR renderer.source = missing {}", source_path.display()));
-    }
+    lines.push(renderer_source_doctor_line(&cfg, backend));
 
     for (output, binding) in &cfg.outputs {
         if binding.is_ambiguous() {
@@ -1338,6 +1361,61 @@ mod tests {
     fn temp_config_path(label: &str) -> std::path::PathBuf {
         let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
         std::env::temp_dir().join(format!("we-layerd-{label}-{}-{suffix}.toml", std::process::id()))
+    }
+
+    #[test]
+    fn doctor_uses_gnome_output_source_instead_of_stale_global_fallback() {
+        use crate::backend::traits::BackendKind;
+        use we_core::config::OutputBinding;
+
+        let path = temp_config_path("doctor-gnome-source");
+        fs::create_dir_all(&path).unwrap();
+        let mut cfg = Config::default();
+        cfg.renderer.source = "/missing/stale-wallpaper".into();
+        cfg.outputs.insert("DP-1".into(), OutputBinding::wallpaper("42", path.to_string_lossy()));
+        assert_eq!(
+            super::renderer_source_doctor_line(&cfg, BackendKind::Gnome),
+            format!("OK renderer.source = {}", path.display())
+        );
+        assert!(super::renderer_source_doctor_line(&cfg, BackendKind::LayerShell)
+            .contains("/missing/stale-wallpaper"));
+        assert_eq!(cfg.renderer.source, "/missing/stale-wallpaper");
+
+        cfg.outputs.insert("DP-1".into(), OutputBinding::playlist("Daily"));
+        cfg.renderer.source.clear();
+        assert!(super::renderer_source_doctor_line(&cfg, BackendKind::Gnome)
+            .starts_with("ERR renderer.source = renderer.source is required"));
+        fs::remove_dir(&path).unwrap();
+    }
+
+    #[test]
+    fn doctor_keeps_active_global_playlist_ahead_of_gnome_output_bindings() {
+        use crate::backend::traits::BackendKind;
+        use we_core::{config::OutputBinding, playlist::PlaylistItem};
+
+        let path = temp_config_path("doctor-gnome-playlist");
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("project.json"), "{}").unwrap();
+        let mut cfg = Config::default();
+        cfg.playlists.active = Some("Daily".into());
+        cfg.playlists.definitions.insert(
+            "Daily".into(),
+            Playlist {
+                items: vec![PlaylistItem {
+                    wallpaper_id: "current".into(),
+                    source: path.to_string_lossy().into_owned(),
+                    duration_ms: None,
+                }],
+                ..Default::default()
+            },
+        );
+        cfg.outputs.insert("DP-1".into(), OutputBinding::wallpaper("old", "/missing/stale-output"));
+        assert_eq!(
+            super::renderer_source_doctor_line(&cfg, BackendKind::Gnome),
+            format!("OK renderer.source = {}", path.display())
+        );
+        assert!(cfg.renderer.source.is_empty());
+        fs::remove_dir_all(&path).unwrap();
     }
 
     #[test]
