@@ -207,10 +207,13 @@ pub(crate) fn view<'a>(
                 iced::widget::tooltip::Position::Top,
             ));
         }
+        let current = settings.user_properties.get(&property.key).unwrap_or(&property.default);
         if matched.decorative {
-            let current = settings.user_properties.get(&property.key).unwrap_or(&property.default);
-            content = content.push(text(value_text(current)).size(12).style(text::secondary));
-        } else {
+            if !current.is_null() {
+                content = content.push(text(value_text(current)).size(12).style(text::secondary));
+            }
+        } else if has_renderable_body(property, current) {
+            // Informational text/HTML entries can contain only a label with no value.
             content = content.push(control(property, settings, language));
         }
         properties = properties.push(
@@ -399,6 +402,10 @@ fn text_control<'a>(
         .into()
 }
 
+fn has_renderable_body(property: &UserProperty, value: &Value) -> bool {
+    !matches!(property.kind, UserPropertyKind::Html) || !value.is_null()
+}
+
 fn value_text(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
@@ -437,6 +444,23 @@ mod tests {
             return Some(tree.state.downcast_mut::<InputState>());
         }
         tree.children.iter_mut().find_map(input_state)
+    }
+
+    #[test]
+    fn informational_text_without_value_keeps_its_label_without_null_body() {
+        let schema = UserPropertySchema::from_project_json(
+            r#"{"general":{"properties":{
+                "instructions":{"type":"text","text":"Instructions","order":1},
+                "readme":{"type":"html","text":"Read me","value":"<b>Details</b>","order":2},
+                "caption":{"type":"textinput","text":"Caption","order":3}
+            }}}"#,
+        )
+        .unwrap();
+        assert_eq!(schema.entries[0].kind, UserPropertyKind::Html);
+        assert_eq!(schema.entries[0].label, "Instructions");
+        assert!(!has_renderable_body(&schema.entries[0], &schema.entries[0].default));
+        assert!(has_renderable_body(&schema.entries[1], &schema.entries[1].default));
+        assert!(has_renderable_body(&schema.entries[2], &schema.entries[2].default));
     }
 
     #[test]
