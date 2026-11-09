@@ -105,6 +105,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             show_settings: false,
             sidebar: None,
             detail_tab: DetailTab::Actions,
+            property_filter: Default::default(),
             playback_paused: false,
             playback_running: false,
             search_query: String::new(),

@@ -6,6 +6,19 @@ use super::{App, Message};
 
 pub(crate) fn subscription(app: &App) -> Subscription<Message> {
     let mut subscriptions = vec![
+        iced::keyboard::listen().filter_map(|event| {
+            let iced::keyboard::Event::KeyPressed { key, modifiers, .. } = event else {
+                return None;
+            };
+            match key {
+                iced::keyboard::Key::Character(value)
+                    if modifiers.command() && value.eq_ignore_ascii_case("f") =>
+                {
+                    Some(Message::FocusSearch)
+                }
+                _ => None,
+            }
+        }),
         window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
         window::open_events().map(Message::WindowOpened),
         window::close_events().map(Message::WindowClosed),

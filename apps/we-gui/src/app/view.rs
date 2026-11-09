@@ -84,6 +84,7 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
                     .get(&entry.id)
                     .expect("selected wallpaper must have a profile"),
                 schema: &app.selected_schema,
+                property_filter: &app.property_filter,
                 resolution_width: &app.resolution_width,
                 resolution_height: &app.resolution_height,
                 active_tab: app.detail_tab,

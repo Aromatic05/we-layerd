@@ -7,7 +7,7 @@ license = "GPL-2.0-or-later"
 [dependencies]
 dark-light = "1.1"
 ctrlc = "3.4"
-iced = { version = "0.14", features = ["tokio", "image", "svg"] }
+iced = { version = "0.14", features = ["tokio", "image", "svg", "advanced"] }
 image_rs = { package = "image", version = "0.25", default-features = false, features = ["gif"] }
 html2text = "0.14"
 resvg = "0.42"

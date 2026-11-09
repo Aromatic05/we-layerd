@@ -86,6 +86,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             refresh_visible_gif_previews(app)
         }
         Message::Detail(message) => super::detail_update::update(app, message),
+        Message::FocusSearch => {
+            let id = if app.sidebar == Some(Sidebar::Detail)
+                && app.detail_tab == wallpaper_detail::DetailTab::UserProperties
+            {
+                "detail.properties.search"
+            } else {
+                "library.search"
+            };
+            iced::widget::operation::focus(id)
+        }
         Message::PlayPressed => play_selected(app, PlaybackStart::SwitchOrStart),
         Message::StopPressed => {
             let stopped = app.shutdown_runtime();
@@ -1063,6 +1073,9 @@ fn select_wallpaper(app: &mut App, index: usize, show_details: bool) -> bool {
         return false;
     };
 
+    if app.selected_id.as_deref() != Some(entry.id.as_str()) {
+        app.property_filter = Default::default();
+    }
     app.selected_id = Some(entry.id.clone());
     app.selected_schema = UserPropertySchema::from_project_file(&entry.project_json)
         .unwrap_or(UserPropertySchema { entries: Vec::new() });
