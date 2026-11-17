@@ -1,3 +1,4 @@
+use crate::ui::theme::colors;
 use iced::{
     widget::{button, column, container, pick_list, row, scrollable, text, text_input},
     Background, Border, Color, Element, Fill, Theme,
@@ -20,7 +21,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         RuntimeStatus::PlaylistError(_) | RuntimeStatus::ConfigSaveFailed(_) => container(
             text(language.runtime_status(&app.runtime_status))
                 .size(12)
-                .color(Color::from_rgb8(255, 180, 171)),
+                .color(colors().error),
         )
         .padding(8)
         .style(entry_style)
@@ -167,7 +168,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                     output_statuses.join(" · ")
                 ))
                 .size(12)
-                .color(Color::from_rgb8(174, 198, 255))
+                .color(colors().accent)
             } else if app.runtime_playlist_active.as_deref() == Some(name) {
                 let current = app
                     .runtime_playlist_index
@@ -177,7 +178,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                     .unwrap_or_else(|| language.text(Text::ActivePlaylist).to_string());
                 text(format!("{} · {current}", language.text(Text::ActivePlaylist)))
                     .size(12)
-                    .color(Color::from_rgb8(174, 198, 255))
+                    .color(colors().accent)
             } else {
                 text("").size(12)
             };
@@ -302,15 +303,15 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 
 fn playlist_button_style(selected: bool, status: button::Status) -> button::Style {
     let background = if selected {
-        Color::from_rgb8(65, 83, 116)
+        colors().accent_container
     } else if matches!(status, button::Status::Hovered) {
-        Color::from_rgb8(54, 56, 62)
+        colors().hover
     } else {
         Color::TRANSPARENT
     };
     button::Style {
         background: Some(Background::Color(background)),
-        text_color: Color::from_rgb8(225, 228, 235),
+        text_color: colors().fg,
         border: Border { radius: 10.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -318,15 +319,15 @@ fn playlist_button_style(selected: bool, status: button::Status) -> button::Styl
 
 fn entry_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(36, 37, 42))),
-        border: Border { radius: 12.0.into(), width: 1.0, color: Color::from_rgb8(72, 74, 82) },
+        background: Some(Background::Color(colors().card_bg)),
+        border: Border { radius: 12.0.into(), width: 1.0, color: colors().border },
         ..Default::default()
     }
 }
 
 fn sidebar_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(29, 30, 34))),
+        background: Some(Background::Color(colors().sidebar_bg)),
         ..Default::default()
     }
 }

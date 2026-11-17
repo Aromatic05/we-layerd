@@ -1,7 +1,8 @@
+use crate::ui::theme::colors;
 use iced::{
     alignment::Horizontal,
     widget::{container, pane_grid, stack, text},
-    window, Color, Element, Fill,
+    window, Element, Fill,
 };
 
 use crate::{
@@ -43,7 +44,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                     )
                 )
                 .size(18)
-                .color(Color::from_rgb8(255, 180, 171)),
+                .color(colors().error),
             )
             .width(Fill)
             .align_x(Horizontal::Center)

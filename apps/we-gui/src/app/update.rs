@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use iced::{window, Task};
+use iced::{widget::pane_grid, window, Task};
 use we_core::config::{load_launch_settings, OutputBinding};
 use we_core::profile::{
     apply_profile_to_outputs, create_profile, delete_profile, rename_playlist_references,
@@ -34,6 +34,19 @@ use super::{
 };
 
 const MAX_CONCURRENT_GIF_DECODES: usize = 2;
+const MIN_LIBRARY_WIDTH: f32 = 360.0;
+const MIN_SIDEBAR_WIDTH: f32 = 320.0;
+
+fn clamp_library_ratio(viewport_width: f32, ratio: f32) -> f32 {
+    let width = viewport_width.max(1.0);
+    let min_ratio = MIN_LIBRARY_WIDTH / width;
+    let max_ratio = 1.0 - MIN_SIDEBAR_WIDTH / width;
+    if min_ratio > max_ratio {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        ratio.clamp(min_ratio, max_ratio)
+    }
+}
 
 pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
@@ -145,9 +158,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             ])
         }
         Message::PaneResized(event) => {
-            let ratio = event.ratio.clamp(0.45, 0.82);
+            let ratio = clamp_library_ratio(app.viewport_width, event.ratio);
             app.panes.resize(event.split, ratio);
-            app.library_viewport_width = (app.viewport_width * ratio).max(180.0);
+            app.library_viewport_width = (app.viewport_width * ratio).max(MIN_LIBRARY_WIDTH);
             refresh_visible_gif_previews(app)
         }
         Message::AssetsPathChanged(value) => {
@@ -814,6 +827,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::WindowResized(size) => {
             app.viewport_width = size.width;
             app.library_viewport_height = size.height.max(1.0);
+            if let pane_grid::Node::Split { id, ratio, .. } = app.panes.layout() {
+                let (id, ratio) = (*id, clamp_library_ratio(size.width, *ratio));
+                app.panes.resize(id, ratio);
+                app.library_viewport_width = (size.width * ratio).max(MIN_LIBRARY_WIDTH);
+            }
             if app.sidebar.is_none() {
                 app.library_viewport_width = size.width.max(180.0);
             }
@@ -834,6 +852,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             if super::signal::take_shutdown_request() {
                 return Task::done(Message::ExitRequested);
             }
+            if crate::platform::single_instance::take_show_request() {
+                return Task::done(Message::TrayAction(tray::TrayAction::ShowWindow));
+            }
             if let Some(tray) = app.tray.as_mut() {
                 if let Some(action) = tray.poll_action() {
                     return Task::done(Message::TrayAction(action));
@@ -842,7 +863,10 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ThemeTick => {
-            app.theme = super::init::detect_system_theme();
+            // Only swap the theme when the desktop appearance actually changed.
+            if let Some(theme) = crate::ui::theme::palette::refresh() {
+                app.theme = theme;
+            }
             Task::none()
         }
         Message::ExitRequested => exit_application(app),
@@ -851,7 +875,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 if let Some(id) = app.main_window_id {
                     return window::gain_focus(id);
                 }
-                let (_id, task) = window::open(window::Settings::default());
+                let (_id, task) = window::open(super::init::window_settings());
                 task.map(Message::WindowOpened)
             }
             tray::TrayAction::PlaySwitch => Task::done(Message::PlayPressed),
@@ -876,9 +900,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
 }
 
 fn exit_application(app: &mut App) -> Task<Message> {
-    if !app.shutdown_owned_runtime() {
-        eprintln!("failed to stop GUI-owned daemon while exiting we-gui");
-    }
+    app.release_owned_runtime();
+    crate::platform::single_instance::release();
     iced::exit()
 }
 
@@ -1894,9 +1917,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        daemon_status_supports_multi_output, effective_playback_start, parse_output_runtime_states,
-        playlist_stop_can_be_persisted, preferred_output_targets, status_section_value,
-        PlaybackStart,
+        clamp_library_ratio, daemon_status_supports_multi_output, effective_playback_start,
+        parse_output_runtime_states, playlist_stop_can_be_persisted, preferred_output_targets,
+        status_section_value, PlaybackStart, MIN_LIBRARY_WIDTH, MIN_SIDEBAR_WIDTH,
     };
 
     #[test]
@@ -2033,5 +2056,19 @@ playlist_index = -1
             "[orchestrator]\nphase = \"running\"\nmulti_output = true\n"
         ));
         assert!(!daemon_status_supports_multi_output("[orchestrator]\nphase = \"running\"\n"));
+    }
+
+    #[test]
+    fn library_split_ratio_keeps_both_panes_usable() {
+        let width = 1024.0;
+        let library_min = MIN_LIBRARY_WIDTH / width;
+        let sidebar_max = 1.0 - MIN_SIDEBAR_WIDTH / width;
+
+        assert_eq!(clamp_library_ratio(width, 0.6), 0.6);
+        assert_eq!(clamp_library_ratio(width, 0.1), library_min);
+        assert_eq!(clamp_library_ratio(width, 0.9), sidebar_max);
+
+        // A window too narrow for both minimums keeps the requested ratio.
+        assert_eq!(clamp_library_ratio(400.0, 0.9), 0.9);
     }
 }

@@ -128,14 +128,16 @@ impl App {
         stopped
     }
 
-    pub(crate) fn shutdown_owned_runtime(&mut self) -> bool {
+    /// Quitting the GUI must not take the wallpaper down with it: the daemon
+    /// runs detached and only the explicit Stop action ends it. Forget the
+    /// child handle (dropping a `Child` never kills the process).
+    pub(crate) fn release_owned_runtime(&mut self) {
         if self.runtime_shutdown {
-            return true;
+            return;
         }
         self.runtime_shutdown = true;
-        let stopped = crate::services::runtime::stop_owned(&mut self.runtime_child);
-        self.clear_playback_state();
-        stopped
+        let _ = crate::services::runtime::reap(&mut self.runtime_child);
+        self.runtime_child = None;
     }
 
     pub(crate) fn clear_playback_state(&mut self) {
@@ -150,7 +152,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        let _ = self.shutdown_owned_runtime();
+        self.release_owned_runtime();
     }
 }
 

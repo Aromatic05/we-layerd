@@ -1,3 +1,4 @@
+use crate::ui::theme::colors;
 use iced::{
     widget::{button, checkbox, column, container, pick_list, row, slider, text, text_input},
     Alignment, Background, Border, Color, Element, Fill,
@@ -346,7 +347,7 @@ fn control<'a>(
                     border: Border {
                         radius: 5.0.into(),
                         width: 1.0,
-                        color: Color::from_rgb8(100, 102, 108)
+                        color: colors().outline
                     },
                     ..Default::default()
                 }),
@@ -428,7 +429,7 @@ fn color_preview(value: &Value) -> Color {
             values[2].clamp(0.0, 1.0),
         )
     } else {
-        Color::from_rgb8(100, 102, 108)
+        colors().outline
     }
 }
 

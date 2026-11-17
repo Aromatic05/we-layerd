@@ -169,15 +169,18 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
                 async { crate::services::autostart::status() },
                 Message::AutostartStatusLoaded,
             ),
-            window::open(window::Settings::default()).1.map(Message::WindowOpened),
+            window::open(window_settings()).1.map(Message::WindowOpened),
         ]),
     )
 }
 
 pub(crate) fn detect_system_theme() -> Theme {
-    match dark_light::detect() {
-        dark_light::Mode::Light => Theme::Light,
-        dark_light::Mode::Dark => Theme::Dark,
-        dark_light::Mode::Default => Theme::Dark,
+    crate::ui::theme::palette::current_theme()
+}
+
+pub(crate) fn window_settings() -> window::Settings {
+    window::Settings {
+        min_size: Some(iced::Size::new(720.0, 480.0)),
+        ..window::Settings::default()
     }
 }

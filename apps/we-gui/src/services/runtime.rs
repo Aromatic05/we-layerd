@@ -73,7 +73,17 @@ pub fn send_output_playlist_action(output: &str, action: &str) -> bool {
 }
 
 pub fn start(config_path: &Path) -> std::io::Result<Child> {
-    layerd_command()?.arg("run").arg("--config").arg(config_path).spawn()
+    let mut command = layerd_command()?;
+    command.arg("run").arg("--config").arg(config_path).stdin(Stdio::null());
+    // Run the daemon in its own process group so it outlives the GUI: a
+    // Ctrl+C or hangup aimed at we-gui (e.g. from a terminal) must not stop
+    // the wallpaper.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command.spawn()
 }
 
 pub fn restart(config_path: &Path, child: &mut Option<Child>) -> Result<Option<Child>, String> {
@@ -155,27 +165,6 @@ pub fn stop(child: &mut Option<Child>) -> bool {
         stopped = true;
     }
     stopped || !daemon_is_running()
-}
-
-pub fn stop_owned(child: &mut Option<Child>) -> bool {
-    let Some(mut child) = child.take() else {
-        return true;
-    };
-
-    if child.try_wait().map_or(true, |status| status.is_some()) {
-        return true;
-    }
-
-    let _ = send_control("stop");
-    for _ in 0..3 {
-        if child.try_wait().map_or(true, |status| status.is_some()) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    true
 }
 
 pub fn daemon_is_running() -> bool {
