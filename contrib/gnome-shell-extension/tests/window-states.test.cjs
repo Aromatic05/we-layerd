@@ -19,14 +19,22 @@ function window(options = {}) {
         maximized_horizontally: options.maximized ?? false,
         maximized_vertically: options.maximized ?? false,
         is_fullscreen: () => options.fullscreen ?? false,
+        get_frame_rect: () => options.frame ?? {x: 100, y: 100, width: 800, height: 600},
     };
 }
 
-function states(windows, focus = windows[0], target = {pid: 50, title: 'Renderer', wmClass: 'renderer'}) {
+function states(windows, focus = windows[0], target = {pid: 50, title: 'Renderer', wmClass: 'renderer'}, locked = false) {
     const context = vm.createContext({
+        Main: {sessionMode: {isLocked: locked}},
         Extension: class {}, Meta: {WindowType: {NORMAL: 0, DESKTOP: 1, DOCK: 2, DIALOG: 3, MODAL_DIALOG: 4}},
         global: {
-            display: {list_all_windows: () => windows, get_focus_window: () => focus},
+            display: {
+                list_all_windows: () => windows,
+                get_focus_window: () => focus,
+                get_monitor_geometry: index => (index === 3
+                    ? {x: 1920, y: 0, width: 2560, height: 1440}
+                    : {x: 0, y: 0, width: 1920, height: 1080}),
+            },
             workspace_manager: {get_active_workspace: () => 'active'},
             backend: {get_monitor_manager: () => ({get_logical_monitors: () => [
                 {get_number: () => 3, get_monitors: () => [{get_connector: () => 'HDMI-A-1'}]},
@@ -35,7 +43,7 @@ function states(windows, focus = windows[0], target = {pid: 50, title: 'Renderer
         },
     });
     const extension = vm.runInContext(`${source}\nnew WeLayerdExtension()`, context);
-    extension._target = target;
+    extension._targets = new Map(target ? [[1, target]] : []);
     return JSON.parse(JSON.stringify(extension.GetWindowStates()));
 }
 
@@ -70,4 +78,17 @@ test('focus on application dialogs remains active for focused-window rules', () 
             ['eDP-1', false, false, false], ['eDP-1', true, false, false],
         ]);
     }
+});
+
+test('a borderless window covering its whole monitor counts as fullscreen', () => {
+    const borderless = window({monitor: 3, frame: {x: 1920, y: 0, width: 2560, height: 1440}});
+    const almost = window({frame: {x: 0, y: 32, width: 1920, height: 1048}});
+    assert.deepEqual(states([borderless, almost], borderless), [
+        ['HDMI-A-1', true, false, true], ['eDP-1', false, false, false],
+    ]);
+});
+
+test('no window pauses or mutes the wallpaper while the screen is locked', () => {
+    const game = window({fullscreen: true});
+    assert.deepEqual(states([game], game, undefined, true), []);
 });

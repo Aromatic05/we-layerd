@@ -10,6 +10,14 @@
       <arg type="s" name="wm_class" direction="in"/>
       <arg type="b" name="accepted" direction="out"/>
     </method>
+    <method name="RegisterOutputWindow">
+      <arg type="u" name="id" direction="in"/>
+      <arg type="u" name="pid" direction="in"/>
+      <arg type="s" name="title" direction="in"/>
+      <arg type="s" name="wm_class" direction="in"/>
+      <arg type="s" name="connector" direction="in"/>
+      <arg type="b" name="accepted" direction="out"/>
+    </method>
     <method name="UnregisterWindow">
       <arg type="u" name="xid" direction="in"/>
       <arg type="b" name="removed" direction="out"/>
