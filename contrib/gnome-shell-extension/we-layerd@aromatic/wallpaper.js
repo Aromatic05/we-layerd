@@ -159,12 +159,16 @@ export const LiveWallpaper = GObject.registerClass(
             const scaleX = width / monitor.width;
             const scaleY = height / monitor.height;
             const [x, y, clipWidth, clipHeight] = bounds;
-            this._roundedClip.setClip(width, height, [
+            this._roundedClip.setBounds([
                 x * scaleX,
                 y * scaleY,
                 (x + clipWidth) * scaleX,
                 (y + clipHeight) * scaleY,
-            ], content.rounded_clip_radius ?? 0);
+            ]);
+            // The radius is in monitor pixels too; keep it proportionally
+            // round on the (possibly scaled) preview actor.
+            this._roundedClip.setClipRadius(
+                (content.rounded_clip_radius ?? 0) * Math.min(scaleX, scaleY));
         }
 
         _disconnectCloneSource() {
