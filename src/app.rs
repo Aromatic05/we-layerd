@@ -729,7 +729,7 @@ fn schedule_config_reconfigure_guarded(
         *guard = serialized;
     }
     if let Ok(mut state) = runtime_state.lock() {
-        if resolve_backend(&next_cfg) == BackendKind::LayerShell {
+        if resolve_backend(&next_cfg).supports_multi_output() {
             state.live_reconfigure(&next_cfg);
         } else {
             state.begin_switch(&next_cfg);
@@ -836,7 +836,7 @@ impl RuntimeState {
             "[orchestrator]".to_string(),
             format!("backend = \"{}\"", backend_name(self.backend)),
             format!("phase = \"{}\"", self.phase.as_str()),
-            format!("multi_output = {}", self.backend == BackendKind::LayerShell),
+            format!("multi_output = {}", self.backend.supports_multi_output()),
             format!("generation = {}", self.generation),
             format!("source = {:?}", self.source),
         ];

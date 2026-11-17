@@ -18,6 +18,10 @@ use wayland_client::{
     },
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1},
+    wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+};
 use wayland_protocols::wp::{
     fractional_scale::v1::client::wp_fractional_scale_v1::{
         Event as FractionalScaleEvent, WpFractionalScaleV1,
@@ -343,6 +347,16 @@ impl Dispatch<WlOutput, ()> for LayerShellState {
                 state.output.output_scale = factor.max(1) as u32;
                 state.update_render_extent();
             }
+            wl_output::Event::Geometry { transform: WEnum::Value(transform), .. } => {
+                state.output.output_mode_rotated = matches!(
+                    transform,
+                    wl_output::Transform::_90
+                        | wl_output::Transform::_270
+                        | wl_output::Transform::Flipped90
+                        | wl_output::Transform::Flipped270
+                );
+                state.update_render_extent();
+            }
             _ => {}
         }
     }
@@ -398,10 +412,19 @@ impl Dispatch<WlSeat, ()> for LayerShellState {
                 != 0;
             if has_pointer && state.objects.pointer.is_none() {
                 state.clear_pointer_input();
-                state.objects.pointer = Some(seat.get_pointer(qh, ()));
+                let pointer = seat.get_pointer(qh, ());
+                state.objects.cursor_shape_device = state
+                    .objects
+                    .cursor_shape_manager
+                    .as_ref()
+                    .map(|manager| manager.get_pointer(&pointer, qh, ()));
+                state.objects.pointer = Some(pointer);
             } else if !has_pointer {
                 state.pointer_left();
                 state.pointer_surface = None;
+                if let Some(device) = state.objects.cursor_shape_device.take() {
+                    device.destroy();
+                }
                 if let Some(pointer) = state.objects.pointer.take() {
                     release_wayland_pointer(pointer);
                 }
@@ -419,6 +442,13 @@ impl Dispatch<WlPointer, ()> for LayerShellState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        // Always claim the default arrow, interactive or not: a surface that never sets a cursor
+        // inherits whatever cursor the compositor showed last.
+        if let wl_pointer::Event::Enter { serial, .. } = &event {
+            if let Some(device) = &state.objects.cursor_shape_device {
+                device.set_shape(*serial, Shape::Default);
+            }
+        }
         if !state.interactive {
             return;
         }
@@ -558,6 +588,8 @@ delegate_noop!(LayerShellState: ignore WlShmPool);
 delegate_noop!(LayerShellState: ignore ZwpLinuxBufferParamsV1);
 delegate_noop!(LayerShellState: ignore WpViewporter);
 delegate_noop!(LayerShellState: ignore WpViewport);
+delegate_noop!(LayerShellState: ignore WpCursorShapeManagerV1);
+delegate_noop!(LayerShellState: ignore WpCursorShapeDeviceV1);
 delegate_noop!(
     LayerShellState: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1
 );
@@ -817,13 +849,15 @@ pub(super) fn init_wayland(
             state.objects.layer_surface = Some(layer_surface);
             input_proxy::create(state, qh, &layer_shell, viewporter.as_ref())?;
         }
-        SurfaceRole::XdgToplevel { title, app_id } => {
+        SurfaceRole::XdgToplevel { title, app_id, fullscreen } => {
             let wm_base = xdg_wm_base.ok_or_else(|| anyhow!("xdg_wm_base unavailable"))?;
             let xdg_surface = wm_base.get_xdg_surface(surface, qh, ());
             let toplevel = xdg_surface.get_toplevel(qh, ());
             toplevel.set_title(title.to_string());
             toplevel.set_app_id(app_id.to_string());
-            toplevel.set_fullscreen(state.objects.output.as_ref());
+            if fullscreen {
+                toplevel.set_fullscreen(state.objects.output.as_ref());
+            }
             state.objects.xdg_wm_base = Some(wm_base);
             state.objects.xdg_surface = Some(xdg_surface);
             state.objects.xdg_toplevel = Some(toplevel);

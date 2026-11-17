@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     path::Path,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     thread,
@@ -14,7 +14,12 @@ use tracing::{info, warn};
 use we_core::config::OutputBinding;
 
 use crate::{
-    backend::{layer_shell::event_loop, traits::BackendContext, wayland_common::outputs},
+    backend::{
+        gnome::{dbus as gnome_dbus, window_bridge},
+        layer_shell::event_loop,
+        traits::BackendContext,
+        wayland_common::{outputs, surface_role::SurfaceRole},
+    },
     config::Config,
     ipc::{ControlCommand, OutputPlaylistAction, OutputPlaylistRequest, RuntimeLoopExit},
     runtime::{
@@ -24,6 +29,17 @@ use crate::{
 };
 
 static WORKER_INSTANCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static GNOME_WINDOW_REGISTRATION_SEQUENCE: AtomicU32 = AtomicU32::new(1);
+
+/// How each per-output worker presents its renderer surface.
+#[derive(Debug, Clone)]
+pub(crate) enum WorkerSurface {
+    /// A wlr layer-shell background surface bound to the output.
+    LayerShell,
+    /// A GNOME XDG toplevel registered with the we-layerd Shell extension,
+    /// which pins it to the output's monitor and clones it into the background.
+    GnomeWindow { bus_name: String },
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputSpec {
@@ -233,14 +249,27 @@ struct WorkerExit {
     error: Option<String>,
 }
 
-pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
+pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
+    run_with_surface(ctx, WorkerSurface::LayerShell)
+}
+
+pub(crate) fn run_with_surface(
+    mut ctx: BackendContext<'_>,
+    surface: WorkerSurface,
+) -> Result<RuntimeLoopExit> {
     let (worker_event_tx, worker_event_rx) = mpsc::channel::<WorkerExit>();
     let output_playlist_rx = ctx.output_playlist_rx.take();
     let mut workers = BTreeMap::<String, OutputWorker>::new();
     let mut failed_start_retries = BTreeMap::<String, FailedStartRetry>::new();
     let mut last_discovery = Instant::now() - Duration::from_secs(2);
 
-    reconcile_live_workers(&mut ctx, &mut workers, &mut failed_start_retries, &worker_event_tx)?;
+    reconcile_live_workers(
+        &mut ctx,
+        &mut workers,
+        &mut failed_start_retries,
+        &worker_event_tx,
+        &surface,
+    )?;
 
     loop {
         if ctx.shutdown_requested.load(Ordering::Relaxed) {
@@ -277,6 +306,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                         &mut workers,
                         &mut failed_start_retries,
                         &worker_event_tx,
+                        &surface,
                     )?;
                 }
                 ControlCommand::Reconfigure => {
@@ -285,6 +315,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                         &mut workers,
                         &mut failed_start_retries,
                         &worker_event_tx,
+                        &surface,
                     )?;
                 }
             }
@@ -298,6 +329,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                         &mut workers,
                         &mut failed_start_retries,
                         &worker_event_tx,
+                        &surface,
                     ) {
                         let _ = request.reply.send(Err(error.to_string()));
                         continue;
@@ -354,6 +386,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                 &mut workers,
                 &mut failed_start_retries,
                 &worker_event_tx,
+                &surface,
             ) {
                 warn!(%error, "failed to reconcile layer-shell outputs; keeping existing workers");
             }
@@ -368,6 +401,7 @@ fn reconcile_live_workers(
     workers: &mut BTreeMap<String, OutputWorker>,
     failed_start_retries: &mut BTreeMap<String, FailedStartRetry>,
     worker_event_tx: &mpsc::Sender<WorkerExit>,
+    surface: &WorkerSurface,
 ) -> Result<()> {
     let discovered = outputs::list_output_names()?;
     let desired_config = ctx
@@ -411,6 +445,7 @@ fn reconcile_live_workers(
                         ctx.shutdown_requested.clone(),
                         ctx.host_integrations.clone(),
                         worker_event_tx.clone(),
+                        surface.clone(),
                     ) {
                         Ok(worker) => {
                             failed_start_retries.remove(&output);
@@ -437,6 +472,7 @@ fn reconcile_live_workers(
                         ctx.shutdown_requested.clone(),
                         ctx.host_integrations.clone(),
                         worker_event_tx.clone(),
+                        surface.clone(),
                     ) {
                         Ok(worker) => {
                             failed_start_retries.remove(&output);
@@ -503,6 +539,7 @@ fn spawn_worker(
     shutdown_requested: Arc<AtomicBool>,
     host_integrations: crate::runtime::integrations::HostIntegrations,
     worker_event_tx: mpsc::Sender<WorkerExit>,
+    surface: WorkerSurface,
 ) -> Result<OutputWorker> {
     let output_name = spec.output_name.clone();
     let instance_id = WORKER_INSTANCE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -525,6 +562,33 @@ fn spawn_worker(
         .name(format!("we-layerd-output-{output_name}"))
         .spawn(move || {
             info!(output = %worker_output, "starting output runtime worker");
+            let gnome_window_title = window_bridge::output_window_title(&worker_output);
+            // Keep the extension registration alive for the whole worker so the
+            // window keeps its monitor pin across in-place renderer restarts.
+            let _gnome_registration = match &surface {
+                WorkerSurface::LayerShell => None,
+                WorkerSurface::GnomeWindow { bus_name } => {
+                    match gnome_dbus::register_output_window(
+                        bus_name,
+                        GNOME_WINDOW_REGISTRATION_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+                        std::process::id(),
+                        &gnome_window_title,
+                        window_bridge::RENDERER_APP_ID,
+                        &worker_output,
+                    ) {
+                        Ok(registration) => Some(registration),
+                        Err(error) => {
+                            worker_stop_scheduler.store(true, Ordering::Relaxed);
+                            let _ = worker_event_tx.send(WorkerExit {
+                                output: worker_output,
+                                instance_id,
+                                error: Some(error.to_string()),
+                            });
+                            return;
+                        }
+                    }
+                }
+            };
             let result = loop {
                 if worker_shutdown.load(Ordering::Relaxed) {
                     break Ok(RuntimeLoopExit::Stop);
@@ -556,7 +620,21 @@ fn spawn_worker(
                     output_playlist_rx: None,
                     status_sink: &mut sink,
                 };
-                match event_loop::run_output(worker_context, &worker_output) {
+                let run_result = match &surface {
+                    WorkerSurface::LayerShell => {
+                        event_loop::run_output(worker_context, &worker_output)
+                    }
+                    WorkerSurface::GnomeWindow { .. } => event_loop::run_output_with_role(
+                        worker_context,
+                        &worker_output,
+                        SurfaceRole::XdgToplevel {
+                            title: &gnome_window_title,
+                            app_id: window_bridge::RENDERER_APP_ID,
+                            fullscreen: false,
+                        },
+                    ),
+                };
+                match run_result {
                     Ok(RuntimeLoopExit::RestartCurrent | RuntimeLoopExit::Reconfigure) => continue,
                     Ok(RuntimeLoopExit::Stop) => break Ok(RuntimeLoopExit::Stop),
                     Err(error) => break Err(error),

@@ -12,6 +12,10 @@ use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_callback::WlCallback, wl_compositor::WlCompositor, wl_output::WlOutput,
     wl_pointer::WlPointer, wl_shm::WlShm, wl_surface::WlSurface,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+    wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+};
 use wayland_protocols::wp::{
     fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
     linux_dmabuf::zv1::client::{
@@ -109,6 +113,11 @@ pub(super) struct WaylandObjects {
     pub(super) compositor: Option<WlCompositor>,
     pub(super) surface: Option<WlSurface>,
     pub(super) pointer: Option<WlPointer>,
+    /// wp_cursor_shape_v1 lets the wallpaper ask for the default arrow on pointer enter.
+    /// Without a cursor of its own, GNOME keeps showing whatever cursor was active before the
+    /// pointer reached the desktop (for example a window move/resize cursor).
+    pub(super) cursor_shape_manager: Option<WpCursorShapeManagerV1>,
+    pub(super) cursor_shape_device: Option<WpCursorShapeDeviceV1>,
     pub(super) output: Option<WlOutput>,
     pub(super) viewport: Option<WpViewport>,
     pub(super) layer_surface: Option<ZwlrLayerSurfaceV1>,
