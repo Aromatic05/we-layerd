@@ -25,6 +25,12 @@
     <method name="GetWindowStates">
       <arg type="a(sbbb)" name="states" direction="out"/>
     </method>
+    <method name="ShowBackgroundMenu">
+      <arg type="s" name="connector" direction="in"/>
+      <arg type="d" name="x" direction="in"/>
+      <arg type="d" name="y" direction="in"/>
+      <arg type="b" name="shown" direction="out"/>
+    </method>
   </interface>
   <interface name="io.github.weLayerd.Gnome.VideoBridge">
     <method name="StartVideo"/>

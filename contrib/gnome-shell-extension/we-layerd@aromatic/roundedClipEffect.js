@@ -19,9 +19,9 @@
 // Shell extension. The debug border and debounced logging were dropped; the
 // shader and the Mutter-derived texture mapping are kept as-is.
 
+import Clutter from 'gi://Clutter';
 import Cogl from 'gi://Cogl';
 import GObject from 'gi://GObject';
-import Shell from 'gi://Shell';
 
 // Adapted from the Mutter project.
 // See <https://gitlab.gnome.org/GNOME/mutter/-/blob/main/src/compositor/meta-background-content.c>.
@@ -120,7 +120,10 @@ function getFboOffset(actor) {
 }
 
 export const RoundedClipEffect = GObject.registerClass(
-    class WeLayerdRoundedClipEffect extends Shell.GLSLEffect {
+    // Clutter.ShaderEffect, not Shell.GLSLEffect: GNOME Shell 51 no longer
+    // ships Shell.GLSLEffect, and extending it threw at module load, which
+    // left the whole extension in the ERROR state.
+    class WeLayerdRoundedClipEffect extends Clutter.ShaderEffect {
         constructor() {
             super();
             this._bounds = [0, 0, 0, 0];
@@ -133,13 +136,8 @@ export const RoundedClipEffect = GObject.registerClass(
             this._textureOffsetY = 0;
         }
 
-        vfunc_build_pipeline() {
-            this.add_glsl_snippet(
-                Cogl.SnippetHook.FRAGMENT,
-                DECLARATIONS,
-                CODE,
-                false
-            );
+        vfunc_get_static_snippet() {
+            return Cogl.Snippet.new(Cogl.SnippetHook.FRAGMENT, DECLARATIONS, CODE);
         }
 
         // The shader compares texture coordinates (converted to texture pixels
@@ -185,13 +183,13 @@ export const RoundedClipEffect = GObject.registerClass(
             this._textureOffsetY = offsetY;
 
             this.set_uniform_float(
-                this.get_uniform_location('pixel_step'),
+                'pixel_step',
                 2,
                 [1.0 / width, 1.0 / height]
             );
             const [x1, y1, x2, y2] = this._bounds;
             this.set_uniform_float(
-                this.get_uniform_location('bounds'),
+                'bounds',
                 4,
                 [
                     (x1 - offsetX) * scale,
@@ -201,7 +199,7 @@ export const RoundedClipEffect = GObject.registerClass(
                 ]
             );
             this.set_uniform_float(
-                this.get_uniform_location('clip_radius'),
+                'clip_radius',
                 1,
                 [this._clipRadius * scale]
             );
