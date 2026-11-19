@@ -8,6 +8,7 @@ pub(crate) const REGISTER_WINDOW_METHOD: &str = "RegisterWindow";
 pub(crate) const UNREGISTER_WINDOW_METHOD: &str = "UnregisterWindow";
 pub(crate) const GET_WINDOW_STATES_METHOD: &str = "GetWindowStates";
 pub(crate) const REGISTER_OUTPUT_WINDOW_METHOD: &str = "RegisterOutputWindow";
+pub(crate) const SHOW_BACKGROUND_MENU_METHOD: &str = "ShowBackgroundMenu";
 
 /// First extension bridge revision that accepts one registered renderer window
 /// per output and pins each window to its connector's monitor.

@@ -450,6 +450,9 @@ pub(crate) fn run_output_with_role(
         configured: false,
         session: None,
         interactive: cfg.general.interactive,
+        gnome_menu_bus: matches!(role, SurfaceRole::XdgToplevel { .. })
+            .then(|| cfg.gnome.extension_dbus_name.clone()),
+        desktop_pointer: None,
         // GNOME uses a native XDG window and not a layer-shell input proxy.
         input_mode: if matches!(role, SurfaceRole::XdgToplevel { .. }) {
             we_core::config::InputMode::Direct

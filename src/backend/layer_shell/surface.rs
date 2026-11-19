@@ -433,6 +433,59 @@ impl Dispatch<WlSeat, ()> for LayerShellState {
     }
 }
 
+/// Linux evdev code of the secondary (right) mouse button.
+const BTN_RIGHT: u32 = 0x111;
+
+/// Tracks the pointer over a GNOME renderer window and turns a right-click into
+/// GNOME Shell's desktop background menu. Returns true when the event was
+/// consumed. The D-Bus call runs on its own thread so the render loop never
+/// waits for the shell.
+fn handle_desktop_menu_event(state: &mut LayerShellState, event: &wl_pointer::Event) -> bool {
+    let on_wallpaper = |state: &LayerShellState, surface: &WlSurface| {
+        state.objects.surface.as_ref().is_some_and(|wallpaper| wallpaper.id() == surface.id())
+    };
+    match event {
+        wl_pointer::Event::Enter { surface, surface_x, surface_y, .. } => {
+            state.desktop_pointer =
+                on_wallpaper(state, surface).then_some((*surface_x, *surface_y));
+            false
+        }
+        wl_pointer::Event::Leave { .. } => {
+            state.desktop_pointer = None;
+            false
+        }
+        wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            if state.desktop_pointer.is_some() {
+                state.desktop_pointer = Some((*surface_x, *surface_y));
+            }
+            false
+        }
+        wl_pointer::Event::Button { button, state: button_state, .. } if *button == BTN_RIGHT => {
+            let Some((x, y)) = state.desktop_pointer else {
+                return false;
+            };
+            if matches!(button_state, WEnum::Value(wl_pointer::ButtonState::Pressed)) {
+                if let Some(bus) = state.gnome_menu_bus.clone() {
+                    let connector = state.output_name.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("we-layerd-desktop-menu".to_string())
+                        .spawn(move || {
+                            if let Err(error) = crate::backend::gnome::dbus::show_background_menu(
+                                &bus, &connector, x, y,
+                            ) {
+                                tracing::debug!(%error, "desktop background menu unavailable");
+                            }
+                        });
+                }
+            }
+            // Consume both press and release so the wallpaper never sees a
+            // dangling secondary-button press.
+            true
+        }
+        _ => false,
+    }
+}
+
 impl Dispatch<WlPointer, ()> for LayerShellState {
     fn event(
         state: &mut Self,
@@ -448,6 +501,9 @@ impl Dispatch<WlPointer, ()> for LayerShellState {
             if let Some(device) = &state.objects.cursor_shape_device {
                 device.set_shape(*serial, Shape::Default);
             }
+        }
+        if state.gnome_menu_bus.is_some() && handle_desktop_menu_event(state, &event) {
+            return;
         }
         if !state.interactive {
             return;

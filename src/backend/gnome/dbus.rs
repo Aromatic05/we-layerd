@@ -17,6 +17,19 @@ pub(crate) fn ping_extension(bus_name: &str) -> Result<String> {
         .map_err(|_| extension_unreachable_error())
 }
 
+/// Asks the extension to open GNOME Shell's desktop background menu at the
+/// monitor-local logical position (x, y) on `connector`. The renderer window
+/// covers the desktop, so GNOME's own background never sees the right-click.
+pub(crate) fn show_background_menu(bus_name: &str, connector: &str, x: f64, y: f64) -> Result<bool> {
+    let connection = Connection::session().map_err(|_| extension_unreachable_error())?;
+    let proxy =
+        Proxy::new(&connection, bus_name, protocol::OBJECT_PATH, protocol::WINDOW_BRIDGE_INTERFACE)
+            .map_err(|_| extension_unreachable_error())?;
+    proxy
+        .call(protocol::SHOW_BACKGROUND_MENU_METHOD, &(connector, x, y))
+        .context("failed to open the GNOME background menu")
+}
+
 /// Queries the extension for (output, activated, maximized, fullscreen) of
 /// every regular toplevel so window rules can run without wlr protocols.
 pub(crate) fn get_window_states(
