@@ -20,6 +20,8 @@ pub(crate) struct UiSettings {
     pub rule_focused: RuntimeRuleAction,
     pub rule_maximized: RuntimeRuleAction,
     pub rule_fullscreen: RuntimeRuleAction,
+    pub rule_all_outputs: bool,
+    pub rule_fullscreen_all_outputs: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

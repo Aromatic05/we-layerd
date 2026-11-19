@@ -273,6 +273,20 @@ pub fn build_settings_overlay<'a>(
             .menu_style(md_menu_style),
         )
         .id("settings.rules.fullscreen"),
+        container(
+            checkbox(ui_settings.rule_fullscreen_all_outputs)
+                .label(language.text(Text::FullscreenRuleAllOutputs))
+                .on_toggle(Message::FullscreenAllOutputsToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.rules.fullscreen-all-outputs"),
+        container(
+            checkbox(ui_settings.rule_all_outputs)
+                .label(language.text(Text::RulesApplyToAllOutputs))
+                .on_toggle(Message::RulesAllOutputsToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.rules.all-outputs"),
         section_title(language.text(Text::IntegrationRuntimeStatus)),
         integration_runtime_view(runtime_status),
         section_title(language.text(Text::RendererDiagnostics)),

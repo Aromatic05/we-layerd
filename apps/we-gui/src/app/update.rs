@@ -109,7 +109,22 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             };
             iced::widget::operation::focus(id)
         }
-        Message::PlayPressed => play_selected(app, PlaybackStart::SwitchOrStart),
+        Message::PlayPressed => {
+            let warnings = aspect_mismatch_warnings(app);
+            if !warnings.is_empty() {
+                app.aspect_confirm = Some(warnings);
+                return Task::none();
+            }
+            play_selected(app, PlaybackStart::SwitchOrStart)
+        }
+        Message::AspectConfirmApply => {
+            app.aspect_confirm = None;
+            play_selected(app, PlaybackStart::SwitchOrStart)
+        }
+        Message::AspectConfirmCancel => {
+            app.aspect_confirm = None;
+            Task::none()
+        }
         Message::StopPressed => {
             let stopped = app.shutdown_runtime();
             app.runtime_status =
@@ -286,6 +301,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::FullscreenRuleSelected(value) => {
             app.ui_settings.rule_fullscreen = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::RulesAllOutputsToggled(value) => {
+            app.ui_settings.rule_all_outputs = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::FullscreenAllOutputsToggled(value) => {
+            app.ui_settings.rule_fullscreen_all_outputs = value;
             persist_host_integration_settings(app);
             Task::none()
         }
@@ -803,6 +828,18 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::StatusTick => Task::perform(runtime::fetch_status(), Message::StatusLoaded),
+        Message::OutputGeometryLoaded(result) => {
+            match result {
+                Ok(outputs) => {
+                    app.output_geometry = outputs
+                        .into_iter()
+                        .map(|output| (output.name, (output.width, output.height)))
+                        .collect();
+                }
+                Err(error) => eprintln!("we-gui: could not read display sizes: {error}"),
+            }
+            Task::none()
+        }
         Message::OutputsLoaded(result) => {
             if let Ok(outputs) = result {
                 app.outputs = outputs;
@@ -1690,6 +1727,10 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
         app.runtime_status = RuntimeStatus::DaemonNotFound;
         return Task::none();
     }
+    // A manual pause survives config switches; applying a wallpaper means play it.
+    if app.playback_paused && runtime::send_control("resume") {
+        app.playback_paused = false;
+    }
 
     let multi_output = multi_output_mode(app);
     if !multi_output {
@@ -2071,4 +2112,40 @@ playlist_index = -1
         // A window too narrow for both minimums keeps the requested ratio.
         assert_eq!(clamp_library_ratio(400.0, 0.9), 0.9);
     }
+}
+
+/// Warnings shown in a confirmation dialog before applying the selected
+/// wallpaper (an empty display selection targets every display):
+/// - a web wallpaper targeting several displays only runs on one of them;
+/// - one line per landscape display targeted by a portrait wallpaper.
+/// Computed when applying, so it also works for a wallpaper selected before
+/// we-gui started.
+fn aspect_mismatch_warnings(app: &App) -> Vec<String> {
+    if app.sidebar == Some(Sidebar::Playlist) {
+        return Vec::new();
+    }
+    let Some(entry) = app
+        .selected_id
+        .as_deref()
+        .and_then(|id| app.entries.iter().find(|entry| entry.id == id))
+    else {
+        return Vec::new();
+    };
+    let targets: Vec<&String> = app
+        .outputs
+        .iter()
+        .filter(|output| app.selected_outputs.is_empty() || app.selected_outputs.contains(*output))
+        .collect();
+    let mut warnings = Vec::new();
+    if entry.ty == we_core::wallpaper::WallpaperType::Web && targets.len() > 1 {
+        warnings.push(app.language.web_single_display_warning(targets.len()));
+    }
+    let canvas = crate::domain::aspect::scene_canvas_size(entry);
+    let portrait = crate::domain::aspect::is_portrait_wallpaper(canvas, &entry.title);
+    warnings.extend(targets.iter().filter_map(|output| {
+        let display = *app.output_geometry.get(*output)?;
+        crate::domain::aspect::should_warn_orientation(portrait, display)
+            .then(|| app.language.aspect_warning(canvas, output, display))
+    }));
+    warnings
 }

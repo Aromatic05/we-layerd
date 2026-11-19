@@ -62,6 +62,10 @@ pub(crate) struct App {
     pub theme: Theme,
     pub runtime_shutdown: bool,
     pub outputs: Vec<String>,
+    /// Rotated on-screen size per output, for the aspect-ratio warning.
+    pub output_geometry: std::collections::BTreeMap<String, (u32, u32)>,
+    /// Pending "wallpaper shape doesn't match" confirmation: one line per display.
+    pub aspect_confirm: Option<Vec<String>>,
     pub selected_outputs: BTreeSet<String>,
     pub running_source: Option<String>,
     pub language: Language,
@@ -193,6 +197,8 @@ pub(crate) enum Message {
     FocusedRuleSelected(we_core::config::RuntimeRuleAction),
     MaximizedRuleSelected(we_core::config::RuntimeRuleAction),
     FullscreenRuleSelected(we_core::config::RuntimeRuleAction),
+    RulesAllOutputsToggled(bool),
+    FullscreenAllOutputsToggled(bool),
     PreferDmabufToggled(bool),
     AllowShmFallbackToggled(bool),
     AutostartStatusLoaded(Result<crate::services::autostart::AutostartStatus, String>),
@@ -265,5 +271,8 @@ pub(crate) enum Message {
     ExitRequested,
     TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>),
+    AspectConfirmApply,
+    AspectConfirmCancel,
+    OutputGeometryLoaded(Result<Vec<crate::services::runtime::OutputGeometry>, String>),
     ToggleOutput(String),
 }

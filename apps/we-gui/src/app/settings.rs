@@ -22,6 +22,8 @@ pub(crate) fn sync_from_ui(ui_settings: &UiSettings, launch_settings: &mut Launc
     launch_settings.rules.focused = ui_settings.rule_focused;
     launch_settings.rules.maximized = ui_settings.rule_maximized;
     launch_settings.rules.fullscreen = ui_settings.rule_fullscreen;
+    launch_settings.rules.all_outputs = ui_settings.rule_all_outputs;
+    launch_settings.rules.fullscreen_all_outputs = ui_settings.rule_fullscreen_all_outputs;
 
     if let Ok(v) = ui_settings.fps_limit.parse::<u32>() {
         launch_settings.fps_limit = v.clamp(1, 360);

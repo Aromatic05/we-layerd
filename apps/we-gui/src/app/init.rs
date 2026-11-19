@@ -58,6 +58,8 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         rule_focused: launch_settings.rules.focused,
         rule_maximized: launch_settings.rules.maximized,
         rule_fullscreen: launch_settings.rules.fullscreen,
+        rule_all_outputs: launch_settings.rules.all_outputs,
+        rule_fullscreen_all_outputs: launch_settings.rules.fullscreen_all_outputs,
     };
     let playlist_selected = launch_settings
         .playlists
@@ -131,6 +133,8 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             theme: detect_system_theme(),
             runtime_shutdown: false,
             outputs: Vec::new(),
+            output_geometry: Default::default(),
+            aspect_confirm: None,
             selected_outputs: Default::default(),
             running_source: None,
             language,
@@ -165,6 +169,10 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         Task::batch(vec![
             Task::done(Message::AutoScan),
             Task::perform(crate::services::runtime::fetch_outputs(), Message::OutputsLoaded),
+            Task::perform(
+                crate::services::runtime::fetch_output_geometry(),
+                Message::OutputGeometryLoaded,
+            ),
             Task::perform(
                 async { crate::services::autostart::status() },
                 Message::AutostartStatusLoaded,

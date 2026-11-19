@@ -38,6 +38,16 @@ pub(crate) fn update(app: &mut App, message: wallpaper_detail::DetailMessage) ->
             return Task::none();
         }
         DetailMessage::TogglePlayback => {
+            // A paused daemon reports phase "paused", so the wallpaper does not count as
+            // running. Re-applying the config (PlayPressed) would leave the manual pause in
+            // place forever; resume it instead.
+            if app.playback_paused {
+                if runtime::send_control("resume") {
+                    app.playback_paused = false;
+                    app.playback_running = true;
+                }
+                return Task::none();
+            }
             if !app.selected_wallpaper_is_running() {
                 return super::update::update(app, Message::PlayPressed);
             }
