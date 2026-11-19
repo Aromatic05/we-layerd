@@ -68,8 +68,9 @@ pub(crate) fn build_output_specs(
     discovered_outputs: &[String],
 ) -> Result<BTreeMap<String, OutputSpec>> {
     let mut specs = BTreeMap::new();
-    for output_name in discovered_outputs {
-        if let Some(spec) = build_output_spec(base, output_name)? {
+    for output_name in sorted_outputs(discovered_outputs) {
+        let audio_owner = specs.is_empty();
+        if let Some(spec) = build_output_spec(base, output_name, audio_owner)? {
             specs.insert(output_name.clone(), spec);
         }
     }
@@ -82,8 +83,9 @@ fn build_output_specs_with_errors(
 ) -> (BTreeMap<String, OutputSpec>, BTreeMap<String, String>) {
     let mut specs = BTreeMap::new();
     let mut errors = BTreeMap::new();
-    for output_name in discovered_outputs {
-        match build_output_spec(base, output_name) {
+    for output_name in sorted_outputs(discovered_outputs) {
+        let audio_owner = specs.is_empty();
+        match build_output_spec(base, output_name, audio_owner) {
             Ok(Some(spec)) => {
                 specs.insert(output_name.clone(), spec);
             }
@@ -96,7 +98,19 @@ fn build_output_specs_with_errors(
     (specs, errors)
 }
 
-fn build_output_spec(base: &Config, output_name: &str) -> Result<Option<OutputSpec>> {
+/// Discovery order follows Wayland global registration, which changes when monitors are
+/// replugged. Sorting keeps the audio owner stable for a given set of outputs.
+fn sorted_outputs(discovered_outputs: &[String]) -> Vec<&String> {
+    let mut discovered = discovered_outputs.iter().collect::<Vec<_>>();
+    discovered.sort();
+    discovered
+}
+
+fn build_output_spec(
+    base: &Config,
+    output_name: &str,
+    audio_owner: bool,
+) -> Result<Option<OutputSpec>> {
     let binding = base.outputs.get(output_name).cloned().unwrap_or_default();
     if binding == OutputBinding::default() && base.renderer.source.trim().is_empty() {
         return Ok(None);
@@ -122,6 +136,13 @@ fn build_output_spec(base: &Config, output_name: &str) -> Result<Option<OutputSp
         )?;
     }
 
+    // Every worker builds its own renderer session, and an unmuted session opens its own
+    // playback device, so N outputs played the scene audio N times. Only one output may own
+    // audio; the rest are suppressed. A per-wallpaper mute still applies on top. Ownership lives
+    // in the spec so a change of owner restarts that worker, which is the only path this runtime
+    // has for changing a configured mute.
+    config.renderer.suppress_audio = !audio_owner;
+
     // The worker owns playlist progression. The global playlist marker must not make two
     // output workers accidentally share one cursor.
     config.playlists.active = binding.playlist.clone();
@@ -141,6 +162,9 @@ fn fingerprint_output_config(config: &Config, binding: &OutputBinding) -> Result
     // never restart a healthy output or reset its playlist cursor.
     effective.adaptive = Default::default();
     effective.scenes = Default::default();
+    // `suppress_audio` is not serialized, but a worker that loses or gains audio must restart,
+    // so fold it into the mute the renderer session sees.
+    effective.renderer.muted |= effective.renderer.suppress_audio;
 
     if let Some(playlist_name) = binding.playlist.as_deref() {
         // This worker's source comes from its own playlist cursor. A daemon-wide fallback/global
@@ -900,6 +924,7 @@ mod tests {
     use we_core::{
         config::OutputBinding,
         playlist::{Playlist, PlaylistConfig, PlaylistItem},
+        wallpaper::settings::WallpaperSettings,
     };
 
     use super::{
@@ -951,6 +976,66 @@ mod tests {
         assert_eq!(specs.keys().cloned().collect::<Vec<_>>(), vec!["DP-1", "HDMI-A-1"]);
         assert_eq!(specs["DP-1"].output_name, "DP-1");
         assert_eq!(specs["HDMI-A-1"].output_name, "HDMI-A-1");
+    }
+
+    #[test]
+    fn only_one_output_plays_scene_audio() {
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        let specs = build_output_specs(&config, &["DP-1".to_string(), "HDMI-A-1".to_string()])
+            .expect("output specs");
+
+        let owners = specs.values().filter(|spec| !spec.config.renderer.suppress_audio).count();
+        assert_eq!(owners, 1);
+        // Discovery order must not decide which output owns audio.
+        let reordered = build_output_specs(&config, &["HDMI-A-1".to_string(), "DP-1".to_string()])
+            .expect("reordered specs");
+        for (name, spec) in &specs {
+            assert_eq!(
+                spec.config.renderer.suppress_audio, reordered[name].config.renderer.suppress_audio,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn audio_suppression_survives_a_wallpaper_profile_rewrite() {
+        // A playlist advance re-applies the wallpaper profile, which overwrites `muted`.
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        config
+            .wallpapers
+            .insert("loud".to_string(), WallpaperSettings { muted: false, ..Default::default() });
+        config.renderer.suppress_audio = true;
+
+        crate::runtime::playlist::apply_selection_to_config(
+            &mut config,
+            &crate::runtime::playlist::PlaylistSelection {
+                index: 0,
+                wallpaper_id: "loud".to_string(),
+                source: "/wallpapers/loud".to_string(),
+            },
+        )
+        .expect("apply selection");
+
+        assert!(!config.renderer.muted);
+        assert!(config.renderer.suppress_audio);
+    }
+
+    #[test]
+    fn per_wallpaper_mute_still_applies_to_the_audio_owner() {
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        config
+            .wallpapers
+            .insert("silent".to_string(), WallpaperSettings { muted: true, ..Default::default() });
+        config
+            .outputs
+            .insert("DP-1".to_string(), OutputBinding::wallpaper("silent", "/wallpapers/silent"));
+
+        let specs = build_output_specs(&config, &["DP-1".to_string()]).expect("output specs");
+        assert!(!specs["DP-1"].config.renderer.suppress_audio);
+        assert!(specs["DP-1"].config.renderer.muted);
     }
 
     #[test]
@@ -1082,9 +1167,14 @@ mod tests {
         let next = build_output_specs(&config, &["HDMI-A-1".to_string(), "eDP-1".to_string()])
             .expect("next specs");
 
+        // HDMI-A-1 inherits audio ownership from the removed DP-1, so it restarts too.
         assert_eq!(
             reconcile_workers(&current, &next),
-            vec![OutputAction::Stop("DP-1".to_string()), OutputAction::Start("eDP-1".to_string()),]
+            vec![
+                OutputAction::Stop("DP-1".to_string()),
+                OutputAction::Restart("HDMI-A-1".to_string()),
+                OutputAction::Start("eDP-1".to_string()),
+            ]
         );
     }
 

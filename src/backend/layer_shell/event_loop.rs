@@ -462,9 +462,9 @@ pub(crate) fn run_output_with_role(
         render_resolution_follows_output: cfg.renderer.render_width.is_none()
             && cfg.renderer.render_height.is_none(),
         pause_state: crate::runtime::rules::PauseState::default(),
-        configured_muted: cfg.renderer.muted,
+        configured_muted: cfg.renderer.muted || cfg.renderer.suppress_audio,
         rule_muted: false,
-        applied_muted: cfg.renderer.muted,
+        applied_muted: cfg.renderer.muted || cfg.renderer.suppress_audio,
         wallpaper_type,
         media_generation: 0,
         audio_generation: 0,
@@ -541,7 +541,9 @@ pub(crate) fn run_output_with_role(
         fps: cfg.renderer.fps as i32,
         speed: cfg.renderer.speed,
         volume: cfg.renderer.volume,
-        muted: cfg.renderer.muted,
+        // A worker that does not own audio stays silent however the wallpaper profile is
+        // rewritten later, e.g. when a playlist advances.
+        muted: cfg.renderer.muted || cfg.renderer.suppress_audio,
         options_json: cfg.renderer.options_json.clone(),
     };
     session.set_source(source)?;
