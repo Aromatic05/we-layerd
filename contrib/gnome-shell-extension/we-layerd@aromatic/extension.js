@@ -180,9 +180,11 @@ export default class WeLayerdExtension extends Extension {
                 logicalMonitors[index];
             return logical?.get_monitors?.()?.[0]?.get_connector?.() ?? '';
         };
-        // Borderless "fullscreen" games and players never set the fullscreen
-        // state; they just size an undecorated window to the whole monitor.
-        // Report any window whose frame covers its monitor as fullscreen.
+        // Borderless "fullscreen" games never set the fullscreen state; they
+        // size an undecorated window to the whole monitor. Proton/Wine games
+        // are X11 clients, so only X11 windows count. A maximized window on a
+        // monitor without the top bar also covers the whole monitor, so
+        // maximized windows are excluded.
         const coversMonitor = win => {
             const frame = win.get_frame_rect?.();
             const monitor = global.display.get_monitor_geometry?.(win.get_monitor());
@@ -191,6 +193,22 @@ export default class WeLayerdExtension extends Extension {
             return frame.x <= monitor.x && frame.y <= monitor.y &&
                 frame.x + frame.width >= monitor.x + monitor.width &&
                 frame.y + frame.height >= monitor.y + monitor.height;
+        };
+        const isX11 = win =>
+            Meta.WindowClientType && win.get_client_type?.() === Meta.WindowClientType.X11;
+        // Tiling extensions (e.g. Tiling Shell full-size tiles) fill the work
+        // area with move_resize_frame instead of maximizing, so treat a frame
+        // that fills the work area, allowing small gaps, as maximized too.
+        const MAXIMIZE_GAP_TOLERANCE = 32;
+        const fillsWorkArea = win => {
+            const frame = win.get_frame_rect?.();
+            const area = workspace.get_work_area_for_monitor?.(win.get_monitor());
+            if (!frame || !area || area.width <= 0 || area.height <= 0)
+                return false;
+            return frame.x <= area.x + MAXIMIZE_GAP_TOLERANCE &&
+                frame.y <= area.y + MAXIMIZE_GAP_TOLERANCE &&
+                frame.x + frame.width >= area.x + area.width - MAXIMIZE_GAP_TOLERANCE &&
+                frame.y + frame.height >= area.y + area.height - MAXIMIZE_GAP_TOLERANCE;
         };
 
         for (const win of global.display.list_all_windows()) {
@@ -202,14 +220,37 @@ export default class WeLayerdExtension extends Extension {
             if (!win.located_on_workspace(workspace) || !win.showing_on_its_workspace?.())
                 continue;
 
+            const maximizedFlag = Boolean(win.maximized_horizontally && win.maximized_vertically);
+            const fullscreen = Boolean(win.is_fullscreen?.() ?? win.fullscreen) ||
+                (isX11(win) && !maximizedFlag && coversMonitor(win));
             states.push([
                 connectorFor(win.get_monitor()),
                 win === focusWindow,
-                Boolean(win.maximized_horizontally && win.maximized_vertically),
-                Boolean(win.is_fullscreen?.() ?? win.fullscreen) || coversMonitor(win),
+                !fullscreen && (maximizedFlag || fillsWorkArea(win)),
+                fullscreen,
             ]);
         }
         return states;
+    }
+
+    // The renderer window covers the desktop, so GNOME's background actor never
+    // receives the right-click that opens its menu. The daemon forwards the
+    // click with the monitor-local logical position; open that monitor's own
+    // background menu ("Change Background…", "Display Settings", "Settings").
+    ShowBackgroundMenu(connector, x, y) {
+        const index = this._monitorIndexForConnector(connector);
+        if (index < 0)
+            return false;
+        const actor = Main.layoutManager._bgManagers?.[index]?.backgroundActor;
+        const menu = actor?._backgroundMenu;
+        const rect = global.display.get_monitor_geometry(index);
+        if (!menu || !rect)
+            return false;
+        if (menu.isOpen)
+            menu.close();
+        Main.layoutManager.setDummyCursorGeometry(rect.x + x, rect.y + y, 0, 0);
+        menu.open();
+        return true;
     }
 
     _shouldManageWindow(metaWindow) {
