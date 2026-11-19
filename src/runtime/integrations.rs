@@ -133,7 +133,12 @@ impl HostIntegrations {
 
     pub(crate) fn snapshot_for_output(&self, output: &str) -> OutputIntegrationSnapshot {
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut policy = state.policies.get(output).copied().unwrap_or_default();
+        let mut policy = state
+            .policies
+            .get(output)
+            .or_else(|| state.policies.get(crate::runtime::rules::ALL_OUTPUTS_POLICY_KEY))
+            .copied()
+            .unwrap_or_default();
         let fps_limit = if state.power_state == PowerState::Battery {
             match state.adaptive.on_battery {
                 RuntimeRuleAction::Keep => {}
@@ -912,13 +917,19 @@ fn spawn_rule_collector(
                     }
                 }
 
+                let fullscreen_always_covers = matches!(monitor, Some(ToplevelMonitor::Gnome(_)));
                 let result = monitor.as_mut().expect("monitor").poll();
                 match result {
                     Ok((outputs, toplevels)) => {
                         shared.update_rules(
                             true,
                             true,
-                            policies_for_outputs(rules, outputs, &toplevels),
+                            policies_for_outputs(
+                                rules,
+                                outputs,
+                                &toplevels,
+                                fullscreen_always_covers,
+                            ),
                             None,
                         );
                     }
