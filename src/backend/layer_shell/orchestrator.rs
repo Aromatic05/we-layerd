@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     path::Path,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     thread,
@@ -14,7 +14,12 @@ use tracing::{info, warn};
 use we_core::config::OutputBinding;
 
 use crate::{
-    backend::{layer_shell::event_loop, traits::BackendContext, wayland_common::outputs},
+    backend::{
+        gnome::{dbus as gnome_dbus, window_bridge},
+        layer_shell::event_loop,
+        traits::BackendContext,
+        wayland_common::{outputs, surface_role::SurfaceRole},
+    },
     config::Config,
     ipc::{ControlCommand, OutputPlaylistAction, OutputPlaylistRequest, RuntimeLoopExit},
     runtime::{
@@ -24,6 +29,17 @@ use crate::{
 };
 
 static WORKER_INSTANCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static GNOME_WINDOW_REGISTRATION_SEQUENCE: AtomicU32 = AtomicU32::new(1);
+
+/// How each per-output worker presents its renderer surface.
+#[derive(Debug, Clone)]
+pub(crate) enum WorkerSurface {
+    /// A wlr layer-shell background surface bound to the output.
+    LayerShell,
+    /// A GNOME XDG toplevel registered with the we-layerd Shell extension,
+    /// which pins it to the output's monitor and clones it into the background.
+    GnomeWindow { bus_name: String },
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputSpec {
@@ -52,8 +68,9 @@ pub(crate) fn build_output_specs(
     discovered_outputs: &[String],
 ) -> Result<BTreeMap<String, OutputSpec>> {
     let mut specs = BTreeMap::new();
-    for output_name in discovered_outputs {
-        if let Some(spec) = build_output_spec(base, output_name)? {
+    for output_name in sorted_outputs(discovered_outputs) {
+        let audio_owner = specs.is_empty();
+        if let Some(spec) = build_output_spec(base, output_name, audio_owner)? {
             specs.insert(output_name.clone(), spec);
         }
     }
@@ -66,8 +83,9 @@ fn build_output_specs_with_errors(
 ) -> (BTreeMap<String, OutputSpec>, BTreeMap<String, String>) {
     let mut specs = BTreeMap::new();
     let mut errors = BTreeMap::new();
-    for output_name in discovered_outputs {
-        match build_output_spec(base, output_name) {
+    for output_name in sorted_outputs(discovered_outputs) {
+        let audio_owner = specs.is_empty();
+        match build_output_spec(base, output_name, audio_owner) {
             Ok(Some(spec)) => {
                 specs.insert(output_name.clone(), spec);
             }
@@ -80,7 +98,19 @@ fn build_output_specs_with_errors(
     (specs, errors)
 }
 
-fn build_output_spec(base: &Config, output_name: &str) -> Result<Option<OutputSpec>> {
+/// Discovery order follows Wayland global registration, which changes when monitors are
+/// replugged. Sorting keeps the audio owner stable for a given set of outputs.
+fn sorted_outputs(discovered_outputs: &[String]) -> Vec<&String> {
+    let mut discovered = discovered_outputs.iter().collect::<Vec<_>>();
+    discovered.sort();
+    discovered
+}
+
+fn build_output_spec(
+    base: &Config,
+    output_name: &str,
+    audio_owner: bool,
+) -> Result<Option<OutputSpec>> {
     let binding = base.outputs.get(output_name).cloned().unwrap_or_default();
     if binding == OutputBinding::default() && base.renderer.source.trim().is_empty() {
         return Ok(None);
@@ -106,6 +136,13 @@ fn build_output_spec(base: &Config, output_name: &str) -> Result<Option<OutputSp
         )?;
     }
 
+    // Every worker builds its own renderer session, and an unmuted session opens its own
+    // playback device, so N outputs played the scene audio N times. Only one output may own
+    // audio; the rest are suppressed. A per-wallpaper mute still applies on top. Ownership lives
+    // in the spec so a change of owner restarts that worker, which is the only path this runtime
+    // has for changing a configured mute.
+    config.renderer.suppress_audio = !audio_owner;
+
     // The worker owns playlist progression. The global playlist marker must not make two
     // output workers accidentally share one cursor.
     config.playlists.active = binding.playlist.clone();
@@ -125,6 +162,9 @@ fn fingerprint_output_config(config: &Config, binding: &OutputBinding) -> Result
     // never restart a healthy output or reset its playlist cursor.
     effective.adaptive = Default::default();
     effective.scenes = Default::default();
+    // `suppress_audio` is not serialized, but a worker that loses or gains audio must restart,
+    // so fold it into the mute the renderer session sees.
+    effective.renderer.muted |= effective.renderer.suppress_audio;
 
     if let Some(playlist_name) = binding.playlist.as_deref() {
         // This worker's source comes from its own playlist cursor. A daemon-wide fallback/global
@@ -233,14 +273,27 @@ struct WorkerExit {
     error: Option<String>,
 }
 
-pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
+pub(crate) fn run(ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
+    run_with_surface(ctx, WorkerSurface::LayerShell)
+}
+
+pub(crate) fn run_with_surface(
+    mut ctx: BackendContext<'_>,
+    surface: WorkerSurface,
+) -> Result<RuntimeLoopExit> {
     let (worker_event_tx, worker_event_rx) = mpsc::channel::<WorkerExit>();
     let output_playlist_rx = ctx.output_playlist_rx.take();
     let mut workers = BTreeMap::<String, OutputWorker>::new();
     let mut failed_start_retries = BTreeMap::<String, FailedStartRetry>::new();
     let mut last_discovery = Instant::now() - Duration::from_secs(2);
 
-    reconcile_live_workers(&mut ctx, &mut workers, &mut failed_start_retries, &worker_event_tx)?;
+    reconcile_live_workers(
+        &mut ctx,
+        &mut workers,
+        &mut failed_start_retries,
+        &worker_event_tx,
+        &surface,
+    )?;
 
     loop {
         if ctx.shutdown_requested.load(Ordering::Relaxed) {
@@ -277,6 +330,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                         &mut workers,
                         &mut failed_start_retries,
                         &worker_event_tx,
+                        &surface,
                     )?;
                 }
                 ControlCommand::Reconfigure => {
@@ -285,6 +339,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                         &mut workers,
                         &mut failed_start_retries,
                         &worker_event_tx,
+                        &surface,
                     )?;
                 }
             }
@@ -298,6 +353,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                         &mut workers,
                         &mut failed_start_retries,
                         &worker_event_tx,
+                        &surface,
                     ) {
                         let _ = request.reply.send(Err(error.to_string()));
                         continue;
@@ -354,6 +410,7 @@ pub(crate) fn run(mut ctx: BackendContext<'_>) -> Result<RuntimeLoopExit> {
                 &mut workers,
                 &mut failed_start_retries,
                 &worker_event_tx,
+                &surface,
             ) {
                 warn!(%error, "failed to reconcile layer-shell outputs; keeping existing workers");
             }
@@ -368,6 +425,7 @@ fn reconcile_live_workers(
     workers: &mut BTreeMap<String, OutputWorker>,
     failed_start_retries: &mut BTreeMap<String, FailedStartRetry>,
     worker_event_tx: &mpsc::Sender<WorkerExit>,
+    surface: &WorkerSurface,
 ) -> Result<()> {
     let discovered = outputs::list_output_names()?;
     let desired_config = ctx
@@ -411,6 +469,7 @@ fn reconcile_live_workers(
                         ctx.shutdown_requested.clone(),
                         ctx.host_integrations.clone(),
                         worker_event_tx.clone(),
+                        surface.clone(),
                     ) {
                         Ok(worker) => {
                             failed_start_retries.remove(&output);
@@ -437,6 +496,7 @@ fn reconcile_live_workers(
                         ctx.shutdown_requested.clone(),
                         ctx.host_integrations.clone(),
                         worker_event_tx.clone(),
+                        surface.clone(),
                     ) {
                         Ok(worker) => {
                             failed_start_retries.remove(&output);
@@ -503,6 +563,7 @@ fn spawn_worker(
     shutdown_requested: Arc<AtomicBool>,
     host_integrations: crate::runtime::integrations::HostIntegrations,
     worker_event_tx: mpsc::Sender<WorkerExit>,
+    surface: WorkerSurface,
 ) -> Result<OutputWorker> {
     let output_name = spec.output_name.clone();
     let instance_id = WORKER_INSTANCE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -525,6 +586,33 @@ fn spawn_worker(
         .name(format!("we-layerd-output-{output_name}"))
         .spawn(move || {
             info!(output = %worker_output, "starting output runtime worker");
+            let gnome_window_title = window_bridge::output_window_title(&worker_output);
+            // Keep the extension registration alive for the whole worker so the
+            // window keeps its monitor pin across in-place renderer restarts.
+            let _gnome_registration = match &surface {
+                WorkerSurface::LayerShell => None,
+                WorkerSurface::GnomeWindow { bus_name } => {
+                    match gnome_dbus::register_output_window(
+                        bus_name,
+                        GNOME_WINDOW_REGISTRATION_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+                        std::process::id(),
+                        &gnome_window_title,
+                        window_bridge::RENDERER_APP_ID,
+                        &worker_output,
+                    ) {
+                        Ok(registration) => Some(registration),
+                        Err(error) => {
+                            worker_stop_scheduler.store(true, Ordering::Relaxed);
+                            let _ = worker_event_tx.send(WorkerExit {
+                                output: worker_output,
+                                instance_id,
+                                error: Some(error.to_string()),
+                            });
+                            return;
+                        }
+                    }
+                }
+            };
             let result = loop {
                 if worker_shutdown.load(Ordering::Relaxed) {
                     break Ok(RuntimeLoopExit::Stop);
@@ -556,7 +644,21 @@ fn spawn_worker(
                     output_playlist_rx: None,
                     status_sink: &mut sink,
                 };
-                match event_loop::run_output(worker_context, &worker_output) {
+                let run_result = match &surface {
+                    WorkerSurface::LayerShell => {
+                        event_loop::run_output(worker_context, &worker_output)
+                    }
+                    WorkerSurface::GnomeWindow { .. } => event_loop::run_output_with_role(
+                        worker_context,
+                        &worker_output,
+                        SurfaceRole::XdgToplevel {
+                            title: &gnome_window_title,
+                            app_id: window_bridge::RENDERER_APP_ID,
+                            fullscreen: false,
+                        },
+                    ),
+                };
+                match run_result {
                     Ok(RuntimeLoopExit::RestartCurrent | RuntimeLoopExit::Reconfigure) => continue,
                     Ok(RuntimeLoopExit::Stop) => break Ok(RuntimeLoopExit::Stop),
                     Err(error) => break Err(error),
@@ -822,6 +924,7 @@ mod tests {
     use we_core::{
         config::OutputBinding,
         playlist::{Playlist, PlaylistConfig, PlaylistItem},
+        wallpaper::settings::WallpaperSettings,
     };
 
     use super::{
@@ -873,6 +976,66 @@ mod tests {
         assert_eq!(specs.keys().cloned().collect::<Vec<_>>(), vec!["DP-1", "HDMI-A-1"]);
         assert_eq!(specs["DP-1"].output_name, "DP-1");
         assert_eq!(specs["HDMI-A-1"].output_name, "HDMI-A-1");
+    }
+
+    #[test]
+    fn only_one_output_plays_scene_audio() {
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        let specs = build_output_specs(&config, &["DP-1".to_string(), "HDMI-A-1".to_string()])
+            .expect("output specs");
+
+        let owners = specs.values().filter(|spec| !spec.config.renderer.suppress_audio).count();
+        assert_eq!(owners, 1);
+        // Discovery order must not decide which output owns audio.
+        let reordered = build_output_specs(&config, &["HDMI-A-1".to_string(), "DP-1".to_string()])
+            .expect("reordered specs");
+        for (name, spec) in &specs {
+            assert_eq!(
+                spec.config.renderer.suppress_audio, reordered[name].config.renderer.suppress_audio,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn audio_suppression_survives_a_wallpaper_profile_rewrite() {
+        // A playlist advance re-applies the wallpaper profile, which overwrites `muted`.
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        config
+            .wallpapers
+            .insert("loud".to_string(), WallpaperSettings { muted: false, ..Default::default() });
+        config.renderer.suppress_audio = true;
+
+        crate::runtime::playlist::apply_selection_to_config(
+            &mut config,
+            &crate::runtime::playlist::PlaylistSelection {
+                index: 0,
+                wallpaper_id: "loud".to_string(),
+                source: "/wallpapers/loud".to_string(),
+            },
+        )
+        .expect("apply selection");
+
+        assert!(!config.renderer.muted);
+        assert!(config.renderer.suppress_audio);
+    }
+
+    #[test]
+    fn per_wallpaper_mute_still_applies_to_the_audio_owner() {
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        config
+            .wallpapers
+            .insert("silent".to_string(), WallpaperSettings { muted: true, ..Default::default() });
+        config
+            .outputs
+            .insert("DP-1".to_string(), OutputBinding::wallpaper("silent", "/wallpapers/silent"));
+
+        let specs = build_output_specs(&config, &["DP-1".to_string()]).expect("output specs");
+        assert!(!specs["DP-1"].config.renderer.suppress_audio);
+        assert!(specs["DP-1"].config.renderer.muted);
     }
 
     #[test]
@@ -1004,9 +1167,14 @@ mod tests {
         let next = build_output_specs(&config, &["HDMI-A-1".to_string(), "eDP-1".to_string()])
             .expect("next specs");
 
+        // HDMI-A-1 inherits audio ownership from the removed DP-1, so it restarts too.
         assert_eq!(
             reconcile_workers(&current, &next),
-            vec![OutputAction::Stop("DP-1".to_string()), OutputAction::Start("eDP-1".to_string()),]
+            vec![
+                OutputAction::Stop("DP-1".to_string()),
+                OutputAction::Restart("HDMI-A-1".to_string()),
+                OutputAction::Start("eDP-1".to_string()),
+            ]
         );
     }
 

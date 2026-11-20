@@ -101,6 +101,10 @@ pub struct RendererConfig {
     pub volume: f32,
     #[serde(default)]
     pub muted: bool,
+    /// Set by the daemon for every output except the one allowed to play sound, so several
+    /// monitors do not play the same scene audio. Never read from the config file.
+    #[serde(skip)]
+    pub suppress_audio: bool,
     #[serde(default = "default_renderer_msaa_samples")]
     pub msaa_samples: u32,
     #[serde(default)]
@@ -197,6 +201,7 @@ impl Default for RendererConfig {
             speed: default_renderer_speed(),
             volume: default_renderer_volume(),
             muted: false,
+            suppress_audio: false,
             msaa_samples: default_renderer_msaa_samples(),
             options_json: None,
             render_width: None,

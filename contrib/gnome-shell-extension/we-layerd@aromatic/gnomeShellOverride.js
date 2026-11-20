@@ -9,23 +9,39 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Workspace from 'resource:///org/gnome/shell/ui/workspace.js';
 import * as WorkspaceThumbnail from 'resource:///org/gnome/shell/ui/workspaceThumbnail.js';
 import {LiveWallpaper} from './wallpaper.js';
+import {recordRoundedClipBounds} from './roundedClipEffect.js';
+
+const BLUR_MY_SHELL_UUID = 'blur-my-shell@aunetx';
+// Blur my Shell rebuilds its blurred overview/lock-screen backgrounds on
+// monitors-changed. Give our own background rebuild time to land first.
+const BLUR_MY_SHELL_REFRESH_DELAY_MS = 500;
 
 function logDebug(message) {
     console.log(`[we-layerd][gnome-window-bridge-v3-hanabi-port] ${message}`);
 }
 
 export class GnomeShellOverride {
-    constructor(matchWindow, isWallpaperActive) {
+    constructor(matchWindow, isWallpaperActive, monitorForWindow = metaWindow => metaWindow.get_monitor()) {
         this._injectionManager = new InjectionManager();
         this._matchWindow = matchWindow;
+        this._monitorForWindow = monitorForWindow;
         this._isWallpaperActive = isWallpaperActive;
         this._wallpaperActors = new Set();
+        this._blurMyShellRefreshId = 0;
+        this._emittingSyntheticMonitorsChanged = false;
+    }
+
+    // True while we re-emit monitors-changed only to make Blur my Shell rebuild;
+    // our own monitors-changed handler must ignore it to avoid a rebuild loop.
+    get emittingSyntheticMonitorsChanged() {
+        return this._emittingSyntheticMonitorsChanged;
     }
 
     enable() {
         logDebug('gnomeShellOverride.enable()');
         const matchWindow = this._matchWindow;
         const isWallpaperActive = this._isWallpaperActive;
+        const monitorForWindow = this._monitorForWindow;
         const self = this;
 
         this._injectionManager.overrideMethod(
@@ -37,7 +53,7 @@ export class GnomeShellOverride {
                     if (!isWallpaperActive())
                         return backgroundActor;
 
-                    const wallpaper = new LiveWallpaper(backgroundActor, matchWindow);
+                    const wallpaper = new LiveWallpaper(backgroundActor, matchWindow, monitorForWindow);
                     this.videoActor = wallpaper;
                     self._wallpaperActors.add(wallpaper);
                     wallpaper.connect('destroy', actor => {
@@ -46,6 +62,19 @@ export class GnomeShellOverride {
                             this.videoActor = null;
                     });
                     return backgroundActor;
+                };
+            }
+        );
+
+        // Workspace previews round their background through the content, which
+        // has no readable bounds property. Record them for the live wallpaper.
+        this._injectionManager.overrideMethod(
+            Meta.BackgroundContent.prototype,
+            'set_rounded_clip_bounds',
+            originalMethod => {
+                return function (rect) {
+                    originalMethod.call(this, rect);
+                    recordRoundedClipBounds(this, rect);
                 };
             }
         );
@@ -145,6 +174,10 @@ export class GnomeShellOverride {
 
     disable() {
         logDebug('gnomeShellOverride.disable()');
+        if (this._blurMyShellRefreshId) {
+            GLib.source_remove(this._blurMyShellRefreshId);
+            this._blurMyShellRefreshId = 0;
+        }
         for (const actor of this._wallpaperActors)
             actor.destroy();
         this._wallpaperActors.clear();
@@ -179,6 +212,34 @@ export class GnomeShellOverride {
                 console.error(error);
             }
 
+            return GLib.SOURCE_REMOVE;
+        });
+
+        this._queueBlurMyShellRefresh();
+    }
+
+    // Blur my Shell keeps its own BackgroundManagers for the blurred overview
+    // backdrop. Destroying our wallpaper actors above also removed the live
+    // wallpaper from those, so ask it to rebuild them once ours are back; its
+    // new BackgroundManagers then pick up the live wallpaper through our
+    // _createBackgroundActor override.
+    _queueBlurMyShellRefresh() {
+        if (this._blurMyShellRefreshId)
+            GLib.source_remove(this._blurMyShellRefreshId);
+
+        this._blurMyShellRefreshId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, BLUR_MY_SHELL_REFRESH_DELAY_MS, () => {
+            this._blurMyShellRefreshId = 0;
+            if (!Main.extensionManager?._enabledExtensions?.includes(BLUR_MY_SHELL_UUID))
+                return GLib.SOURCE_REMOVE;
+
+            this._emittingSyntheticMonitorsChanged = true;
+            try {
+                Main.layoutManager.emit('monitors-changed');
+            } catch (error) {
+                console.error(error);
+            } finally {
+                this._emittingSyntheticMonitorsChanged = false;
+            }
             return GLib.SOURCE_REMOVE;
         });
     }

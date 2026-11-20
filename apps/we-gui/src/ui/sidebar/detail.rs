@@ -1,3 +1,4 @@
+use crate::ui::theme::colors;
 use std::collections::BTreeSet;
 
 use crate::{
@@ -105,7 +106,9 @@ pub fn view(state: DetailViewState<'_>) -> Element<'_, DetailMessage> {
             active_tab
         ),
     ]
-    .spacing(8);
+    .spacing(8)
+    .wrap()
+    .vertical_spacing(6);
 
     let body = match active_tab {
         DetailTab::Actions => actions_view(
@@ -154,7 +157,9 @@ pub fn view(state: DetailViewState<'_>) -> Element<'_, DetailMessage> {
             ))
             .id("detail.stop"),
         ]
-        .spacing(12),
+        .spacing(12)
+        .wrap()
+        .vertical_spacing(8),
     )
     .width(Fill)
     .align_x(Horizontal::Right);
@@ -242,7 +247,7 @@ fn actions_view<'a>(
                 .on_input(DetailMessage::FpsChanged)
                 .padding([14, 10])
                 .style(md_text_input_style),
-            text(language.speed(settings.speed)).size(13).color(Color::from_rgb8(196, 199, 204)),
+            text(language.speed(settings.speed)).size(13).color(colors().fg_dim),
             container(
                 slider(0.1..=3.0, settings.speed, DetailMessage::SpeedChanged)
                     .step(0.01_f32)
@@ -251,7 +256,7 @@ fn actions_view<'a>(
             .id("detail.speed"),
             text(language.volume(settings.volume * 100.0))
                 .size(13)
-                .color(Color::from_rgb8(196, 199, 204)),
+                .color(colors().fg_dim),
             container(
                 slider(0.0..=1.0, settings.volume, DetailMessage::VolumeChanged)
                     .step(0.01_f32)
@@ -284,7 +289,7 @@ fn actions_view<'a>(
         container(
             text(language.text(Text::MsaaSceneOnly))
                 .size(12)
-                .color(Color::from_rgb8(170, 174, 184)),
+                .color(colors().fg_dim),
         )
         .padding([10, 0])
         .into()
@@ -373,19 +378,19 @@ fn output_chips<'a>(
                         .padding([8, 12])
                         .style(move |_theme, status| {
                             let background = if active {
-                                Color::from_rgb8(70, 92, 130)
+                                colors().accent_container
                             } else if matches!(status, button::Status::Hovered) {
-                                Color::from_rgb8(48, 50, 55)
+                                colors().hover
                             } else {
-                                Color::from_rgb8(43, 44, 48)
+                                colors().field_bg
                             };
                             button::Style {
                                 background: Some(Background::Color(background)),
-                                text_color: Color::from_rgb8(224, 232, 255),
+                                text_color: colors().on_accent_container,
                                 border: Border {
                                     radius: 18.0.into(),
                                     width: 1.0,
-                                    color: Color::from_rgb8(110, 116, 128),
+                                    color: colors().outline,
                                 },
                                 ..Default::default()
                             }
@@ -398,7 +403,7 @@ fn output_chips<'a>(
 }
 
 fn field_label<'a>(value: &'a str) -> iced::widget::Text<'a> {
-    text(value).size(13).color(Color::from_rgb8(196, 199, 204))
+    text(value).size(13).color(colors().fg_dim)
 }
 
 fn section<'a>(
@@ -424,18 +429,18 @@ fn tab_button<'a>(
             .style(move |_theme, status| {
                 let selected = tab == active;
                 let background = if selected {
-                    Color::from_rgb8(70, 92, 130)
+                    colors().accent_container
                 } else if matches!(status, button::Status::Hovered) {
-                    Color::from_rgb8(48, 50, 55)
+                    colors().hover
                 } else {
                     Color::TRANSPARENT
                 };
                 button::Style {
                     background: Some(Background::Color(background)),
                     text_color: if selected {
-                        Color::from_rgb8(224, 232, 255)
+                        colors().on_accent_container
                     } else {
-                        Color::from_rgb8(198, 199, 204)
+                        colors().fg_dim
                     },
                     border: Border { radius: 20.0.into(), ..Default::default() },
                     ..Default::default()
@@ -468,14 +473,14 @@ fn icon_action<'a>(
 
 fn sidebar_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(30, 31, 34))),
+        background: Some(Background::Color(colors().sidebar_bg)),
         ..Default::default()
     }
 }
 
 pub(crate) fn section_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(39, 40, 44))),
+        background: Some(Background::Color(colors().card_bg)),
         border: Border { radius: 16.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -483,13 +488,13 @@ pub(crate) fn section_style(_theme: &Theme) -> container::Style {
 
 fn primary_button_style(_theme: &Theme, status: button::Status) -> button::Style {
     let background = if matches!(status, button::Status::Hovered) {
-        Color::from_rgb8(175, 199, 255)
+        colors().accent_bg_hover
     } else {
-        Color::from_rgb8(153, 178, 241)
+        colors().accent_bg
     };
     button::Style {
         background: Some(Background::Color(background)),
-        text_color: Color::from_rgb8(20, 37, 68),
+        text_color: colors().on_accent,
         border: Border { radius: 24.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -497,8 +502,8 @@ fn primary_button_style(_theme: &Theme, status: button::Status) -> button::Style
 
 fn tonal_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
     button::Style {
-        background: Some(Background::Color(Color::from_rgb8(65, 83, 116))),
-        text_color: Color::from_rgb8(220, 231, 255),
+        background: Some(Background::Color(colors().accent_container)),
+        text_color: colors().on_accent_container,
         border: Border { radius: 24.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -506,8 +511,8 @@ fn tonal_button_style(_theme: &Theme, _status: button::Status) -> button::Style 
 
 pub(crate) fn outlined_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
     button::Style {
-        text_color: Color::from_rgb8(198, 210, 242),
-        border: Border { radius: 24.0.into(), width: 1.0, color: Color::from_rgb8(143, 147, 156) },
+        text_color: colors().accent,
+        border: Border { radius: 24.0.into(), width: 1.0, color: colors().outline },
         ..Default::default()
     }
 }
@@ -517,17 +522,17 @@ pub(crate) fn md_text_input_style(
     status: iced::widget::text_input::Status,
 ) -> iced::widget::text_input::Style {
     let border = if matches!(status, iced::widget::text_input::Status::Focused { .. }) {
-        Color::from_rgb8(174, 198, 255)
+        colors().accent_bg
     } else {
-        Color::from_rgb8(143, 147, 156)
+        colors().outline
     };
     iced::widget::text_input::Style {
-        background: Background::Color(Color::from_rgb8(43, 44, 48)),
+        background: Background::Color(colors().field_bg),
         border: Border { radius: 8.0.into(), width: 1.0, color: border },
-        icon: Color::from_rgb8(196, 199, 204),
-        placeholder: Color::from_rgb8(196, 199, 204),
-        value: Color::from_rgb8(230, 225, 229),
-        selection: Color::from_rgb8(78, 99, 139),
+        icon: colors().fg_dim,
+        placeholder: colors().fg_dim,
+        value: colors().fg,
+        selection: colors().selection,
     }
 }
 
@@ -543,17 +548,17 @@ pub(crate) fn md_checkbox_style(
     );
     iced::widget::checkbox::Style {
         background: Background::Color(if checked {
-            Color::from_rgb8(174, 198, 255)
+            colors().accent_bg
         } else {
-            Color::from_rgb8(43, 44, 48)
+            colors().field_bg
         }),
-        icon_color: Color::from_rgb8(26, 39, 64),
+        icon_color: colors().on_accent,
         border: Border {
             radius: 2.0.into(),
             width: if checked { 0.0 } else { 2.0 },
-            color: Color::from_rgb8(196, 199, 204),
+            color: colors().fg_dim,
         },
-        text_color: Some(Color::from_rgb8(230, 225, 229)),
+        text_color: Some(colors().fg),
     }
 }
 
@@ -563,17 +568,17 @@ pub(crate) fn md_pick_list_style(
 ) -> iced::widget::pick_list::Style {
     let focused = matches!(status, iced::widget::pick_list::Status::Opened { .. });
     iced::widget::pick_list::Style {
-        text_color: Color::from_rgb8(230, 225, 229),
-        placeholder_color: Color::from_rgb8(196, 199, 204),
-        handle_color: Color::from_rgb8(196, 199, 204),
-        background: Background::Color(Color::from_rgb8(43, 44, 48)),
+        text_color: colors().fg,
+        placeholder_color: colors().fg_dim,
+        handle_color: colors().fg_dim,
+        background: Background::Color(colors().field_bg),
         border: Border {
             radius: 8.0.into(),
             width: 1.0,
             color: if focused {
-                Color::from_rgb8(174, 198, 255)
+                colors().accent_bg
             } else {
-                Color::from_rgb8(143, 147, 156)
+                colors().outline
             },
         },
     }
@@ -581,11 +586,11 @@ pub(crate) fn md_pick_list_style(
 
 pub(crate) fn md_menu_style(_theme: &Theme) -> iced::overlay::menu::Style {
     iced::overlay::menu::Style {
-        background: Background::Color(Color::from_rgb8(48, 49, 53)),
-        border: Border { radius: 8.0.into(), width: 1.0, color: Color::from_rgb8(72, 74, 80) },
-        text_color: Color::from_rgb8(230, 225, 229),
-        selected_text_color: Color::from_rgb8(26, 39, 64),
-        selected_background: Background::Color(Color::from_rgb8(174, 198, 255)),
+        background: Background::Color(colors().popover_bg),
+        border: Border { radius: 8.0.into(), width: 1.0, color: colors().border },
+        text_color: colors().fg,
+        selected_text_color: colors().on_accent,
+        selected_background: Background::Color(colors().accent_bg),
         shadow: iced::Shadow {
             color: Color::from_rgba8(0, 0, 0, 0.35),
             blur_radius: 12.0,
@@ -601,15 +606,15 @@ pub(crate) fn md_slider_style(
     iced::widget::slider::Style {
         rail: iced::widget::slider::Rail {
             backgrounds: (
-                Background::Color(Color::from_rgb8(174, 198, 255)),
-                Background::Color(Color::from_rgb8(75, 77, 84)),
+                Background::Color(colors().accent_bg),
+                Background::Color(colors().track),
             ),
             width: 4.0,
             border: Border::default(),
         },
         handle: iced::widget::slider::Handle {
             shape: iced::widget::slider::HandleShape::Circle { radius: 10.0 },
-            background: Background::Color(Color::from_rgb8(174, 198, 255)),
+            background: Background::Color(colors().accent_bg),
             border_width: 0.0,
             border_color: Color::TRANSPARENT,
         },

@@ -3,3 +3,6 @@ package/source-out/
 package/fedora/out/
 package/ubuntu/out/
 package/appimage/out/
+
+# Local machine notes
+LOCAL_NOTES.md

@@ -147,6 +147,14 @@ pub struct RuntimeRulesConfig {
     pub maximized: RuntimeRuleAction,
     #[serde(default)]
     pub fullscreen: RuntimeRuleAction,
+    /// When true, a rule triggered on any output (e.g. a maximized window on
+    /// one monitor) pauses or mutes the wallpaper on every output.
+    #[serde(default)]
+    pub all_outputs: bool,
+    /// When true, a fullscreen or borderless window covering any monitor
+    /// (typically a game) applies the fullscreen rule to every monitor.
+    #[serde(default)]
+    pub fullscreen_all_outputs: bool,
 }
 
 /// Optional power-aware limits; no effect until configured.
@@ -1360,6 +1368,8 @@ fullscreen = "pause"
             focused: RuntimeRuleAction::Mute,
             maximized: RuntimeRuleAction::Keep,
             fullscreen: RuntimeRuleAction::Pause,
+            all_outputs: true,
+            fullscreen_all_outputs: true,
         };
 
         save_integrations_and_rules(&path, &integrations, &rules)

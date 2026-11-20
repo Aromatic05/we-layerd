@@ -58,6 +58,8 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         rule_focused: launch_settings.rules.focused,
         rule_maximized: launch_settings.rules.maximized,
         rule_fullscreen: launch_settings.rules.fullscreen,
+        rule_all_outputs: launch_settings.rules.all_outputs,
+        rule_fullscreen_all_outputs: launch_settings.rules.fullscreen_all_outputs,
     };
     let playlist_selected = launch_settings
         .playlists
@@ -131,6 +133,8 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             theme: detect_system_theme(),
             runtime_shutdown: false,
             outputs: Vec::new(),
+            output_geometry: Default::default(),
+            aspect_confirm: None,
             selected_outputs: Default::default(),
             running_source: None,
             language,
@@ -166,18 +170,25 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             Task::done(Message::AutoScan),
             Task::perform(crate::services::runtime::fetch_outputs(), Message::OutputsLoaded),
             Task::perform(
+                crate::services::runtime::fetch_output_geometry(),
+                Message::OutputGeometryLoaded,
+            ),
+            Task::perform(
                 async { crate::services::autostart::status() },
                 Message::AutostartStatusLoaded,
             ),
-            window::open(window::Settings::default()).1.map(Message::WindowOpened),
+            window::open(window_settings()).1.map(Message::WindowOpened),
         ]),
     )
 }
 
 pub(crate) fn detect_system_theme() -> Theme {
-    match dark_light::detect() {
-        dark_light::Mode::Light => Theme::Light,
-        dark_light::Mode::Dark => Theme::Dark,
-        dark_light::Mode::Default => Theme::Dark,
+    crate::ui::theme::palette::current_theme()
+}
+
+pub(crate) fn window_settings() -> window::Settings {
+    window::Settings {
+        min_size: Some(iced::Size::new(720.0, 480.0)),
+        ..window::Settings::default()
     }
 }

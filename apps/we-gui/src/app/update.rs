@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use iced::{window, Task};
+use iced::{widget::pane_grid, window, Task};
 use we_core::config::{load_launch_settings, OutputBinding};
 use we_core::profile::{
     apply_profile_to_outputs, create_profile, delete_profile, rename_playlist_references,
@@ -34,6 +34,19 @@ use super::{
 };
 
 const MAX_CONCURRENT_GIF_DECODES: usize = 2;
+const MIN_LIBRARY_WIDTH: f32 = 360.0;
+const MIN_SIDEBAR_WIDTH: f32 = 320.0;
+
+fn clamp_library_ratio(viewport_width: f32, ratio: f32) -> f32 {
+    let width = viewport_width.max(1.0);
+    let min_ratio = MIN_LIBRARY_WIDTH / width;
+    let max_ratio = 1.0 - MIN_SIDEBAR_WIDTH / width;
+    if min_ratio > max_ratio {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        ratio.clamp(min_ratio, max_ratio)
+    }
+}
 
 pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
@@ -96,7 +109,22 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             };
             iced::widget::operation::focus(id)
         }
-        Message::PlayPressed => play_selected(app, PlaybackStart::SwitchOrStart),
+        Message::PlayPressed => {
+            let warnings = aspect_mismatch_warnings(app);
+            if !warnings.is_empty() {
+                app.aspect_confirm = Some(warnings);
+                return Task::none();
+            }
+            play_selected(app, PlaybackStart::SwitchOrStart)
+        }
+        Message::AspectConfirmApply => {
+            app.aspect_confirm = None;
+            play_selected(app, PlaybackStart::SwitchOrStart)
+        }
+        Message::AspectConfirmCancel => {
+            app.aspect_confirm = None;
+            Task::none()
+        }
         Message::StopPressed => {
             let stopped = app.shutdown_runtime();
             app.runtime_status =
@@ -145,9 +173,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             ])
         }
         Message::PaneResized(event) => {
-            let ratio = event.ratio.clamp(0.45, 0.82);
+            let ratio = clamp_library_ratio(app.viewport_width, event.ratio);
             app.panes.resize(event.split, ratio);
-            app.library_viewport_width = (app.viewport_width * ratio).max(180.0);
+            app.library_viewport_width = (app.viewport_width * ratio).max(MIN_LIBRARY_WIDTH);
             refresh_visible_gif_previews(app)
         }
         Message::AssetsPathChanged(value) => {
@@ -273,6 +301,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::FullscreenRuleSelected(value) => {
             app.ui_settings.rule_fullscreen = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::RulesAllOutputsToggled(value) => {
+            app.ui_settings.rule_all_outputs = value;
+            persist_host_integration_settings(app);
+            Task::none()
+        }
+        Message::FullscreenAllOutputsToggled(value) => {
+            app.ui_settings.rule_fullscreen_all_outputs = value;
             persist_host_integration_settings(app);
             Task::none()
         }
@@ -790,6 +828,18 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::StatusTick => Task::perform(runtime::fetch_status(), Message::StatusLoaded),
+        Message::OutputGeometryLoaded(result) => {
+            match result {
+                Ok(outputs) => {
+                    app.output_geometry = outputs
+                        .into_iter()
+                        .map(|output| (output.name, (output.width, output.height)))
+                        .collect();
+                }
+                Err(error) => eprintln!("we-gui: could not read display sizes: {error}"),
+            }
+            Task::none()
+        }
         Message::OutputsLoaded(result) => {
             if let Ok(outputs) = result {
                 app.outputs = outputs;
@@ -814,6 +864,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::WindowResized(size) => {
             app.viewport_width = size.width;
             app.library_viewport_height = size.height.max(1.0);
+            if let pane_grid::Node::Split { id, ratio, .. } = app.panes.layout() {
+                let (id, ratio) = (*id, clamp_library_ratio(size.width, *ratio));
+                app.panes.resize(id, ratio);
+                app.library_viewport_width = (size.width * ratio).max(MIN_LIBRARY_WIDTH);
+            }
             if app.sidebar.is_none() {
                 app.library_viewport_width = size.width.max(180.0);
             }
@@ -834,6 +889,9 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             if super::signal::take_shutdown_request() {
                 return Task::done(Message::ExitRequested);
             }
+            if crate::platform::single_instance::take_show_request() {
+                return Task::done(Message::TrayAction(tray::TrayAction::ShowWindow));
+            }
             if let Some(tray) = app.tray.as_mut() {
                 if let Some(action) = tray.poll_action() {
                     return Task::done(Message::TrayAction(action));
@@ -842,7 +900,10 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ThemeTick => {
-            app.theme = super::init::detect_system_theme();
+            // Only swap the theme when the desktop appearance actually changed.
+            if let Some(theme) = crate::ui::theme::palette::refresh() {
+                app.theme = theme;
+            }
             Task::none()
         }
         Message::ExitRequested => exit_application(app),
@@ -851,7 +912,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 if let Some(id) = app.main_window_id {
                     return window::gain_focus(id);
                 }
-                let (_id, task) = window::open(window::Settings::default());
+                let (_id, task) = window::open(super::init::window_settings());
                 task.map(Message::WindowOpened)
             }
             tray::TrayAction::PlaySwitch => Task::done(Message::PlayPressed),
@@ -876,9 +937,8 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
 }
 
 fn exit_application(app: &mut App) -> Task<Message> {
-    if !app.shutdown_owned_runtime() {
-        eprintln!("failed to stop GUI-owned daemon while exiting we-gui");
-    }
+    app.release_owned_runtime();
+    crate::platform::single_instance::release();
     iced::exit()
 }
 
@@ -1667,6 +1727,10 @@ fn play_selected(app: &mut App, start: PlaybackStart) -> Task<Message> {
         app.runtime_status = RuntimeStatus::DaemonNotFound;
         return Task::none();
     }
+    // A manual pause survives config switches; applying a wallpaper means play it.
+    if app.playback_paused && runtime::send_control("resume") {
+        app.playback_paused = false;
+    }
 
     let multi_output = multi_output_mode(app);
     if !multi_output {
@@ -1894,9 +1958,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        daemon_status_supports_multi_output, effective_playback_start, parse_output_runtime_states,
-        playlist_stop_can_be_persisted, preferred_output_targets, status_section_value,
-        PlaybackStart,
+        clamp_library_ratio, daemon_status_supports_multi_output, effective_playback_start,
+        parse_output_runtime_states, playlist_stop_can_be_persisted, preferred_output_targets,
+        status_section_value, PlaybackStart, MIN_LIBRARY_WIDTH, MIN_SIDEBAR_WIDTH,
     };
 
     #[test]
@@ -2034,4 +2098,54 @@ playlist_index = -1
         ));
         assert!(!daemon_status_supports_multi_output("[orchestrator]\nphase = \"running\"\n"));
     }
+
+    #[test]
+    fn library_split_ratio_keeps_both_panes_usable() {
+        let width = 1024.0;
+        let library_min = MIN_LIBRARY_WIDTH / width;
+        let sidebar_max = 1.0 - MIN_SIDEBAR_WIDTH / width;
+
+        assert_eq!(clamp_library_ratio(width, 0.6), 0.6);
+        assert_eq!(clamp_library_ratio(width, 0.1), library_min);
+        assert_eq!(clamp_library_ratio(width, 0.9), sidebar_max);
+
+        // A window too narrow for both minimums keeps the requested ratio.
+        assert_eq!(clamp_library_ratio(400.0, 0.9), 0.9);
+    }
+}
+
+/// Warnings shown in a confirmation dialog before applying the selected
+/// wallpaper (an empty display selection targets every display):
+/// - a web wallpaper targeting several displays only runs on one of them;
+/// - one line per landscape display targeted by a portrait wallpaper.
+/// Computed when applying, so it also works for a wallpaper selected before
+/// we-gui started.
+fn aspect_mismatch_warnings(app: &App) -> Vec<String> {
+    if app.sidebar == Some(Sidebar::Playlist) {
+        return Vec::new();
+    }
+    let Some(entry) = app
+        .selected_id
+        .as_deref()
+        .and_then(|id| app.entries.iter().find(|entry| entry.id == id))
+    else {
+        return Vec::new();
+    };
+    let targets: Vec<&String> = app
+        .outputs
+        .iter()
+        .filter(|output| app.selected_outputs.is_empty() || app.selected_outputs.contains(*output))
+        .collect();
+    let mut warnings = Vec::new();
+    if entry.ty == we_core::wallpaper::WallpaperType::Web && targets.len() > 1 {
+        warnings.push(app.language.web_single_display_warning(targets.len()));
+    }
+    let canvas = crate::domain::aspect::scene_canvas_size(entry);
+    let portrait = crate::domain::aspect::is_portrait_wallpaper(canvas, &entry.title);
+    warnings.extend(targets.iter().filter_map(|output| {
+        let display = *app.output_geometry.get(*output)?;
+        crate::domain::aspect::should_warn_orientation(portrait, display)
+            .then(|| app.language.aspect_warning(canvas, output, display))
+    }));
+    warnings
 }

@@ -1,3 +1,4 @@
+pub mod aspect;
 pub mod i18n;
 pub mod library_grid;
 pub mod library_scan;

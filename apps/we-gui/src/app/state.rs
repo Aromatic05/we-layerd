@@ -62,6 +62,10 @@ pub(crate) struct App {
     pub theme: Theme,
     pub runtime_shutdown: bool,
     pub outputs: Vec<String>,
+    /// Rotated on-screen size per output, for the aspect-ratio warning.
+    pub output_geometry: std::collections::BTreeMap<String, (u32, u32)>,
+    /// Pending "wallpaper shape doesn't match" confirmation: one line per display.
+    pub aspect_confirm: Option<Vec<String>>,
     pub selected_outputs: BTreeSet<String>,
     pub running_source: Option<String>,
     pub language: Language,
@@ -128,14 +132,16 @@ impl App {
         stopped
     }
 
-    pub(crate) fn shutdown_owned_runtime(&mut self) -> bool {
+    /// Quitting the GUI must not take the wallpaper down with it: the daemon
+    /// runs detached and only the explicit Stop action ends it. Forget the
+    /// child handle (dropping a `Child` never kills the process).
+    pub(crate) fn release_owned_runtime(&mut self) {
         if self.runtime_shutdown {
-            return true;
+            return;
         }
         self.runtime_shutdown = true;
-        let stopped = crate::services::runtime::stop_owned(&mut self.runtime_child);
-        self.clear_playback_state();
-        stopped
+        let _ = crate::services::runtime::reap(&mut self.runtime_child);
+        self.runtime_child = None;
     }
 
     pub(crate) fn clear_playback_state(&mut self) {
@@ -150,7 +156,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        let _ = self.shutdown_owned_runtime();
+        self.release_owned_runtime();
     }
 }
 
@@ -191,6 +197,8 @@ pub(crate) enum Message {
     FocusedRuleSelected(we_core::config::RuntimeRuleAction),
     MaximizedRuleSelected(we_core::config::RuntimeRuleAction),
     FullscreenRuleSelected(we_core::config::RuntimeRuleAction),
+    RulesAllOutputsToggled(bool),
+    FullscreenAllOutputsToggled(bool),
     PreferDmabufToggled(bool),
     AllowShmFallbackToggled(bool),
     AutostartStatusLoaded(Result<crate::services::autostart::AutostartStatus, String>),
@@ -263,5 +271,8 @@ pub(crate) enum Message {
     ExitRequested,
     TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>),
+    AspectConfirmApply,
+    AspectConfirmCancel,
+    OutputGeometryLoaded(Result<Vec<crate::services::runtime::OutputGeometry>, String>),
     ToggleOutput(String),
 }

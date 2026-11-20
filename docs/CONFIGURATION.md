@@ -199,6 +199,11 @@ unused. If a named output disappears, only that worker is stopped; when a new na
 only the newly applicable worker is started. Invalid or failed output workers are reported through
 status without stopping healthy outputs.
 
+Scene, video, and web audio is played once, by one output only: the first output in name order.
+Every other worker runs silent, so two screens never play the same soundtrack twice. When the owning
+output disappears, a surviving worker restarts to take over audio. A wallpaper profile's `muted`
+setting still applies on top of this.
+
 Per-output playlists use independent playback state. The global playlist commands remain available
 for the legacy/shared playlist runtime; target a layer-shell output explicitly with:
 

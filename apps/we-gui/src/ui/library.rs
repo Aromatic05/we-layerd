@@ -1,9 +1,10 @@
+use crate::ui::theme::colors;
 use iced::{
     alignment::Vertical,
     widget::{
-        button, column, container, image, responsive, row, scrollable, stack, text, text_input,
+        button, column, container, image, responsive, row, scrollable, stack, text, text_input, Row,
     },
-    Background, Border, Color, ContentFit, Element, Fill, Theme,
+    Background, Border, Color, ContentFit, Element, Fill, Length, Theme,
 };
 use we_core::wallpaper::{WallpaperEntry, WallpaperType};
 
@@ -25,6 +26,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
     let playlist_selected = app.playlist_selected.as_deref();
     let scroll_y = app.library_scroll_y;
     let viewport_height = app.library_viewport_height;
+    let item_count = app.entries.len();
     let grid = responsive(move |size| {
         if filtered_entry_indices.is_empty() {
             return container(text(language.text(Text::NoMatchingWallpapers)).size(16))
@@ -52,40 +54,68 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             language,
         )
     });
-    let filters = row![
-        filter_chip(
-            language.text(Text::FilterAll),
-            "library.filter.all",
-            app.type_filter.is_none(),
-            None
-        ),
-        filter_chip(
-            language.text(Text::FilterWeb),
-            "library.filter.web",
-            app.type_filter == Some(WallpaperType::Web),
-            Some(WallpaperType::Web)
-        ),
-        filter_chip(
-            language.text(Text::FilterScene),
-            "library.filter.scene",
-            app.type_filter == Some(WallpaperType::Scene),
-            Some(WallpaperType::Scene)
-        ),
-        filter_chip(
-            language.text(Text::FilterVideo),
-            "library.filter.video",
-            app.type_filter == Some(WallpaperType::Video),
-            Some(WallpaperType::Video)
-        ),
-    ]
-    .spacing(8);
-    let toolbar = row![
-        column![
+    let search_query = app.search_query.as_str();
+    let type_filter = app.type_filter;
+    let toolbar = responsive(move |size| {
+        let title = column![
             text(language.text(Text::Wallpapers)).size(28),
-            text(language.item_count(app.entries.len())).size(13)
+            text(language.item_count(item_count)).size(13)
         ]
-        .spacing(2)
-        .width(Fill),
+        .spacing(2);
+        if size.width >= 760.0 {
+            row![title.width(Fill), top_bar_buttons(language)]
+                .width(Fill)
+                .align_y(Vertical::Center)
+                .into()
+        } else {
+            column![title, top_bar_buttons(language).wrap().vertical_spacing(8)]
+                .spacing(12)
+                .into()
+        }
+    })
+    .height(Length::Shrink);
+    let search = responsive(move |size| {
+        let input = text_input(language.text(Text::SearchWallpapers), search_query)
+            .id("library.search")
+            .on_input(Message::SearchChanged)
+            .padding(12)
+            .style(search_style);
+        let filters = filter_chips(type_filter, language);
+        if size.width >= 620.0 {
+            row![input.width(Fill), filters].spacing(12).align_y(Vertical::Center).into()
+        } else {
+            column![input, filters.wrap().vertical_spacing(8)].spacing(8).into()
+        }
+    })
+    .height(Length::Shrink);
+    container(
+        column![
+            toolbar,
+            search,
+            scrollable(grid)
+                .id("library.scroll")
+                .on_scroll(|viewport| {
+                    let bounds = viewport.bounds();
+                    Message::LibraryScrolled {
+                        offset_y: viewport.absolute_offset().y,
+                        viewport_width: bounds.width,
+                        viewport_height: bounds.height,
+                    }
+                })
+                .width(Fill)
+                .height(Fill),
+        ]
+        .spacing(16),
+    )
+    .padding(24)
+    .width(Fill)
+    .height(Fill)
+    .style(library_style)
+    .into()
+}
+
+fn top_bar_buttons(language: Language) -> Row<'static, Message> {
+    row![
         container(
             button(text(format!("↻  {}", language.text(Text::RefreshLibrary))).size(16))
                 .on_press(Message::RefreshLibrary)
@@ -117,41 +147,36 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         )
         .id("library.settings"),
     ]
-    .align_y(Vertical::Center);
-    container(
-        column![
-            toolbar,
-            row![
-                text_input(language.text(Text::SearchWallpapers), &app.search_query)
-                    .id("library.search")
-                    .on_input(Message::SearchChanged)
-                    .padding(12)
-                    .style(search_style)
-                    .width(Fill),
-                filters,
-            ]
-            .spacing(12)
-            .align_y(Vertical::Center),
-            scrollable(grid)
-                .id("library.scroll")
-                .on_scroll(|viewport| {
-                    let bounds = viewport.bounds();
-                    Message::LibraryScrolled {
-                        offset_y: viewport.absolute_offset().y,
-                        viewport_width: bounds.width,
-                        viewport_height: bounds.height,
-                    }
-                })
-                .width(Fill)
-                .height(Fill),
-        ]
-        .spacing(16),
-    )
-    .padding(24)
-    .width(Fill)
-    .height(Fill)
-    .style(library_style)
-    .into()
+}
+
+fn filter_chips(type_filter: Option<WallpaperType>, language: Language) -> Row<'static, Message> {
+    row![
+        filter_chip(
+            language.text(Text::FilterAll),
+            "library.filter.all",
+            type_filter.is_none(),
+            None
+        ),
+        filter_chip(
+            language.text(Text::FilterWeb),
+            "library.filter.web",
+            type_filter == Some(WallpaperType::Web),
+            Some(WallpaperType::Web)
+        ),
+        filter_chip(
+            language.text(Text::FilterScene),
+            "library.filter.scene",
+            type_filter == Some(WallpaperType::Scene),
+            Some(WallpaperType::Scene)
+        ),
+        filter_chip(
+            language.text(Text::FilterVideo),
+            "library.filter.video",
+            type_filter == Some(WallpaperType::Video),
+            Some(WallpaperType::Video)
+        ),
+    ]
+    .spacing(8)
 }
 
 fn build_wallpaper_grid<'a>(
@@ -212,7 +237,7 @@ fn make_wallpaper_card<'a>(
             .width(card_width)
             .height(card_height)
             .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(18, 18, 18))),
+                background: Some(Background::Color(colors().card_bg)),
                 ..Default::default()
             })
             .into()
@@ -241,7 +266,7 @@ fn make_wallpaper_card<'a>(
         .align_y(Vertical::Bottom)
         .padding(8);
     let border_color =
-        if selected { Color::from_rgb8(174, 198, 255) } else { Color::from_rgb8(70, 72, 78) };
+        if selected { colors().accent_bg } else { colors().border };
     let frame = container(stack![media, overlay]).width(card_width).height(card_height).style(
         move |_theme: &Theme| container::Style {
             border: Border {
@@ -299,24 +324,24 @@ fn image_card_button_style(_theme: &Theme, _status: button::Status) -> button::S
 
 fn library_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(24, 25, 28))),
+        background: Some(Background::Color(colors().view_bg)),
         ..Default::default()
     }
 }
 
 fn search_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
     let border = if matches!(status, text_input::Status::Focused { .. }) {
-        Color::from_rgb8(174, 198, 255)
+        colors().accent_bg
     } else {
-        Color::from_rgb8(140, 144, 153)
+        colors().outline
     };
     text_input::Style {
-        background: Background::Color(Color::from_rgb8(43, 44, 48)),
+        background: Background::Color(colors().field_bg),
         border: Border { radius: 28.0.into(), width: 1.0, color: border },
-        icon: Color::from_rgb8(196, 199, 204),
-        placeholder: Color::from_rgb8(196, 199, 204),
-        value: Color::from_rgb8(230, 225, 229),
-        selection: Color::from_rgb8(78, 99, 139),
+        icon: colors().fg_dim,
+        placeholder: colors().fg_dim,
+        value: colors().fg,
+        selection: colors().selection,
     }
 }
 
@@ -332,23 +357,23 @@ fn filter_chip<'a>(
             .padding([8, 14])
             .style(move |_theme, status| {
                 let background = if selected {
-                    Color::from_rgb8(70, 91, 129)
+                    colors().accent_container
                 } else if matches!(status, button::Status::Hovered) {
-                    Color::from_rgb8(54, 56, 62)
+                    colors().hover
                 } else {
                     Color::TRANSPARENT
                 };
                 button::Style {
                     background: Some(Background::Color(background)),
                     text_color: if selected {
-                        Color::from_rgb8(222, 231, 255)
+                        colors().on_accent_container
                     } else {
-                        Color::from_rgb8(201, 203, 209)
+                        colors().fg_dim
                     },
                     border: Border {
                         radius: 20.0.into(),
                         width: if selected { 0.0 } else { 1.0 },
-                        color: Color::from_rgb8(143, 147, 156),
+                        color: colors().outline,
                     },
                     ..Default::default()
                 }
@@ -360,13 +385,13 @@ fn filter_chip<'a>(
 
 fn top_bar_button_style(_theme: &Theme, status: button::Status) -> button::Style {
     let background = if matches!(status, button::Status::Hovered) {
-        Color::from_rgb8(56, 58, 63)
+        colors().hover
     } else {
         Color::TRANSPARENT
     };
     button::Style {
         background: Some(Background::Color(background)),
-        text_color: Color::from_rgb8(220, 225, 235),
+        text_color: colors().fg,
         border: Border { radius: 20.0.into(), ..Default::default() },
         ..Default::default()
     }

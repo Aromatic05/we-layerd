@@ -1,7 +1,8 @@
+use crate::ui::theme::colors;
 use iced::{
     alignment::Horizontal,
     widget::{container, pane_grid, stack, text},
-    window, Color, Element, Fill,
+    window, Element, Fill,
 };
 
 use crate::{
@@ -31,6 +32,11 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         library
     };
 
+    let content: Element<'_, Message> = match &app.aspect_confirm {
+        Some(warnings) => stack![content, aspect_confirm_dialog(app, warnings)].into(),
+        None => content,
+    };
+
     if app.layerd_available {
         content
     } else {
@@ -43,7 +49,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
                     )
                 )
                 .size(18)
-                .color(Color::from_rgb8(255, 180, 171)),
+                .color(colors().error),
             )
             .width(Fill)
             .align_x(Horizontal::Center)
@@ -100,4 +106,45 @@ fn sidebar_view(app: &App, sidebar: Sidebar) -> Element<'_, Message> {
             }
         },
     }
+}
+
+
+/// Modal shown before applying a wallpaper whose shape doesn't match a target
+/// display (e.g. a portrait wallpaper on a landscape monitor).
+fn aspect_confirm_dialog<'a>(app: &'a App, warnings: &'a [String]) -> Element<'a, Message> {
+    use crate::ui::sidebar::detail::{outlined_button_style, section_style};
+    use iced::widget::{button, center, column, opaque, row};
+
+    let language = app.language;
+    let card = container(
+        column![
+            text(language.text(Text::AspectConfirmTitle)).size(18),
+            column(warnings.iter().map(|warning| {
+                text(warning.as_str()).size(13).color(colors().warning).into()
+            }))
+            .spacing(6),
+            row![
+                button(text(language.text(Text::AspectConfirmCancel)).size(14))
+                    .on_press(Message::AspectConfirmCancel)
+                    .padding([8, 16])
+                    .style(outlined_button_style),
+                button(text(language.text(Text::AspectConfirmApply)).size(14))
+                    .on_press(Message::AspectConfirmApply)
+                    .padding([8, 16])
+                    .style(|theme, status| iced::widget::button::primary(theme, status)),
+            ]
+            .spacing(10),
+        ]
+        .spacing(14)
+        .max_width(520),
+    )
+    .padding(20)
+    .style(section_style);
+
+    opaque(
+        center(card).style(|_theme| container::Style {
+            background: Some(iced::Background::Color(iced::Color { a: 0.55, ..iced::Color::BLACK })),
+            ..Default::default()
+        }),
+    )
 }

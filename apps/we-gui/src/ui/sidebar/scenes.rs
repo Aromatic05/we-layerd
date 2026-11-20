@@ -1,8 +1,9 @@
+use crate::ui::theme::colors;
 use std::collections::BTreeSet;
 
 use iced::{
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
-    Background, Border, Color, Element, Fill, Theme,
+    Background, Border, Element, Fill, Theme,
 };
 use we_core::config::{RuntimeRuleAction, SceneDay, ScenePower};
 
@@ -207,7 +208,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             .spacing(9);
             if let Err(error) = editor.rules.validate() {
                 editor_panel =
-                    editor_panel.push(text(error).size(12).color(Color::from_rgb8(255, 171, 164)));
+                    editor_panel.push(text(error).size(12).color(colors().error));
             }
             content = content.push(container(editor_panel).padding(14).style(panel_style));
         }
@@ -243,15 +244,15 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
     content = content.push(divider()).push(preview(app));
     if dirty {
         content = content.push(
-            text(language.text(Text::SceneUnsaved)).size(13).color(Color::from_rgb8(255, 210, 137)),
+            text(language.text(Text::SceneUnsaved)).size(13).color(colors().warning),
         );
     }
     if let Some(error) = &editor.error {
-        content = content.push(text(error.clone()).size(13).color(Color::from_rgb8(255, 171, 164)));
+        content = content.push(text(error.clone()).size(13).color(colors().error));
     }
     if let Some(notice) = &editor.notice {
         content =
-            content.push(text(notice.clone()).size(13).color(Color::from_rgb8(146, 214, 180)));
+            content.push(text(notice.clone()).size(13).color(colors().success));
     }
 
     container(scrollable(content.spacing(14)).height(Fill))
@@ -430,34 +431,17 @@ fn divider() -> Element<'static, Message> {
     container(text(""))
         .width(Fill)
         .height(1)
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(if matches!(theme, Theme::Light) {
-                Color::from_rgb8(213, 215, 220)
-            } else {
-                Color::from_rgb8(67, 70, 76)
-            })),
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(colors().border)),
             ..Default::default()
         })
         .into()
 }
 
-fn panel_style(theme: &Theme) -> container::Style {
-    let light = matches!(theme, Theme::Light);
+fn panel_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(if light {
-            Color::from_rgb8(244, 246, 250)
-        } else {
-            Color::from_rgb8(38, 41, 47)
-        })),
-        border: Border {
-            radius: 12.0.into(),
-            width: 1.0,
-            color: if light {
-                Color::from_rgb8(224, 226, 231)
-            } else {
-                Color::from_rgb8(57, 62, 70)
-            },
-        },
+        background: Some(Background::Color(colors().card_bg)),
+        border: Border { radius: 12.0.into(), width: 1.0, color: colors().border },
         ..Default::default()
     }
 }
