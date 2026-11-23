@@ -78,6 +78,9 @@ pub(crate) struct App {
     /// Whether wallpapers are silenced through the daemon's runtime mute
     /// (tray tick or `we-layerd ctl mute`), mirrored from the status poll.
     pub wallpapers_muted: bool,
+    pub gui_autostart_enabled: bool,
+    pub gui_autostart_pending: bool,
+    pub gui_autostart_error: Option<String>,
     pub preferences_generation: u64,
     pub playlist_selected: Option<String>,
     pub playlist_new_name_input: String,
@@ -206,6 +209,9 @@ pub(crate) enum Message {
     AllowShmFallbackToggled(bool),
     AutostartStatusLoaded(Result<crate::services::autostart::AutostartStatus, String>),
     AutostartToggled(bool),
+    GuiAutostartStatusLoaded(Result<bool, String>),
+    GuiAutostartToggled(bool),
+    GuiAutostartUpdated { enabled: bool, result: Result<(), String> },
     AutostartUpdated { enabled: bool, result: Result<(), String> },
     LanguageSelected(Language),
     PreferencesSaved { generation: u64, result: Result<(), String> },

@@ -332,6 +332,8 @@ pub(crate) enum Text {
     StartOnLogin,
     StartOnLoginDescription,
     StartOnLoginManagedDescription,
+    StartGuiOnLogin,
+    StartGuiOnLoginDescription,
     EnableWallpaperInput,
     WallpaperInputMode,
     WallpaperInputModeDirect,

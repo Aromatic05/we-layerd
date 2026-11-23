@@ -8,9 +8,14 @@ mod subscription;
 mod update;
 mod view;
 pub(crate) use state::{App, Message};
-pub fn run() -> iced::Result {
+pub fn run(open_window: bool) -> iced::Result {
     signal::install().expect("install GUI shutdown signal handler");
-    iced::daemon(init::initialize, update::update, view::daemon_view)
+    iced::daemon(
+        // BootFn::boot takes no arguments; capture the tray-only flag in the closure.
+        move || init::initialize(open_window),
+        update::update,
+        view::daemon_view,
+    )
         .title("we-gui")
         .theme(|app: &App, _window| app.theme.clone())
         .subscription(subscription::subscription)
@@ -166,6 +171,9 @@ mod tests {
             autostart_pending: false,
             autostart_error: None,
             wallpapers_muted: false,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: false,
+            gui_autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -333,6 +341,9 @@ mod tests {
             autostart_pending: false,
             autostart_error: None,
             wallpapers_muted: false,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: false,
+            gui_autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -446,6 +457,9 @@ mod tests {
             autostart_pending: false,
             autostart_error: None,
             wallpapers_muted: false,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: false,
+            gui_autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -660,6 +674,29 @@ mod tests {
         assert!(!app.wallpapers_muted);
     }
 
+    #[test]
+    fn gui_autostart_status_reply_enables_the_checkbox() {
+        let mut app = property_test_app();
+        // The checkbox starts insensitive until the status probe answers, so the reply must
+        // clear the pending flag; otherwise it stays dead for the whole session.
+        app.gui_autostart_pending = true;
+
+        let _ = update::update(&mut app, Message::GuiAutostartStatusLoaded(Ok(true)));
+        assert!(!app.gui_autostart_pending);
+        assert!(app.gui_autostart_enabled);
+
+        app.gui_autostart_pending = true;
+        let _ = update::update(&mut app, Message::GuiAutostartStatusLoaded(Err("boom".into())));
+        assert!(!app.gui_autostart_pending);
+        assert!(app.gui_autostart_error.is_some());
+
+        // A toggle is accepted once the probe has answered.
+        app.gui_autostart_pending = false;
+        app.gui_autostart_enabled = true;
+        let _ = update::update(&mut app, Message::GuiAutostartToggled(false));
+        assert!(app.gui_autostart_pending);
+    }
+
     fn property_test_app() -> App {
         let nonce =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -715,6 +752,9 @@ mod tests {
             autostart_pending: false,
             autostart_error: None,
             wallpapers_muted: false,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: false,
+            gui_autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),

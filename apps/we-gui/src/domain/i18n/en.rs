@@ -134,6 +134,10 @@ pub(super) fn text(key: Text) -> &'static str {
             "Enables the systemd user service for future graphical logins and applies the saved wallpaper configuration."
         }
         Text::StartOnLoginManagedDescription => "Managed by system configuration.",
+        Text::StartGuiOnLogin => "Start the control interface on login",
+        Text::StartGuiOnLoginDescription => {
+            "Launches we-gui for future logins without opening a window (tray icon only)."
+        }
         Text::EnableWallpaperInput => "Enable wallpaper input",
         Text::WallpaperInputMode => "Wallpaper input mode",
         Text::WallpaperInputModeDirect => "Direct (default)",

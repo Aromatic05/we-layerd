@@ -22,6 +22,9 @@ pub fn build_settings_overlay<'a>(
     autostart_system_managed: bool,
     autostart_pending: bool,
     autostart_error: Option<&'a str>,
+    gui_autostart_enabled: bool,
+    gui_autostart_pending: bool,
+    gui_autostart_error: Option<&'a str>,
 ) -> Element<'a, Message> {
     let assets_path_display = format_path_for_display(&ui_settings.assets_path, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
@@ -61,6 +64,14 @@ pub fn build_settings_overlay<'a>(
         autostart_checkbox
     } else {
         autostart_checkbox.on_toggle(Message::AutostartToggled)
+    };
+    let gui_autostart_checkbox = checkbox(gui_autostart_enabled)
+        .label(language.text(Text::StartGuiOnLogin))
+        .style(md_checkbox_style);
+    let gui_autostart_checkbox = if gui_autostart_pending {
+        gui_autostart_checkbox
+    } else {
+        gui_autostart_checkbox.on_toggle(Message::GuiAutostartToggled)
     };
 
     let mut content = column![
@@ -164,6 +175,8 @@ pub fn build_settings_overlay<'a>(
             language.text(Text::StartOnLoginDescription)
         })
         .size(12),
+        container(gui_autostart_checkbox).id("settings.gui-autostart"),
+        text(language.text(Text::StartGuiOnLoginDescription)).size(12),
         container(
             checkbox(ui_settings.interactive)
                 .label(language.text(Text::EnableWallpaperInput))
@@ -300,6 +313,9 @@ pub fn build_settings_overlay<'a>(
     ]
     .spacing(10);
     if let Some(error) = autostart_error {
+        content = content.push(text(error).size(12));
+    }
+    if let Some(error) = gui_autostart_error {
         content = content.push(text(error).size(12));
     }
 

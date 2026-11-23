@@ -360,6 +360,39 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::GuiAutostartStatusLoaded(result) => {
+            // The checkbox is disabled while pending; this reply ends the wait.
+            app.gui_autostart_pending = false;
+            match result {
+                Ok(enabled) => {
+                    app.gui_autostart_enabled = enabled;
+                    app.gui_autostart_error = None;
+                }
+                Err(error) => app.gui_autostart_error = Some(error),
+            }
+            Task::none()
+        }
+        Message::GuiAutostartToggled(enabled) => {
+            if app.gui_autostart_pending {
+                return Task::none();
+            }
+            app.gui_autostart_pending = true;
+            app.gui_autostart_error = None;
+            Task::perform(async move { autostart::gui_set_enabled(enabled) }, move |result| {
+                Message::GuiAutostartUpdated { enabled, result }
+            })
+        }
+        Message::GuiAutostartUpdated { enabled, result } => {
+            app.gui_autostart_pending = false;
+            match result {
+                Ok(()) => {
+                    app.gui_autostart_enabled = enabled;
+                    app.gui_autostart_error = None;
+                }
+                Err(error) => app.gui_autostart_error = Some(error),
+            }
+            Task::none()
+        }
         Message::LanguageSelected(language) => {
             app.language = language;
             if let Some(tray) = app.tray.as_mut() {

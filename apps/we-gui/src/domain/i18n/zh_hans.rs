@@ -134,6 +134,8 @@ pub(super) fn text(key: Text) -> &'static str {
             "为后续图形会话启用 systemd 用户服务，并自动应用已保存的壁纸配置。"
         }
         Text::StartOnLoginManagedDescription => "由系统配置管理。",
+        Text::StartGuiOnLogin => "登录时自动启动控制界面",
+        Text::StartGuiOnLoginDescription => "在后续登录时启动 we-gui（不打开窗口，常驻托盘）。",
         Text::EnableWallpaperInput => "启用壁纸输入",
         Text::WallpaperInputMode => "壁纸输入模式",
         Text::WallpaperInputModeDirect => "直接输入（默认）",
