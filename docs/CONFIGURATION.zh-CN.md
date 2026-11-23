@@ -110,6 +110,11 @@ on_battery = "keep" # 可选："keep"、"mute"、"pause"
 的 `[integration_runtime]`。当前自适应帧率和暂停/静音策略仅接入 layer-shell 后端，
 GNOME 的独立渲染路径暂不受此策略控制。
 
+`we-layerd ctl mute` / `we-layerd ctl unmute` 在运行时静音或恢复所有输出。该静音
+叠加到窗口规则使用的同一条策略通道，对场景与视频壁纸即时生效，跨播放列表推进
+持续有效，不重写配置文件，也不重启任何 worker。状态输出中的
+`[integration_runtime].manual_muted` 反映该状态，we-gui 托盘菜单的勾选项与之同步。
+
 ## 多输出 layer-shell 运行时
 
 Wayland 输出使用协议版本 4 提供的稳定 `wl_output.name` 标识。每个输出拥有独立的

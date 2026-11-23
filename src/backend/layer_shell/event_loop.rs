@@ -412,6 +412,9 @@ pub(crate) fn run_output_with_role(
     output.landscape_content = matches!(wallpaper_type, WallpaperType::Video);
     output.recompute_geometry();
     let presentation_geometry = output.geometry;
+    // Seed the tray mute too, so the first policy pass does not open an audio device that
+    // `apply_host_integrations` is about to mute anyway.
+    let tray_muted = host_integrations.manual_muted();
     let mut state = LayerShellState {
         output_name: target_output.to_string(),
         objects: WaylandObjects::default(),
@@ -462,9 +465,12 @@ pub(crate) fn run_output_with_role(
         render_resolution_follows_output: cfg.renderer.render_width.is_none()
             && cfg.renderer.render_height.is_none(),
         pause_state: crate::runtime::rules::PauseState::default(),
+        // The tray mute is not part of the config mask: it arrives through the policy
+        // snapshot, so only the applied state is seeded here. Recording it as applied keeps
+        // the first policy pass from reopening a device the session already started muted.
         configured_muted: cfg.renderer.muted || cfg.renderer.suppress_audio,
         rule_muted: false,
-        applied_muted: cfg.renderer.muted || cfg.renderer.suppress_audio,
+        applied_muted: cfg.renderer.muted || cfg.renderer.suppress_audio || tray_muted,
         wallpaper_type,
         media_generation: 0,
         audio_generation: 0,
@@ -542,8 +548,9 @@ pub(crate) fn run_output_with_role(
         speed: cfg.renderer.speed,
         volume: cfg.renderer.volume,
         // A worker that does not own audio stays silent however the wallpaper profile is
-        // rewritten later, e.g. when a playlist advances.
-        muted: cfg.renderer.muted || cfg.renderer.suppress_audio,
+        // rewritten later, e.g. when a playlist advances. The tray mute is seeded here so a
+        // wallpaper switched while muted never opens its audio device for a few frames.
+        muted: cfg.renderer.muted || cfg.renderer.suppress_audio || tray_muted,
         options_json: cfg.renderer.options_json.clone(),
     };
     session.set_source(source)?;
@@ -656,6 +663,9 @@ pub(crate) fn run_output_with_role(
                     status_sink(state.snapshot());
                     return Ok(exit);
                 }
+                // Handled globally in the IPC layer; a worker is never the
+                // target of a manual mute.
+                ControlCommand::Mute | ControlCommand::Unmute => {}
             }
         }
 

@@ -118,8 +118,14 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
             let playlist_runtime = playlist_runtime.clone();
             let scheduler_stop = scheduler_stop.clone();
             let playlist_state_path = playlist_state_path.clone();
+            let manual_mute_integrations = host_integrations.clone();
             move |cmd| {
-                let handled = handle_runtime_control_command(cmd, &command_tx, &runtime_state)?;
+                let handled = handle_runtime_control_command(
+                    cmd,
+                    &command_tx,
+                    &runtime_state,
+                    &manual_mute_integrations,
+                )?;
                 let now = Instant::now();
                 if let Ok(mut runtime) = playlist_runtime.lock() {
                     match cmd {
@@ -1057,6 +1063,7 @@ fn handle_runtime_control_command(
     cmd: ControlCommand,
     control_tx: &mpsc::Sender<ControlCommand>,
     runtime_state: &Arc<Mutex<RuntimeState>>,
+    host_integrations: &crate::runtime::integrations::HostIntegrations,
 ) -> Result<bool> {
     match cmd {
         ControlCommand::Pause => {
@@ -1075,6 +1082,12 @@ fn handle_runtime_control_command(
             if let Ok(mut state) = runtime_state.lock() {
                 state.mark_resumed();
             }
+            Ok(true)
+        }
+        // A tray-level mute must not rewrite the config (that restarts workers),
+        // so it rides the integration policy rail every worker already polls.
+        ControlCommand::Mute | ControlCommand::Unmute => {
+            host_integrations.set_manual_muted(matches!(cmd, ControlCommand::Mute));
             Ok(true)
         }
         ControlCommand::Reload => Ok(false),
@@ -1701,17 +1714,66 @@ user_properties = { enabled = false }
     fn playback_control_forwards_command_and_updates_status() {
         let cfg = Config::default();
         let runtime_state = std::sync::Arc::new(std::sync::Mutex::new(RuntimeState::new(&cfg)));
+        let integrations = crate::runtime::integrations::HostIntegrations::default();
         let (tx, rx) = std::sync::mpsc::channel();
 
-        assert!(handle_runtime_control_command(ControlCommand::Pause, &tx, &runtime_state).unwrap());
+        assert!(
+            handle_runtime_control_command(
+                ControlCommand::Pause,
+                &tx,
+                &runtime_state,
+                &integrations
+            )
+            .unwrap()
+        );
         assert_eq!(rx.try_recv().expect("pause command"), ControlCommand::Pause);
         assert_eq!(runtime_state.lock().expect("runtime state").phase, RuntimePhase::Paused);
 
         assert!(
-            handle_runtime_control_command(ControlCommand::Resume, &tx, &runtime_state).unwrap()
+            handle_runtime_control_command(
+                ControlCommand::Resume,
+                &tx,
+                &runtime_state,
+                &integrations
+            )
+            .unwrap()
         );
         assert_eq!(rx.try_recv().expect("resume command"), ControlCommand::Resume);
         assert_eq!(runtime_state.lock().expect("runtime state").phase, RuntimePhase::Running);
+    }
+
+    #[test]
+    fn manual_mute_command_sets_integrations_without_forwarding() {
+        let cfg = Config::default();
+        let runtime_state = std::sync::Arc::new(std::sync::Mutex::new(RuntimeState::new(&cfg)));
+        let integrations = crate::runtime::integrations::HostIntegrations::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        // Handled globally (Ok(true) = handled, not forwarded): nothing reaches the
+        // orchestrator and the integrations runtime carries the mute.
+        assert!(
+            handle_runtime_control_command(
+                ControlCommand::Mute,
+                &tx,
+                &runtime_state,
+                &integrations
+            )
+            .unwrap()
+        );
+        assert!(integrations.manual_muted());
+        assert!(rx.try_recv().is_err());
+
+        assert!(
+            handle_runtime_control_command(
+                ControlCommand::Unmute,
+                &tx,
+                &runtime_state,
+                &integrations
+            )
+            .unwrap()
+        );
+        assert!(!integrations.manual_muted());
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

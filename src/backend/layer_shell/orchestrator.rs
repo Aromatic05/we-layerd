@@ -342,6 +342,8 @@ pub(crate) fn run_with_surface(
                         &surface,
                     )?;
                 }
+                // Handled globally in the IPC layer; nothing to forward here.
+                ControlCommand::Mute | ControlCommand::Unmute => {}
             }
         }
 

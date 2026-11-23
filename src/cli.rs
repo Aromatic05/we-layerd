@@ -69,6 +69,8 @@ pub enum ControlAction {
     Stop,
     Pause,
     Resume,
+    Mute,
+    Unmute,
     Reload,
     Status,
 }

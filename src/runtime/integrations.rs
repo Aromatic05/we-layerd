@@ -55,6 +55,7 @@ struct IntegrationState {
     audio_source: String,
     audio_error: Option<String>,
     policy_generation: u64,
+    manual_muted: bool,
     policies: BTreeMap<String, RuntimePolicy>,
     rules_enabled: bool,
     rules_available: bool,
@@ -79,6 +80,7 @@ impl Default for IntegrationState {
             audio_source: String::new(),
             audio_error: None,
             policy_generation: 0,
+            manual_muted: false,
             policies: BTreeMap::new(),
             rules_enabled: false,
             rules_available: false,
@@ -92,6 +94,28 @@ impl Default for IntegrationState {
 #[derive(Clone, Default)]
 pub(crate) struct HostIntegrations {
     state: Arc<Mutex<IntegrationState>>,
+}
+
+impl HostIntegrations {
+    /// Silence every output without touching the persisted config: the manual
+    /// mute folds into the runtime policy that workers already react to, so
+    /// no worker restarts and the mute survives playlist rewrites.
+    pub(crate) fn set_manual_muted(&self, muted: bool) {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.manual_muted != muted {
+            state.manual_muted = muted;
+            state.policy_generation = state.policy_generation.wrapping_add(1);
+        }
+    }
+
+    /// Current manual-mute state, mirrored into the status TOML for the GUI and seeded into
+    /// a new renderer session so a muted wallpaper never opens its audio device.
+    pub(crate) fn manual_muted(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .manual_muted
+    }
 }
 
 pub(crate) struct HostIntegrationRuntime {
@@ -139,6 +163,9 @@ impl HostIntegrations {
             .or_else(|| state.policies.get(crate::runtime::rules::ALL_OUTPUTS_POLICY_KEY))
             .copied()
             .unwrap_or_default();
+        if state.manual_muted {
+            policy.mute = true;
+        }
         let fps_limit = if state.power_state == PowerState::Battery {
             match state.adaptive.on_battery {
                 RuntimeRuleAction::Keep => {}
@@ -178,6 +205,7 @@ impl HostIntegrations {
             rules_enabled: bool,
             rules_available: bool,
             rules_error: &'a str,
+            manual_muted: bool,
             power_state: &'a str,
             adaptive_enabled: bool,
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,6 +226,7 @@ impl HostIntegrations {
                 rules_enabled: state.rules_enabled,
                 rules_available: state.rules_available,
                 rules_error: state.rules_error.as_deref().unwrap_or(""),
+                manual_muted: state.manual_muted,
                 power_state: state.power_state.as_str(),
                 adaptive_enabled: !state.adaptive.is_disabled(),
                 adaptive_fps_cap: if state.power_state == PowerState::Battery {
@@ -1029,6 +1058,41 @@ mod tests {
         assert!(!hdmi.policy.pause);
         assert!(hdmi.policy.mute);
         assert_eq!(dp.audio_generation, hdmi.audio_generation);
+    }
+
+    #[test]
+    fn manual_mute_folds_into_every_output_policy_and_bumps_the_generation() {
+        let host = HostIntegrations::default();
+        host.update_rules(
+            true,
+            true,
+            [
+                ("DP-1".to_string(), RuntimePolicy { pause: false, mute: false }),
+                ("HDMI-A-1".to_string(), RuntimePolicy { pause: false, mute: false }),
+            ]
+            .into_iter()
+            .collect(),
+            None,
+        );
+        let before = host.snapshot_for_output("DP-1").policy_generation;
+
+        host.set_manual_muted(true);
+        let dp = host.snapshot_for_output("DP-1");
+        let hdmi = host.snapshot_for_output("HDMI-A-1");
+        // The tray mute is global: every output silences without a rule rewrite.
+        assert!(dp.policy.mute);
+        assert!(hdmi.policy.mute);
+        assert_ne!(dp.policy_generation, before);
+        assert!(host.manual_muted());
+
+        // Idempotent: muting again must not bump the generation again.
+        host.set_manual_muted(true);
+        assert_eq!(host.snapshot_for_output("DP-1").policy_generation, dp.policy_generation);
+
+        host.set_manual_muted(false);
+        let dp = host.snapshot_for_output("DP-1");
+        assert!(!dp.policy.mute);
+        assert_ne!(dp.policy_generation, before.wrapping_add(1).wrapping_sub(1));
     }
 
     #[test]

@@ -44,6 +44,8 @@ fn main() -> Result<()> {
             ControlAction::Stop => ipc::send_command(ControlCommand::Stop),
             ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
             ControlAction::Resume => ipc::send_command(ControlCommand::Resume),
+            ControlAction::Mute => ipc::send_command(ControlCommand::Mute),
+            ControlAction::Unmute => ipc::send_command(ControlCommand::Unmute),
             ControlAction::Reload => ipc::send_command(ControlCommand::Reload),
             ControlAction::Status => {
                 println!("{}", ipc::request_running_config()?);

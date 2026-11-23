@@ -20,6 +20,8 @@ pub enum ControlCommand {
     Stop,
     Pause,
     Resume,
+    Mute,
+    Unmute,
     Reload,
     Reconfigure,
 }
@@ -30,6 +32,8 @@ impl ControlCommand {
             Self::Stop => "stop",
             Self::Pause => "pause",
             Self::Resume => "resume",
+            Self::Mute => "mute",
+            Self::Unmute => "unmute",
             Self::Reload => "reload",
             Self::Reconfigure => "reconfigure",
         }
@@ -40,6 +44,8 @@ impl ControlCommand {
             "stop" => Some(Self::Stop),
             "pause" => Some(Self::Pause),
             "resume" => Some(Self::Resume),
+            "mute" => Some(Self::Mute),
+            "unmute" => Some(Self::Unmute),
             "reload" => Some(Self::Reload),
             _ => None,
         }
@@ -601,5 +607,19 @@ mod tests {
             Some(ControlRequest::Profile(ProfileCommand::Apply("Desk Setup".to_string())))
         );
         assert_eq!(ControlRequest::parse("profile apply    "), None);
+    }
+
+    #[test]
+    fn manual_mute_ipc_parses_without_config_arguments() {
+        assert_eq!(
+            ControlRequest::parse("mute"),
+            Some(ControlRequest::Command(super::ControlCommand::Mute))
+        );
+        assert_eq!(
+            ControlRequest::parse("unmute"),
+            Some(ControlRequest::Command(super::ControlCommand::Unmute))
+        );
+        // A stray word keeps the request invalid rather than aliasing pause.
+        assert_eq!(ControlRequest::parse("mute all"), None);
     }
 }

@@ -146,6 +146,12 @@ fullscreen = "pause"
 runtime diagnostics report media/audio renderer capability and current rule mute state. Collectors
 run outside the frame loop, and changing integration/rule settings does not recreate output workers.
 
+`we-layerd ctl mute` / `we-layerd ctl unmute` silence or restore every output at runtime. The mute
+folds into the per-output policy rail (the same one the window rules use), so it applies to scene
+and video wallpapers live, persists across playlist advances, never rewrites the config file, and
+never restarts a worker. `[integration_runtime].manual_muted` in the status output reports it; the
+tray menu tick in we-gui mirrors it.
+
 ### Adaptive battery policy
 
 An optional policy reduces the actual renderer tick rate when the kernel reports battery power:
