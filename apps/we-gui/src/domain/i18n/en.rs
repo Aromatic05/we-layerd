@@ -221,6 +221,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::TrayStop => "Stop",
         Text::TrayPause => "Pause",
         Text::TrayResume => "Resume",
+        Text::TrayMuteWallpapers => "Mute wallpapers",
         Text::TrayQuit => "Quit",
     }
 }

@@ -797,6 +797,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 Ok(runtime::DaemonStatus::Running(text)) => {
                     app.playback_running = status_value(&text, "phase") == Some("running");
                     app.playback_paused = status_value(&text, "phase") == Some("paused");
+                    // Mute is daemon-wide, not tied to a playing wallpaper, so sync it even
+                    // while the runtime is idle.
+                    let muted = status_section_value(&text, "integration_runtime", "manual_muted")
+                        .is_some_and(|value| value == "true");
+                    if muted != app.wallpapers_muted {
+                        app.wallpapers_muted = muted;
+                        if let Some(tray) = app.tray.as_mut() {
+                            tray.set_mute_checked(muted);
+                        }
+                    }
                     if app.playback_running || app.playback_paused {
                         app.runtime_outputs = parse_output_runtime_states(&text);
                         app.running_source = status_value(&text, "source").map(str::to_string);
@@ -814,6 +824,12 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 }
                 Ok(runtime::DaemonStatus::NotRunning) => {
                     app.clear_playback_state();
+                    if app.wallpapers_muted {
+                        app.wallpapers_muted = false;
+                        if let Some(tray) = app.tray.as_mut() {
+                            tray.set_mute_checked(false);
+                        }
+                    }
                     RuntimeStatus::DaemonNotRunning
                 }
                 Ok(runtime::DaemonStatus::EmptyResponse) => {
@@ -936,6 +952,19 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 if runtime::send_control("resume") {
                     app.playback_running = true;
                     app.playback_paused = false;
+                }
+                Task::none()
+            }
+            tray::TrayAction::MuteToggled => {
+                // The daemon owns the mute; the GUI just flips it and mirrors the
+                // new state in the tick, whatever a CLI `ctl mute` did meanwhile.
+                let target = !app.wallpapers_muted;
+                let ok = runtime::send_control(if target { "mute" } else { "unmute" });
+                if ok {
+                    app.wallpapers_muted = target;
+                }
+                if let Some(tray) = app.tray.as_mut() {
+                    tray.set_mute_checked(if ok { target } else { app.wallpapers_muted });
                 }
                 Task::none()
             }

@@ -37,6 +37,7 @@ mod tests {
 
     use super::{settings::sync_from_ui, update, App, Message};
     use crate::domain::ui_state::Sidebar;
+    use crate::services::runtime::DaemonStatus;
     use we_core::wallpaper::{WallpaperEntry, WallpaperType};
     use crate::{
         domain::{
@@ -164,6 +165,7 @@ mod tests {
             autostart_system_managed: false,
             autostart_pending: false,
             autostart_error: None,
+            wallpapers_muted: false,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -330,6 +332,7 @@ mod tests {
             autostart_system_managed: false,
             autostart_pending: false,
             autostart_error: None,
+            wallpapers_muted: false,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -442,6 +445,7 @@ mod tests {
             autostart_system_managed: false,
             autostart_pending: false,
             autostart_error: None,
+            wallpapers_muted: false,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -583,6 +587,79 @@ mod tests {
         assert_eq!(lines[2], format!("run --config {}", config.display()));
         fs::remove_dir_all(temp).expect("remove test directory");
     }
+    #[cfg(unix)]
+    #[test]
+    fn tray_mute_toggles_daemon_command_and_mirrors_state() {
+        let _lock = ENV_LOCK.lock().expect("environment lock");
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
+        let temp = std::env::temp_dir().join(format!("we-gui-tray-mute-{suffix}"));
+        let command = temp.join("we-layerd");
+        let log = temp.join("commands.log");
+        fs::create_dir_all(&temp).expect("create test directory");
+        fs::write(&command, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$WE_GUI_TEST_LOG\"\nexit 0\n")
+            .expect("write fake we-layerd");
+        let mut permissions = fs::metadata(&command).expect("fake command metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&command, permissions).expect("make fake command executable");
+
+        let old_path = std::env::var_os("PATH");
+        let old_log = std::env::var_os("WE_GUI_TEST_LOG");
+        std::env::set_var("PATH", &temp);
+        std::env::set_var("WE_GUI_TEST_LOG", &log);
+
+        let mut app = property_test_app();
+        assert!(!app.wallpapers_muted);
+
+        // Toggling the tray item sends `ctl mute` and mirrors the muted state.
+        let _ = update::update(
+            &mut app,
+            Message::TrayAction(crate::platform::tray::TrayAction::MuteToggled),
+        );
+        assert!(app.wallpapers_muted);
+
+        // Toggling again unmutes.
+        let _ = update::update(
+            &mut app,
+            Message::TrayAction(crate::platform::tray::TrayAction::MuteToggled),
+        );
+        assert!(!app.wallpapers_muted);
+
+        match old_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        match old_log {
+            Some(value) => std::env::set_var("WE_GUI_TEST_LOG", value),
+            None => std::env::remove_var("WE_GUI_TEST_LOG"),
+        }
+
+        let commands = fs::read_to_string(&log).expect("read fake command log");
+        let lines = commands.lines().collect::<Vec<_>>();
+        assert_eq!(lines, ["ctl mute", "ctl unmute"]);
+        fs::remove_dir_all(temp).expect("remove test directory");
+    }
+
+    #[test]
+    fn idle_status_still_syncs_the_tray_mute() {
+        let mut app = property_test_app();
+        // `ctl mute` works with no wallpaper playing, so the sync must not live inside the
+        // running/paused branch; otherwise the tray tick lies about the daemon state.
+        let idle = "phase = \"idle\"\n\n[integration_runtime]\nmanual_muted = true\n";
+        let _ = update::update(
+            &mut app,
+            Message::StatusLoaded(Ok(DaemonStatus::Running(idle.to_string()))),
+        );
+        assert!(app.wallpapers_muted);
+
+        let _ = update::update(
+            &mut app,
+            Message::StatusLoaded(Ok(DaemonStatus::Running(
+                "[integration_runtime]\nmanual_muted = false\n".to_string(),
+            ))),
+        );
+        assert!(!app.wallpapers_muted);
+    }
+
     fn property_test_app() -> App {
         let nonce =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -637,6 +714,7 @@ mod tests {
             autostart_system_managed: false,
             autostart_pending: false,
             autostart_error: None,
+            wallpapers_muted: false,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),

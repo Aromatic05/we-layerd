@@ -1,7 +1,7 @@
 use std::sync::mpsc::{self, Receiver};
 
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem},
     Icon, TrayIcon, TrayIconBuilder,
 };
 
@@ -15,6 +15,7 @@ pub enum TrayAction {
     Stop,
     Pause,
     Resume,
+    MuteToggled,
     Quit,
 }
 
@@ -49,11 +50,22 @@ impl TrayController {
         #[cfg(not(target_os = "linux"))]
         self.items.set_language(language);
     }
+
+    pub fn set_mute_checked(&mut self, checked: bool) {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = self.command_tx.send(TrayCommand::SetMuteChecked(checked));
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        self.items.mute.set_checked(checked);
+    }
 }
 
 #[cfg(target_os = "linux")]
 enum TrayCommand {
     SetLanguage(Language),
+    SetMuteChecked(bool),
 }
 
 struct TrayItems {
@@ -63,6 +75,7 @@ struct TrayItems {
     stop: MenuItem,
     pause: MenuItem,
     resume: MenuItem,
+    mute: CheckMenuItem,
     quit: MenuItem,
 }
 
@@ -75,6 +88,7 @@ impl TrayItems {
             stop: MenuItem::new(language.text(Text::TrayStop), true, None),
             pause: MenuItem::new(language.text(Text::TrayPause), true, None),
             resume: MenuItem::new(language.text(Text::TrayResume), true, None),
+            mute: CheckMenuItem::new(language.text(Text::TrayMuteWallpapers), true, false, None),
             quit: MenuItem::new(language.text(Text::TrayQuit), true, None),
         }
     }
@@ -86,6 +100,7 @@ impl TrayItems {
         menu.append(&self.stop)?;
         menu.append(&self.pause)?;
         menu.append(&self.resume)?;
+        menu.append(&self.mute)?;
         menu.append(&self.quit)
     }
 
@@ -96,6 +111,7 @@ impl TrayItems {
         self.stop.set_text(language.text(Text::TrayStop));
         self.pause.set_text(language.text(Text::TrayPause));
         self.resume.set_text(language.text(Text::TrayResume));
+        self.mute.set_text(language.text(Text::TrayMuteWallpapers));
         self.quit.set_text(language.text(Text::TrayQuit));
     }
 }
@@ -124,6 +140,7 @@ fn new_linux(
         let stop_id = items.stop.id().0.clone();
         let pause_id = items.pause.id().0.clone();
         let resume_id = items.resume.id().0.clone();
+        let mute_id = items.mute.id().0.clone();
         let quit_id = items.quit.id().0.clone();
         let tx_events = tx.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -140,6 +157,8 @@ fn new_linux(
                 Some(TrayAction::Pause)
             } else if id == resume_id {
                 Some(TrayAction::Resume)
+            } else if id == mute_id {
+                Some(TrayAction::MuteToggled)
             } else if id == quit_id {
                 Some(TrayAction::Quit)
             } else {
@@ -166,6 +185,12 @@ fn new_linux(
             while let Ok(command) = command_rx.try_recv() {
                 match command {
                     TrayCommand::SetLanguage(language) => items.set_language(language),
+                    TrayCommand::SetMuteChecked(checked) => {
+                        // Keep the menu's own toggle; only sync foreign changes.
+                        if items.mute.is_checked() != checked {
+                            items.mute.set_checked(checked);
+                        }
+                    }
                 }
             }
             gtk::glib::ControlFlow::Continue
@@ -201,6 +226,7 @@ fn new_other(
         let stop_id = items.stop.id().0.clone();
         let pause_id = items.pause.id().0.clone();
         let resume_id = items.resume.id().0.clone();
+        let mute_id = items.mute.id().0.clone();
         let quit_id = items.quit.id().0.clone();
         move || loop {
             let Ok(event) = menu_rx.recv() else {
@@ -219,6 +245,8 @@ fn new_other(
                 Some(TrayAction::Pause)
             } else if id == resume_id {
                 Some(TrayAction::Resume)
+            } else if id == mute_id {
+                Some(TrayAction::MuteToggled)
             } else if id == quit_id {
                 Some(TrayAction::Quit)
             } else {

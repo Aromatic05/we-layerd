@@ -75,6 +75,9 @@ pub(crate) struct App {
     pub autostart_system_managed: bool,
     pub autostart_pending: bool,
     pub autostart_error: Option<String>,
+    /// Whether wallpapers are silenced through the daemon's runtime mute
+    /// (tray tick or `we-layerd ctl mute`), mirrored from the status poll.
+    pub wallpapers_muted: bool,
     pub preferences_generation: u64,
     pub playlist_selected: Option<String>,
     pub playlist_new_name_input: String,

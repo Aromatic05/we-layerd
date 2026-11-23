@@ -219,6 +219,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::TrayStop => "停止",
         Text::TrayPause => "暂停",
         Text::TrayResume => "继续",
+        Text::TrayMuteWallpapers => "静音壁纸",
         Text::TrayQuit => "退出",
     }
 }

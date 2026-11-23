@@ -144,6 +144,7 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             autostart_system_managed: false,
             autostart_pending: true,
             autostart_error: None,
+            wallpapers_muted: false,
             preferences_generation: 0,
             playlist_selected,
             playlist_new_name_input: String::new(),

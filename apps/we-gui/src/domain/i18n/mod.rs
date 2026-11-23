@@ -411,6 +411,7 @@ pub(crate) enum Text {
     TrayStop,
     TrayPause,
     TrayResume,
+    TrayMuteWallpapers,
     TrayQuit,
 }
 
