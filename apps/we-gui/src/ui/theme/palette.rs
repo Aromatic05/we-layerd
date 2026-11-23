@@ -185,15 +185,28 @@ pub fn colors() -> Colors {
     Colors::from_appearance(Appearance { dark: true, accent: None })
 }
 
-/// Re-read the desktop appearance. Returns a new theme only when it changed.
+/// Re-read the desktop appearance on this thread and store it.
+///
+/// Blocking: reads the settings portal synchronously, so only startup may call it. The periodic
+/// check runs [`detect`] on a worker thread and applies the result through [`store`].
 pub fn refresh() -> Option<Theme> {
-    let colors = Colors::from_appearance(detect_appearance());
+    store(detect_appearance())
+}
+
+/// Store an appearance that was read off the UI thread and return the theme if it changed.
+pub fn store(appearance: Appearance) -> Option<Theme> {
+    let colors = Colors::from_appearance(appearance);
     let mut current = CURRENT.write().unwrap_or_else(|e| e.into_inner());
     if *current == Some(colors) {
         return None;
     }
     *current = Some(colors);
     Some(colors.theme())
+}
+
+/// Read the desktop appearance. Blocking, so run it on a worker thread.
+pub fn detect() -> Appearance {
+    detect_appearance()
 }
 
 /// The theme for the current appearance, detecting it if needed.

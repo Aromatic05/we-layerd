@@ -900,8 +900,16 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ThemeTick => {
+            // The portal read is a blocking D-Bus call, so keep it off the UI thread and apply
+            // the palette when the answer arrives.
+            Task::perform(
+                async { crate::ui::theme::palette::detect() },
+                Message::AppearanceDetected,
+            )
+        }
+        Message::AppearanceDetected(appearance) => {
             // Only swap the theme when the desktop appearance actually changed.
-            if let Some(theme) = crate::ui::theme::palette::refresh() {
+            if let Some(theme) = crate::ui::theme::palette::store(appearance) {
                 app.theme = theme;
             }
             Task::none()

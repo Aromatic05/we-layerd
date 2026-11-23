@@ -268,6 +268,7 @@ pub(crate) enum Message {
     WindowClosed(window::Id),
     TrayTick,
     ThemeTick,
+    AppearanceDetected(crate::ui::theme::palette::Appearance),
     ExitRequested,
     TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>),
