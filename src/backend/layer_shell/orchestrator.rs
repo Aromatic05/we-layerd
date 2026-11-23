@@ -69,11 +69,11 @@ pub(crate) fn build_output_specs(
 ) -> Result<BTreeMap<String, OutputSpec>> {
     let mut specs = BTreeMap::new();
     for output_name in sorted_outputs(discovered_outputs) {
-        let audio_owner = specs.is_empty();
-        if let Some(spec) = build_output_spec(base, output_name, audio_owner)? {
+        if let Some(spec) = build_output_spec(base, output_name)? {
             specs.insert(output_name.clone(), spec);
         }
     }
+    assign_audio_ownership(&mut specs);
     Ok(specs)
 }
 
@@ -84,8 +84,7 @@ fn build_output_specs_with_errors(
     let mut specs = BTreeMap::new();
     let mut errors = BTreeMap::new();
     for output_name in sorted_outputs(discovered_outputs) {
-        let audio_owner = specs.is_empty();
-        match build_output_spec(base, output_name, audio_owner) {
+        match build_output_spec(base, output_name) {
             Ok(Some(spec)) => {
                 specs.insert(output_name.clone(), spec);
             }
@@ -95,7 +94,38 @@ fn build_output_specs_with_errors(
             }
         }
     }
+    assign_audio_ownership(&mut specs);
     (specs, errors)
+}
+
+/// Every worker builds its own renderer session, and an unmuted session opens its own playback
+/// device, so N outputs played the scene audio N times. Only one output may own audio and the
+/// rest are suppressed. A per-wallpaper mute still applies on top.
+///
+/// Ownership goes to the first unmuted output in sorted order, not simply the first output: a
+/// muted profile on the first display would otherwise leave every other display silent while the
+/// owner plays nothing. Ownership lives in the spec so a change of owner restarts that worker,
+/// which is the only path this runtime has for changing a configured mute.
+///
+/// `shortcut: a playlist binding's mute is only known once its first wallpaper is applied, so a
+/// muted playlist still wins ownership. Re-run this when the playlist advances.`
+fn assign_audio_ownership(specs: &mut BTreeMap<String, OutputSpec>) {
+    let owner = specs
+        .iter()
+        .find(|(_, spec)| !spec.config.renderer.muted)
+        .or_else(|| specs.iter().next())
+        .map(|(name, _)| name.clone());
+    for (name, spec) in specs.iter_mut() {
+        let suppress = owner.as_deref() != Some(name.as_str());
+        if spec.config.renderer.suppress_audio == suppress {
+            continue;
+        }
+        spec.config.renderer.suppress_audio = suppress;
+        match fingerprint_output_config(&spec.config, &spec.binding) {
+            Ok(fingerprint) => spec.fingerprint = fingerprint,
+            Err(error) => warn!(output = %name, %error, "failed to fingerprint audio ownership"),
+        }
+    }
 }
 
 /// Discovery order follows Wayland global registration, which changes when monitors are
@@ -106,11 +136,7 @@ fn sorted_outputs(discovered_outputs: &[String]) -> Vec<&String> {
     discovered
 }
 
-fn build_output_spec(
-    base: &Config,
-    output_name: &str,
-    audio_owner: bool,
-) -> Result<Option<OutputSpec>> {
+fn build_output_spec(base: &Config, output_name: &str) -> Result<Option<OutputSpec>> {
     let binding = base.outputs.get(output_name).cloned().unwrap_or_default();
     if binding == OutputBinding::default() && base.renderer.source.trim().is_empty() {
         return Ok(None);
@@ -136,12 +162,9 @@ fn build_output_spec(
         )?;
     }
 
-    // Every worker builds its own renderer session, and an unmuted session opens its own
-    // playback device, so N outputs played the scene audio N times. Only one output may own
-    // audio; the rest are suppressed. A per-wallpaper mute still applies on top. Ownership lives
-    // in the spec so a change of owner restarts that worker, which is the only path this runtime
-    // has for changing a configured mute.
-    config.renderer.suppress_audio = !audio_owner;
+    // Default: no audio. `assign_audio_ownership` promotes one output afterwards, because the
+    // per-wallpaper mute that decides the owner is only known once the profile is applied.
+    config.renderer.suppress_audio = true;
 
     // The worker owns playlist progression. The global playlist marker must not make two
     // output workers accidentally share one cursor.
@@ -1038,6 +1061,44 @@ mod tests {
         let specs = build_output_specs(&config, &["DP-1".to_string()]).expect("output specs");
         assert!(!specs["DP-1"].config.renderer.suppress_audio);
         assert!(specs["DP-1"].config.renderer.muted);
+    }
+
+    #[test]
+    fn a_muted_first_output_hands_audio_to_the_next_one() {
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        config
+            .wallpapers
+            .insert("silent".to_string(), WallpaperSettings { muted: true, ..Default::default() });
+        config
+            .wallpapers
+            .insert("loud".to_string(), WallpaperSettings { muted: false, ..Default::default() });
+        config
+            .outputs
+            .insert("DP-1".to_string(), OutputBinding::wallpaper("silent", "/wallpapers/silent"));
+        config
+            .outputs
+            .insert("HDMI-A-1".to_string(), OutputBinding::wallpaper("loud", "/wallpapers/loud"));
+
+        let specs = build_output_specs(&config, &["DP-1".to_string(), "HDMI-A-1".to_string()])
+            .expect("output specs");
+
+        // DP-1 sorts first but plays nothing, so suppressing HDMI-A-1 would leave both silent.
+        assert!(specs["DP-1"].config.renderer.suppress_audio);
+        assert!(!specs["HDMI-A-1"].config.renderer.suppress_audio);
+    }
+
+    #[test]
+    fn every_output_silent_keeps_one_owner_for_a_later_unmute() {
+        let mut config = Config::default();
+        config.renderer.source = "/wallpapers/fallback".to_string();
+        config.renderer.muted = true;
+
+        let specs = build_output_specs(&config, &["DP-1".to_string(), "HDMI-A-1".to_string()])
+            .expect("output specs");
+
+        let owners = specs.values().filter(|spec| !spec.config.renderer.suppress_audio).count();
+        assert_eq!(owners, 1);
     }
 
     #[test]
