@@ -5735,6 +5735,7 @@ dependencies = [
  "html2text",
  "iced",
  "image",
+ "libc",
  "resvg 0.42.0",
  "rfd",
  "serde_json",
