@@ -209,10 +209,11 @@ only the newly applicable worker is started. Invalid or failed output workers ar
 status without stopping healthy outputs.
 
 Scene, video, and web audio is played once, by one output only. The first output in name order whose
-wallpaper is not muted owns audio; if every output is muted, the first one still holds ownership so
-unmuting needs no restart. Every other worker runs silent, so two screens never play the same
-soundtrack twice. When the owning output disappears, a surviving worker restarts to take over audio.
-A wallpaper profile's `muted` setting still applies on top of this.
+wallpaper is not muted owns audio; if every output is muted, the first one still holds ownership
+so a runtime unmute needs no restart. Every other worker runs silent, so two screens never play the
+same soundtrack twice. When the owning output disappears, a surviving worker restarts to take over
+audio. A wallpaper profile's `muted` setting still applies on top of this; changing it belongs to
+the output config, so that edit restarts the affected worker like any other config change.
 
 Per-output playlists use independent playback state. The global playlist commands remain available
 for the legacy/shared playlist runtime; target a layer-shell output explicitly with:
