@@ -27,12 +27,14 @@ mod imp {
         },
         path::{Path, PathBuf},
         sync::Mutex,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use super::Startup;
 
     const SHOW: &[u8] = b"show\n";
+    /// How long a losing launch waits for the winner to finish binding its socket.
+    const LOCK_WAIT: Duration = Duration::from_millis(500);
 
     struct Instance {
         listener: UnixListener,
@@ -58,7 +60,12 @@ mod imp {
         // both run as primary.
         let lock = match lock_instance(path) {
             Lock::Busy => {
-                let _ = notify_running(path);
+                // The winner holds the lock before it binds its socket, so retry briefly instead
+                // of dropping the show-window request on the floor.
+                let deadline = Instant::now() + LOCK_WAIT;
+                while !notify_running(path) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
                 return Startup::AlreadyRunning;
             }
             Lock::Unavailable => None,
@@ -165,14 +172,32 @@ fn socket_path_for_session(session: &str) -> PathBuf {
 /// session's GUI must not answer another session's launch or block its socket.
 #[cfg(unix)]
 fn session_id() -> String {
-    let raw = std::env::var_os("XDG_SESSION_ID")
-        .or_else(|| std::env::var_os("WAYLAND_DISPLAY"))
-        .or_else(|| std::env::var_os("DISPLAY"));
-    let Some(raw) = raw.and_then(|value| value.into_string().ok()) else {
+    let wayland = std::env::var("WAYLAND_DISPLAY").ok();
+    let xdg_session = std::env::var("XDG_SESSION_ID").ok();
+    let display = std::env::var("DISPLAY").ok();
+    choose_session_id(wayland.as_deref(), xdg_session.as_deref(), display.as_deref())
+}
+
+/// `$XDG_RUNTIME_DIR` is shared between two logins of the same user, and the systemd user
+/// manager starts we-gui without `XDG_SESSION_ID`. The compositor's socket name is the one
+/// identifier both launches agree on, so prefer it over the logind id.
+#[cfg(unix)]
+fn choose_session_id(wayland: Option<&str>, xdg_session: Option<&str>, display: Option<&str>) -> String {
+    let raw = [wayland, xdg_session, display]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty());
+    let Some(raw) = raw else {
         return "0".to_string();
     };
     // Session ids and display names are display-server strings; keep only path-safe characters.
-    raw.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).collect()
+    let sanitized: String =
+        raw.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).collect();
+    if sanitized.is_empty() {
+        "0".to_string()
+    } else {
+        sanitized
+    }
 }
 
 #[cfg(unix)]
@@ -269,5 +294,22 @@ mod tests {
             super::socket_path_for_session("2"),
             "two sessions must not share a socket"
         );
+    }
+
+    #[test]
+    fn session_id_prefers_the_compositor_socket_over_logind() {
+        // The systemd user manager has no `XDG_SESSION_ID`; a desktop launch does. Both must
+        // still land on the same socket, which only happens if `WAYLAND_DISPLAY` wins.
+        assert_eq!(
+            super::choose_session_id(Some("wayland-0"), Some("3"), Some(":0")),
+            "wayland-0"
+        );
+        assert_eq!(super::choose_session_id(Some("wayland-0"), None, None), "wayland-0");
+        // Without a compositor socket the logind id still separates two sessions.
+        assert_eq!(super::choose_session_id(None, Some("3"), Some(":0")), "3");
+        assert_eq!(super::choose_session_id(None, None, Some(":1")), "1");
+        assert_eq!(super::choose_session_id(None, None, None), "0");
+        // A name made only of separators must not produce an empty socket suffix.
+        assert_eq!(super::choose_session_id(Some("/"), None, None), "0");
     }
 }
