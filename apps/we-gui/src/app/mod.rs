@@ -16,10 +16,10 @@ pub fn run(open_window: bool) -> iced::Result {
         update::update,
         view::daemon_view,
     )
-        .title("we-gui")
-        .theme(|app: &App, _window| app.theme.clone())
-        .subscription(subscription::subscription)
-        .run()
+    .title("we-gui")
+    .theme(|app: &App, _window| app.theme.clone())
+    .subscription(subscription::subscription)
+    .run()
 }
 
 pub fn was_interrupted() -> bool {
@@ -646,11 +646,8 @@ mod tests {
         let deadline = SystemTime::now() + std::time::Duration::from_secs(5);
         let mut lines = Vec::new();
         while SystemTime::now() < deadline {
-            lines = fs::read_to_string(&log)
-                .unwrap_or_default()
-                .lines()
-                .map(str::to_string)
-                .collect();
+            lines =
+                fs::read_to_string(&log).unwrap_or_default().lines().map(str::to_string).collect();
             if lines.len() >= 2 {
                 break;
             }
@@ -707,8 +704,8 @@ mod tests {
         );
         assert!(app.wallpapers_muted);
 
-        // Once settled the daemon's answer wins again (a CLI `ctl unmute` here).
-        app.mute_changed_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(10));
+        // Once the window is over the daemon's answer wins again (a CLI `ctl unmute` here).
+        app.mute_changed_at = None;
         let _ = update::update(
             &mut app,
             Message::StatusLoaded(Ok(DaemonStatus::Running(

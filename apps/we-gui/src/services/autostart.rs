@@ -97,9 +97,8 @@ pub fn gui_set_enabled(enabled: bool) -> Result<(), String> {
                         )
                     })?;
                 }
-                fs::write(&unit_path, unit).map_err(|error| {
-                    format!("failed to write {}: {error}", unit_path.display())
-                })?;
+                fs::write(&unit_path, unit)
+                    .map_err(|error| format!("failed to write {}: {error}", unit_path.display()))?;
             }
             run_systemctl(&["daemon-reload"], "failed to reload the systemd user manager")?;
         }
@@ -132,8 +131,7 @@ fn gui_executable() -> Result<PathBuf, String> {
     if let Some(appimage) = env::var_os("APPIMAGE").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(appimage));
     }
-    env::current_exe()
-        .map_err(|error| format!("failed to resolve the we-gui executable: {error}"))
+    env::current_exe().map_err(|error| format!("failed to resolve the we-gui executable: {error}"))
 }
 
 fn render_gui_unit(executable: &Path) -> String {

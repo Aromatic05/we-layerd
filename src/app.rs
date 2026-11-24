@@ -1727,27 +1727,23 @@ user_properties = { enabled = false }
         let integrations = crate::runtime::integrations::HostIntegrations::default();
         let (tx, rx) = std::sync::mpsc::channel();
 
-        assert!(
-            handle_runtime_control_command(
-                ControlCommand::Pause,
-                &tx,
-                &runtime_state,
-                &integrations
-            )
-            .unwrap()
-        );
+        assert!(handle_runtime_control_command(
+            ControlCommand::Pause,
+            &tx,
+            &runtime_state,
+            &integrations
+        )
+        .unwrap());
         assert_eq!(rx.try_recv().expect("pause command"), ControlCommand::Pause);
         assert_eq!(runtime_state.lock().expect("runtime state").phase, RuntimePhase::Paused);
 
-        assert!(
-            handle_runtime_control_command(
-                ControlCommand::Resume,
-                &tx,
-                &runtime_state,
-                &integrations
-            )
-            .unwrap()
-        );
+        assert!(handle_runtime_control_command(
+            ControlCommand::Resume,
+            &tx,
+            &runtime_state,
+            &integrations
+        )
+        .unwrap());
         assert_eq!(rx.try_recv().expect("resume command"), ControlCommand::Resume);
         assert_eq!(runtime_state.lock().expect("runtime state").phase, RuntimePhase::Running);
     }
@@ -1761,27 +1757,23 @@ user_properties = { enabled = false }
 
         // Handled globally (Ok(true) = handled, not forwarded): nothing reaches the
         // orchestrator and the integrations runtime carries the mute.
-        assert!(
-            handle_runtime_control_command(
-                ControlCommand::Mute,
-                &tx,
-                &runtime_state,
-                &integrations
-            )
-            .unwrap()
-        );
+        assert!(handle_runtime_control_command(
+            ControlCommand::Mute,
+            &tx,
+            &runtime_state,
+            &integrations
+        )
+        .unwrap());
         assert!(integrations.manual_muted());
         assert!(rx.try_recv().is_err());
 
-        assert!(
-            handle_runtime_control_command(
-                ControlCommand::Unmute,
-                &tx,
-                &runtime_state,
-                &integrations
-            )
-            .unwrap()
-        );
+        assert!(handle_runtime_control_command(
+            ControlCommand::Unmute,
+            &tx,
+            &runtime_state,
+            &integrations
+        )
+        .unwrap());
         assert!(!integrations.manual_muted());
         assert!(rx.try_recv().is_err());
     }

@@ -842,8 +842,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                         .is_some_and(|value| value == "true");
                     // A reply fetched before the tray click describes the old mute, so do not
                     // let it flip the tick back while the click is still settling.
-                    let settling =
-                        app.mute_changed_at.is_some_and(|at| at.elapsed() < MUTE_SETTLE);
+                    let settling = app.mute_changed_at.is_some_and(|at| at.elapsed() < MUTE_SETTLE);
                     if !settling && muted != app.wallpapers_muted {
                         app.wallpapers_muted = muted;
                         if let Some(tray) = app.tray.as_mut() {

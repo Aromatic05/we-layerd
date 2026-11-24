@@ -182,11 +182,12 @@ fn session_id() -> String {
 /// manager starts we-gui without `XDG_SESSION_ID`. The compositor's socket name is the one
 /// identifier both launches agree on, so prefer it over the logind id.
 #[cfg(unix)]
-fn choose_session_id(wayland: Option<&str>, xdg_session: Option<&str>, display: Option<&str>) -> String {
-    let raw = [wayland, xdg_session, display]
-        .into_iter()
-        .flatten()
-        .find(|value| !value.is_empty());
+fn choose_session_id(
+    wayland: Option<&str>,
+    xdg_session: Option<&str>,
+    display: Option<&str>,
+) -> String {
+    let raw = [wayland, xdg_session, display].into_iter().flatten().find(|value| !value.is_empty());
     let Some(raw) = raw else {
         return "0".to_string();
     };
@@ -300,10 +301,7 @@ mod tests {
     fn session_id_prefers_the_compositor_socket_over_logind() {
         // The systemd user manager has no `XDG_SESSION_ID`; a desktop launch does. Both must
         // still land on the same socket, which only happens if `WAYLAND_DISPLAY` wins.
-        assert_eq!(
-            super::choose_session_id(Some("wayland-0"), Some("3"), Some(":0")),
-            "wayland-0"
-        );
+        assert_eq!(super::choose_session_id(Some("wayland-0"), Some("3"), Some(":0")), "wayland-0");
         assert_eq!(super::choose_session_id(Some("wayland-0"), None, None), "wayland-0");
         // Without a compositor socket the logind id still separates two sessions.
         assert_eq!(super::choose_session_id(None, Some("3"), Some(":0")), "3");

@@ -141,10 +141,7 @@ impl HostIntegrations {
     /// Current manual-mute state, mirrored into the status TOML for the GUI and seeded into
     /// a new renderer session so a muted wallpaper never opens its audio device.
     pub(crate) fn manual_muted(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .manual_muted
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).manual_muted
     }
 }
 
