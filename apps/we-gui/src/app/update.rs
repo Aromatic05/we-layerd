@@ -1,4 +1,7 @@
-use std::{path::Path, time::Duration};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use iced::{widget::pane_grid, window, Task};
 use we_core::config::{load_launch_settings, OutputBinding};
@@ -36,6 +39,9 @@ use super::{
 const MAX_CONCURRENT_GIF_DECODES: usize = 2;
 const MIN_LIBRARY_WIDTH: f32 = 360.0;
 const MIN_SIDEBAR_WIDTH: f32 = 320.0;
+/// How long a tray mute is trusted over a status reply fetched before the click. The poll runs
+/// every three seconds, so this covers one in-flight reply.
+const MUTE_SETTLE: Duration = Duration::from_secs(5);
 
 fn clamp_library_ratio(viewport_width: f32, ratio: f32) -> f32 {
     let width = viewport_width.max(1.0);
@@ -834,7 +840,11 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                     // while the runtime is idle.
                     let muted = status_section_value(&text, "integration_runtime", "manual_muted")
                         .is_some_and(|value| value == "true");
-                    if muted != app.wallpapers_muted {
+                    // A reply fetched before the tray click describes the old mute, so do not
+                    // let it flip the tick back while the click is still settling.
+                    let settling =
+                        app.mute_changed_at.is_some_and(|at| at.elapsed() < MUTE_SETTLE);
+                    if !settling && muted != app.wallpapers_muted {
                         app.wallpapers_muted = muted;
                         if let Some(tray) = app.tray.as_mut() {
                             tray.set_mute_checked(muted);
@@ -857,6 +867,7 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 }
                 Ok(runtime::DaemonStatus::NotRunning) => {
                     app.clear_playback_state();
+                    app.mute_changed_at = None;
                     if app.wallpapers_muted {
                         app.wallpapers_muted = false;
                         if let Some(tray) = app.tray.as_mut() {
@@ -998,21 +1009,37 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
                 Task::none()
             }
             tray::TrayAction::MuteToggled => {
-                // The daemon owns the mute; the GUI just flips it and mirrors the
-                // new state in the tick, whatever a CLI `ctl mute` did meanwhile.
+                // The daemon owns the mute. Flip the tick now so the click feels instant, then
+                // queue the command: spawning `we-layerd` and waiting for the IPC round trip on
+                // the UI thread would freeze the menu. A failed command needs no reply — the
+                // status poll overrides the tick once the settle window is over.
                 let target = !app.wallpapers_muted;
-                let ok = runtime::send_control(if target { "mute" } else { "unmute" });
-                if ok {
-                    app.wallpapers_muted = target;
-                }
+                app.wallpapers_muted = target;
+                app.mute_changed_at = Some(Instant::now());
                 if let Some(tray) = app.tray.as_mut() {
-                    tray.set_mute_checked(if ok { target } else { app.wallpapers_muted });
+                    tray.set_mute_checked(target);
                 }
+                let _ = mute_commands().send(target);
                 Task::none()
             }
             tray::TrayAction::Quit => Task::done(Message::ExitRequested),
         },
     }
+}
+
+/// Queue for the daemon mute commands. One thread drains it in order, so a double click cannot
+/// race its own two commands; nothing is ever awaited on the UI thread.
+fn mute_commands() -> &'static std::sync::mpsc::Sender<bool> {
+    static QUEUE: std::sync::OnceLock<std::sync::mpsc::Sender<bool>> = std::sync::OnceLock::new();
+    QUEUE.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<bool>();
+        std::thread::spawn(move || {
+            for muted in receiver {
+                runtime::send_control(if muted { "mute" } else { "unmute" });
+            }
+        });
+        sender
+    })
 }
 
 fn exit_application(app: &mut App) -> Task<Message> {

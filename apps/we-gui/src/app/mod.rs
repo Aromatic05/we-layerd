@@ -171,6 +171,7 @@ mod tests {
             autostart_pending: false,
             autostart_error: None,
             wallpapers_muted: false,
+            mute_changed_at: None,
             gui_autostart_enabled: false,
             gui_autostart_pending: false,
             gui_autostart_error: None,
@@ -341,6 +342,7 @@ mod tests {
             autostart_pending: false,
             autostart_error: None,
             wallpapers_muted: false,
+            mute_changed_at: None,
             gui_autostart_enabled: false,
             gui_autostart_pending: false,
             gui_autostart_error: None,
@@ -457,6 +459,7 @@ mod tests {
             autostart_pending: false,
             autostart_error: None,
             wallpapers_muted: false,
+            mute_changed_at: None,
             gui_autostart_enabled: false,
             gui_autostart_pending: false,
             gui_autostart_error: None,
@@ -638,6 +641,22 @@ mod tests {
         );
         assert!(!app.wallpapers_muted);
 
+        // The commands run on worker threads, so give them a moment to land. Environment is
+        // restored only afterwards: the threads resolve `we-layerd` through PATH themselves.
+        let deadline = SystemTime::now() + std::time::Duration::from_secs(5);
+        let mut lines = Vec::new();
+        while SystemTime::now() < deadline {
+            lines = fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            if lines.len() >= 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
         match old_path {
             Some(path) => std::env::set_var("PATH", path),
             None => std::env::remove_var("PATH"),
@@ -647,8 +666,6 @@ mod tests {
             None => std::env::remove_var("WE_GUI_TEST_LOG"),
         }
 
-        let commands = fs::read_to_string(&log).expect("read fake command log");
-        let lines = commands.lines().collect::<Vec<_>>();
         assert_eq!(lines, ["ctl mute", "ctl unmute"]);
         fs::remove_dir_all(temp).expect("remove test directory");
     }
@@ -665,6 +682,33 @@ mod tests {
         );
         assert!(app.wallpapers_muted);
 
+        let _ = update::update(
+            &mut app,
+            Message::StatusLoaded(Ok(DaemonStatus::Running(
+                "[integration_runtime]\nmanual_muted = false\n".to_string(),
+            ))),
+        );
+        assert!(!app.wallpapers_muted);
+    }
+
+    #[test]
+    fn status_reply_does_not_flip_a_fresh_tray_mute() {
+        let mut app = property_test_app();
+        app.wallpapers_muted = true;
+        app.mute_changed_at = Some(std::time::Instant::now());
+
+        // A reply fetched before the click still says "unmuted"; it must not win while the
+        // click settles, or the tick visibly flips back for a poll interval.
+        let _ = update::update(
+            &mut app,
+            Message::StatusLoaded(Ok(DaemonStatus::Running(
+                "[integration_runtime]\nmanual_muted = false\n".to_string(),
+            ))),
+        );
+        assert!(app.wallpapers_muted);
+
+        // Once settled the daemon's answer wins again (a CLI `ctl unmute` here).
+        app.mute_changed_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(10));
         let _ = update::update(
             &mut app,
             Message::StatusLoaded(Ok(DaemonStatus::Running(
@@ -752,6 +796,7 @@ mod tests {
             autostart_pending: false,
             autostart_error: None,
             wallpapers_muted: false,
+            mute_changed_at: None,
             gui_autostart_enabled: false,
             gui_autostart_pending: false,
             gui_autostart_error: None,

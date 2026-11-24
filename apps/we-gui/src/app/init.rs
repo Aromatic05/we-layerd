@@ -149,6 +149,7 @@ pub(crate) fn initialize(open_window: bool) -> (App, Task<Message>) {
             autostart_pending: true,
             autostart_error: None,
             wallpapers_muted: false,
+            mute_changed_at: None,
             gui_autostart_enabled: false,
             gui_autostart_pending: true,
             gui_autostart_error: None,

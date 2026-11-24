@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     path::PathBuf,
     process::Child,
+    time::Instant,
 };
 
 use iced::{widget::pane_grid, window, Size, Theme};
@@ -78,6 +79,9 @@ pub(crate) struct App {
     /// Whether wallpapers are silenced through the daemon's runtime mute
     /// (tray tick or `we-layerd ctl mute`), mirrored from the status poll.
     pub wallpapers_muted: bool,
+    /// When the tray last changed the mute. A status reply fetched before that command
+    /// describes the old state, so it must not flip the tick back while this is fresh.
+    pub mute_changed_at: Option<Instant>,
     pub gui_autostart_enabled: bool,
     pub gui_autostart_pending: bool,
     pub gui_autostart_error: Option<String>,
