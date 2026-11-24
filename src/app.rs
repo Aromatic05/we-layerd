@@ -73,8 +73,18 @@ pub fn run(config_path: Option<&Path>) -> Result<()> {
     let scene_runtime = Arc::new(Mutex::new(SceneRuntime::default()));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let scheduler_stop = Arc::new(AtomicBool::new(false));
-    let mut host_runtime =
-        Some(HostIntegrationRuntime::start(desired_cfg.clone(), shutdown_requested.clone()));
+    // Remember the tray mute next to the config, so it survives a daemon restart without
+    // writing the config file (which would restart every worker).
+    let mute_state_path = config_path.map(|path| {
+        let mut state_path = path.as_os_str().to_os_string();
+        state_path.push(".runtime-mute");
+        PathBuf::from(state_path)
+    });
+    let mut host_runtime = Some(HostIntegrationRuntime::start(
+        desired_cfg.clone(),
+        shutdown_requested.clone(),
+        mute_state_path,
+    ));
     let host_integrations = host_runtime.as_ref().expect("host integration runtime").shared.clone();
     install_runtime_ctrlc_handler(control_tx.clone(), shutdown_requested.clone())?;
 

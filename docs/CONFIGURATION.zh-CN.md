@@ -114,6 +114,7 @@ GNOME 的独立渲染路径暂不受此策略控制。
 叠加到窗口规则使用的同一条策略通道，对场景与视频壁纸即时生效，跨播放列表推进
 持续有效，不重写配置文件，也不重启任何 worker。状态输出中的
 `[integration_runtime].manual_muted` 反映该状态，we-gui 托盘菜单的勾选项与之同步。
+静音状态记录在配置文件旁的 `<config>.runtime-mute` 中，守护进程重启后不会自行恢复声音；删除该文件或执行 `ctl unmute` 可恢复。
 
 ## 多输出 layer-shell 运行时
 

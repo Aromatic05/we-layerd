@@ -152,6 +152,9 @@ and video wallpapers live, persists across playlist advances, never rewrites the
 never restarts a worker. `[integration_runtime].manual_muted` in the status output reports it; the
 tray menu tick in we-gui mirrors it.
 
+The mute is remembered in `<config>.runtime-mute` next to the config file, so a daemon restart does
+not unmute by itself. Delete that file or run `ctl unmute` to start unmuted.
+
 ### Adaptive battery policy
 
 An optional policy reduces the actual renderer tick rate when the kernel reports battery power:
