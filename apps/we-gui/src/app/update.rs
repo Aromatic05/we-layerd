@@ -949,12 +949,21 @@ pub(crate) fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ThemeTick => {
-            // The portal read is a blocking D-Bus call, so keep it off the UI thread and apply
-            // the palette when the answer arrives.
-            Task::perform(
-                async { crate::ui::theme::palette::detect() },
-                Message::AppearanceDetected,
-            )
+            // The portal read is a blocking D-Bus call. A `Task::perform` future runs on the
+            // tokio worker pool, where a stalled portal reply would starve that runtime, so the
+            // read runs on a plain thread and its answer is awaited here.
+            Task::future(async {
+                let (tx, rx) = iced::futures::channel::oneshot::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(crate::ui::theme::palette::detect());
+                });
+                rx.await.ok()
+            })
+            .then(|appearance| match appearance {
+                Some(appearance) => Task::done(Message::AppearanceDetected(appearance)),
+                // The reader thread panicked; skip this tick and try again on the next one.
+                None => Task::none(),
+            })
         }
         Message::AppearanceDetected(appearance) => {
             // Only swap the theme when the desktop appearance actually changed.
