@@ -73,7 +73,17 @@ pub fn send_output_playlist_action(output: &str, action: &str) -> bool {
 }
 
 pub fn start(config_path: &Path) -> std::io::Result<Child> {
-    layerd_command()?.arg("run").arg("--config").arg(config_path).spawn()
+    let mut command = layerd_command()?;
+    command.arg("run").arg("--config").arg(config_path).stdin(Stdio::null());
+    // Run the daemon in its own process group so it outlives the GUI: a
+    // Ctrl+C or hangup aimed at we-gui (e.g. from a terminal) must not stop
+    // the wallpaper.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command.spawn()
 }
 
 pub fn restart(config_path: &Path, child: &mut Option<Child>) -> Result<Option<Child>, String> {
@@ -112,6 +122,44 @@ pub fn fetch_status_sync() -> Result<DaemonStatus, String> {
 
 pub async fn fetch_status() -> Result<DaemonStatus, String> {
     fetch_status_sync()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputGeometry {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Output names with their rotated on-screen sizes (`we-layerd outputs --geometry`).
+/// Older daemons without the flag simply yield an error, which hides the warning.
+pub async fn fetch_output_geometry() -> Result<Vec<OutputGeometry>, String> {
+    let output = layerd_command()
+        .map_err(|error| error.to_string())?
+        .arg("outputs")
+        .arg("--geometry")
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    parse_output_geometry(&output.stdout)
+}
+
+fn parse_output_geometry(json: &[u8]) -> Result<Vec<OutputGeometry>, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(json).map_err(|error| error.to_string())?;
+    let entries = value.as_array().ok_or("output geometry is not a JSON array")?;
+    Ok(entries
+        .iter()
+        .filter_map(|entry| {
+            Some(OutputGeometry {
+                name: entry.get("name")?.as_str()?.to_string(),
+                width: u32::try_from(entry.get("width")?.as_u64()?).ok()?,
+                height: u32::try_from(entry.get("height")?.as_u64()?).ok()?,
+            })
+        })
+        .collect())
 }
 
 pub async fn fetch_outputs() -> Result<Vec<String>, String> {
@@ -155,27 +203,6 @@ pub fn stop(child: &mut Option<Child>) -> bool {
         stopped = true;
     }
     stopped || !daemon_is_running()
-}
-
-pub fn stop_owned(child: &mut Option<Child>) -> bool {
-    let Some(mut child) = child.take() else {
-        return true;
-    };
-
-    if child.try_wait().map_or(true, |status| status.is_some()) {
-        return true;
-    }
-
-    let _ = send_control("stop");
-    for _ in 0..3 {
-        if child.try_wait().map_or(true, |status| status.is_some()) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    true
 }
 
 pub fn daemon_is_running() -> bool {
@@ -282,6 +309,18 @@ fn classify_daemon_status(succeeded: bool, stdout: &[u8]) -> DaemonStatus {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn output_geometry_json_is_parsed() {
+        let parsed = super::parse_output_geometry(
+            br#"[{"name":"DP-3","width":2560,"height":1440},{"name":"HDMI-1","width":1080,"height":1920}]"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[1].name, "HDMI-1");
+        assert_eq!((parsed[1].width, parsed[1].height), (1080, 1920));
+        assert!(super::parse_output_geometry(b"{}").is_err());
+    }
+
     use std::{
         ffi::OsStr,
         fs,

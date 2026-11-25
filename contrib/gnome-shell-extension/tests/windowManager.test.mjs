@@ -48,7 +48,7 @@ class WindowStub {
     get_pid() { return 123; }
 }
 
-async function harness(windows, matches) {
+async function harness(windows, matches, placement = null) {
     let nextTimeout = 1;
     const timeouts = new Map();
     const GLib = {
@@ -78,7 +78,8 @@ async function harness(windows, matches) {
         return glib;
     });
     await module.evaluate();
-    const manager = new module.namespace.WindowManager(matches);
+    const manager = new module.namespace.WindowManager(
+        matches, window => (placement && matches(window) ? placement : null));
     manager.enable();
     return {
         manager,
@@ -170,4 +171,47 @@ test('disable and unregister disconnect callbacks and cancel deferred lowering',
     shell.flushLower();
     assert.equal(wallpaper.fullscreen, true);
     assert.equal(wallpaper.lowerCount, 0);
+});
+
+test('output windows are pinned to their monitor rectangle and re-pinned after moves', async () => {
+    const wallpaper = new WindowStub({fullscreen: true});
+    let frame = {x: 0, y: 0, width: 2560, height: 1440};
+    let monitor = 0;
+    const moves = [];
+    wallpaper.get_frame_rect = () => frame;
+    wallpaper.get_monitor = () => monitor;
+    wallpaper.move_to_monitor = index => { monitor = index; };
+    wallpaper.move_resize_frame = (userOp, x, y, width, height) => {
+        moves.push({userOp, x, y, width, height});
+        frame = {x, y, width, height};
+        wallpaper.emit('position-changed');
+    };
+    const ordinary = new WindowStub();
+    ordinary.move_resize_frame = () => assert.fail('ordinary windows must not be moved');
+
+    const placement = {monitor: 1, x: 1080, y: 276, width: 2560, height: 1440};
+    const shell = await harness([wallpaper, ordinary], window => window === wallpaper, placement);
+    assert.equal(wallpaper.fullscreen, false);
+    assert.equal(monitor, 1);
+    assert.deepEqual(moves, [{userOp: true, x: 1080, y: 276, width: 2560, height: 1440}]);
+
+    frame = {x: 0, y: 0, width: 2560, height: 1440};
+    wallpaper.emit('position-changed');
+    assert.equal(moves.length, 2);
+    assert.deepEqual(frame, {x: 1080, y: 276, width: 2560, height: 1440});
+
+    wallpaper.emit('size-changed');
+    assert.equal(moves.length, 2, 'an already-pinned window is left alone');
+    shell.manager.disable();
+});
+
+test('a raised renderer window is lowered synchronously, without waiting for a timer', async () => {
+    const wallpaper = new WindowStub();
+    const shell = await harness([wallpaper], window => window === wallpaper);
+    shell.flushLower();
+    const before = wallpaper.lowerCount;
+    wallpaper.emit('raised');
+    assert.equal(wallpaper.lowerCount, before + 1);
+    assert.equal(shell.timeouts.size, 0);
+    shell.manager.disable();
 });

@@ -12,6 +12,7 @@ use wayland_client::{
     protocol::{wl_compositor::WlCompositor, wl_output::WlOutput, wl_seat::WlSeat, wl_shm::WlShm},
     Connection, EventQueue, QueueHandle,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
 use wayland_protocols::wp::{
     fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
     linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
@@ -103,6 +104,15 @@ fn renderer_poll_events(state: &LayerShellState) -> libc::c_short {
     }
 }
 
+/// A window rule can ask to pause an output before it has drawn anything, e.g.
+/// when the daemon starts while a maximized or fullscreen window covers that
+/// screen. Present one frame first: GNOME clones the renderer window into the
+/// overview and desktop backgrounds, and an empty window shows the static
+/// desktop image there instead of the (paused) wallpaper.
+fn defer_rule_pause(state: &LayerShellState, rule_pause: bool) -> bool {
+    rule_pause && state.frame_stats.presented == 0 && !state.pause_state.effective()
+}
+
 fn apply_pause_state(state: &mut LayerShellState, previous: bool) {
     let current = state.pause_state.effective();
     if current == previous {
@@ -125,8 +135,9 @@ fn apply_host_integrations(
     let snapshot = host.snapshot_for_output(&state.output_name);
 
     if snapshot.policy_generation != state.policy_generation {
+        let defer_pause = defer_rule_pause(state, snapshot.policy.pause);
         let was_paused = state.pause_state.effective();
-        state.pause_state.set_rule(snapshot.policy.pause);
+        state.pause_state.set_rule(snapshot.policy.pause && !defer_pause);
         apply_pause_state(state, was_paused);
         state.rule_muted = snapshot.policy.mute;
         let desired_muted = state.configured_muted || state.rule_muted;
@@ -140,7 +151,11 @@ fn apply_host_integrations(
             }
         }
         state.diagnostics.rule_muted = state.rule_muted;
-        state.policy_generation = snapshot.policy_generation;
+        // A deferred pause leaves the generation unapplied so the next loop
+        // pass, after the first frame is on screen, pauses for real.
+        if !defer_pause {
+            state.policy_generation = snapshot.policy_generation;
+        }
     }
 
     if snapshot.media_generation != state.media_generation {
@@ -361,6 +376,7 @@ pub(crate) fn run_output_with_role(
     let dmabuf = globals.bind::<ZwpLinuxDmabufV1, _, _>(&qh, 3..=4, ()).ok();
 
     let seat = globals.bind::<WlSeat, _, _>(&qh, 1..=10, ()).ok();
+    let cursor_shape_manager = globals.bind::<WpCursorShapeManagerV1, _, _>(&qh, 1..=1, ()).ok();
     let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
     let fractional_scale_manager =
         globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()).ok();
@@ -390,8 +406,15 @@ pub(crate) fn run_output_with_role(
     let (options_json_present, options_json_len, options_json_valid) =
         cfg.renderer.options_json_diagnostics();
 
-    let output = OutputState::new(cfg.general.scale_mode);
+    let mut output = OutputState::new(cfg.general.scale_mode);
+    // The video backend scales frames to the exact render size without keeping
+    // their aspect ratio, so portrait outputs must render videos landscape.
+    output.landscape_content = matches!(wallpaper_type, WallpaperType::Video);
+    output.recompute_geometry();
     let presentation_geometry = output.geometry;
+    // Seed the tray mute too, so the first policy pass does not open an audio device that
+    // `apply_host_integrations` is about to mute anyway.
+    let tray_muted = host_integrations.manual_muted();
     let mut state = LayerShellState {
         output_name: target_output.to_string(),
         objects: WaylandObjects::default(),
@@ -430,6 +453,9 @@ pub(crate) fn run_output_with_role(
         configured: false,
         session: None,
         interactive: cfg.general.interactive,
+        gnome_menu_bus: matches!(role, SurfaceRole::XdgToplevel { .. })
+            .then(|| cfg.gnome.extension_dbus_name.clone()),
+        desktop_pointer: None,
         // GNOME uses a native XDG window and not a layer-shell input proxy.
         input_mode: if matches!(role, SurfaceRole::XdgToplevel { .. }) {
             we_core::config::InputMode::Direct
@@ -439,9 +465,12 @@ pub(crate) fn run_output_with_role(
         render_resolution_follows_output: cfg.renderer.render_width.is_none()
             && cfg.renderer.render_height.is_none(),
         pause_state: crate::runtime::rules::PauseState::default(),
-        configured_muted: cfg.renderer.muted,
+        // The tray mute is not part of the config mask: it arrives through the policy
+        // snapshot, so only the applied state is seeded here. Recording it as applied keeps
+        // the first policy pass from reopening a device the session already started muted.
+        configured_muted: cfg.renderer.muted || cfg.renderer.suppress_audio,
         rule_muted: false,
-        applied_muted: cfg.renderer.muted,
+        applied_muted: cfg.renderer.muted || cfg.renderer.suppress_audio || tray_muted,
         wallpaper_type,
         media_generation: 0,
         audio_generation: 0,
@@ -455,6 +484,9 @@ pub(crate) fn run_output_with_role(
             (Some(width), Some(height)) => Some((width.max(1), height.max(1))),
             _ => None,
         };
+
+    // Must be in place before the seat creates its pointer during surface setup.
+    state.objects.cursor_shape_manager = cursor_shape_manager;
 
     let (selected_output, output_count) =
         bind_named_output(&globals, &mut event_queue, &qh, &mut state, target_output)?;
@@ -515,7 +547,10 @@ pub(crate) fn run_output_with_role(
         fps: cfg.renderer.fps as i32,
         speed: cfg.renderer.speed,
         volume: cfg.renderer.volume,
-        muted: cfg.renderer.muted,
+        // A worker that does not own audio stays silent however the wallpaper profile is
+        // rewritten later, e.g. when a playlist advances. The tray mute is seeded here so a
+        // wallpaper switched while muted never opens its audio device for a few frames.
+        muted: cfg.renderer.muted || cfg.renderer.suppress_audio || tray_muted,
         options_json: cfg.renderer.options_json.clone(),
     };
     session.set_source(source)?;
@@ -628,6 +663,9 @@ pub(crate) fn run_output_with_role(
                     status_sink(state.snapshot());
                     return Ok(exit);
                 }
+                // Handled globally in the IPC layer; a worker is never the
+                // target of a manual mute.
+                ControlCommand::Mute | ControlCommand::Unmute => {}
             }
         }
 
@@ -837,6 +875,21 @@ mod tests {
         fds[0].fd = i32::MAX;
         assert!(poll_wayland(&mut fds, 100).is_err());
         assert_ne!(fds[0].revents & libc::POLLNVAL, 0);
+    }
+
+    #[test]
+    fn rule_pause_waits_for_the_first_presented_frame() {
+        let mut state = LayerShellState::test_default(ScaleMode::Cover);
+        assert!(super::defer_rule_pause(&state, true));
+        assert!(!super::defer_rule_pause(&state, false));
+
+        state.frame_stats.presented = 1;
+        assert!(!super::defer_rule_pause(&state, true));
+
+        // A manual pause is honoured immediately and never deferred.
+        state.frame_stats.presented = 0;
+        state.pause_state.set_manual(true);
+        assert!(!super::defer_rule_pause(&state, true));
     }
 
     #[test]

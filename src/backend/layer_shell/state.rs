@@ -12,6 +12,10 @@ use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_callback::WlCallback, wl_compositor::WlCompositor, wl_output::WlOutput,
     wl_pointer::WlPointer, wl_shm::WlShm, wl_surface::WlSurface,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+    wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+};
 use wayland_protocols::wp::{
     fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1,
     linux_dmabuf::zv1::client::{
@@ -109,6 +113,11 @@ pub(super) struct WaylandObjects {
     pub(super) compositor: Option<WlCompositor>,
     pub(super) surface: Option<WlSurface>,
     pub(super) pointer: Option<WlPointer>,
+    /// wp_cursor_shape_v1 lets the wallpaper ask for the default arrow on pointer enter.
+    /// Without a cursor of its own, GNOME keeps showing whatever cursor was active before the
+    /// pointer reached the desktop (for example a window move/resize cursor).
+    pub(super) cursor_shape_manager: Option<WpCursorShapeManagerV1>,
+    pub(super) cursor_shape_device: Option<WpCursorShapeDeviceV1>,
     pub(super) output: Option<WlOutput>,
     pub(super) viewport: Option<WpViewport>,
     pub(super) layer_surface: Option<ZwlrLayerSurfaceV1>,
@@ -172,6 +181,12 @@ pub(crate) struct LayerShellState {
     pub(super) configured: bool,
     pub(super) session: Option<RendererSession>,
     pub(super) interactive: bool,
+    /// GNOME extension bus name when this surface is a GNOME renderer window;
+    /// right-clicks on it open GNOME's desktop background menu.
+    pub(super) gnome_menu_bus: Option<String>,
+    /// Last pointer position on the wallpaper surface, tracked even when the
+    /// wallpaper itself is not interactive.
+    pub(super) desktop_pointer: Option<(f64, f64)>,
     pub(super) input_mode: InputMode,
     pub(super) render_resolution_follows_output: bool,
     pub(super) pause_state: PauseState,
@@ -436,6 +451,8 @@ impl LayerShellState {
             configured: false,
             session: None,
             interactive: false,
+            gnome_menu_bus: None,
+            desktop_pointer: None,
             input_mode: InputMode::Direct,
             render_resolution_follows_output: true,
             pause_state: PauseState::default(),

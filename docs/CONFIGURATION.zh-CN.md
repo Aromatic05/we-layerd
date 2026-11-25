@@ -110,6 +110,12 @@ on_battery = "keep" # 可选："keep"、"mute"、"pause"
 的 `[integration_runtime]`。当前自适应帧率和暂停/静音策略仅接入 layer-shell 后端，
 GNOME 的独立渲染路径暂不受此策略控制。
 
+`we-layerd ctl mute` / `we-layerd ctl unmute` 在运行时静音或恢复所有输出。该静音
+叠加到窗口规则使用的同一条策略通道，对场景与视频壁纸即时生效，跨播放列表推进
+持续有效，不重写配置文件，也不重启任何 worker。状态输出中的
+`[integration_runtime].manual_muted` 反映该状态，we-gui 托盘菜单的勾选项与之同步。
+静音状态记录在配置文件旁的 `<config>.runtime-mute` 中，守护进程重启后不会自行恢复声音；删除该文件或执行 `ctl unmute` 可恢复。
+
 ## 多输出 layer-shell 运行时
 
 Wayland 输出使用协议版本 4 提供的稳定 `wl_output.name` 标识。每个输出拥有独立的
@@ -133,6 +139,11 @@ playlist = "Daily"
 绑定两者。`renderer.source` 为空时，没有显式绑定的输出不会启动 worker。显示器移除时
 只停止对应 worker，新显示器出现时也只启动新适用的 worker。无效配置或单屏运行失败会
 写入该输出的状态，不会停止健康屏幕。
+
+场景、视频和网页声音只由一个输出播放：按名称排序后第一张未被静音的壁纸所在输出拥有声音，
+全部静音时仍由第一个输出保留所有权，运行时取消静音无需重启。其余输出静音，因此两块屏幕不会
+重复播放同一段音频。拥有声音的输出被移除时，存活的最先输出会重启以接管声音。壁纸
+profile 的 `muted` 设置仍会在此基础上生效。
 
 每个输出的播放列表状态相互独立，可单独控制：
 

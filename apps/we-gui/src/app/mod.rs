@@ -8,13 +8,18 @@ mod subscription;
 mod update;
 mod view;
 pub(crate) use state::{App, Message};
-pub fn run() -> iced::Result {
+pub fn run(open_window: bool) -> iced::Result {
     signal::install().expect("install GUI shutdown signal handler");
-    iced::daemon(init::initialize, update::update, view::daemon_view)
-        .title("we-gui")
-        .theme(|app: &App, _window| app.theme.clone())
-        .subscription(subscription::subscription)
-        .run()
+    iced::daemon(
+        // BootFn::boot takes no arguments; capture the tray-only flag in the closure.
+        move || init::initialize(open_window),
+        update::update,
+        view::daemon_view,
+    )
+    .title("we-gui")
+    .theme(|app: &App, _window| app.theme.clone())
+    .subscription(subscription::subscription)
+    .run()
 }
 
 pub fn was_interrupted() -> bool {
@@ -36,6 +41,9 @@ mod tests {
     use iced::{widget::pane_grid, Theme};
 
     use super::{settings::sync_from_ui, update, App, Message};
+    use crate::domain::ui_state::Sidebar;
+    use crate::services::runtime::DaemonStatus;
+    use we_core::wallpaper::{WallpaperEntry, WallpaperType};
     use crate::{
         domain::{
             i18n::Language,
@@ -74,6 +82,8 @@ mod tests {
             rule_focused: we_core::config::RuntimeRuleAction::Keep,
             rule_maximized: we_core::config::RuntimeRuleAction::Mute,
             rule_fullscreen: we_core::config::RuntimeRuleAction::Pause,
+            rule_all_outputs: false,
+            rule_fullscreen_all_outputs: false,
         }
     }
 
@@ -105,6 +115,173 @@ mod tests {
         assert_eq!(launch_settings.backend, we_core::config::Backend::Auto);
         assert!(launch_settings.force_scene_audio_loop);
         assert_eq!(launch_settings.scale_mode, ScaleMode::Stretch);
+    }
+
+
+    fn aspect_test_app(entries: Vec<WallpaperEntry>) -> App {
+        let temp = std::env::temp_dir().join(format!("we-gui-aspect-app-{}", std::process::id()));
+        let preferences_path = temp.join("gui.toml");
+        let mut app = App {
+            entries: Vec::new(),
+            selected_id: None,
+            selected_schema: UserPropertySchema { entries: Vec::new() },
+            resolution_width: String::new(),
+            resolution_height: String::new(),
+            config_path: temp.join("config.toml"),
+            runtime_child: None,
+            viewport_width: 1280.0,
+            layerd_available: true,
+            launch_settings: LaunchSettings::default(),
+            ui_settings: test_ui_settings(),
+            show_settings: true,
+            sidebar: None,
+            detail_tab: DetailTab::Actions,
+            property_filter: Default::default(),
+            playback_paused: false,
+            playback_running: false,
+            search_query: String::new(),
+            type_filter: None,
+            filtered_entry_indices: Vec::new(),
+            panes: pane_grid::State::with_configuration(pane_grid::Configuration::Pane(
+                Pane::Library,
+            )),
+            animated_previews: HashMap::new(),
+            gif_preview_desired: Default::default(),
+            gif_preview_loading: Default::default(),
+            gif_preview_failed: Default::default(),
+            gif_preview_generation: 0,
+            library_scroll_y: 0.0,
+            library_viewport_width: 860.0,
+            library_viewport_height: 720.0,
+            library_scan: Default::default(),
+            tray: None,
+            main_window_id: None,
+            theme: Theme::Dark,
+            runtime_shutdown: true,
+            outputs: Vec::new(),
+            output_geometry: Default::default(),
+            aspect_confirm: None,
+            selected_outputs: Default::default(),
+            running_source: None,
+            language: Language::English,
+            preferences_path: Some(preferences_path.clone()),
+            runtime_status: RuntimeStatus::DaemonNotRunning,
+            autostart_enabled: false,
+            autostart_system_managed: false,
+            autostart_pending: false,
+            autostart_error: None,
+            wallpapers_muted: false,
+            mute_changed_at: None,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: false,
+            gui_autostart_error: None,
+            preferences_generation: 0,
+            playlist_selected: None,
+            playlist_new_name_input: String::new(),
+            playlist_name_input: String::new(),
+            playlist_default_duration_input: String::new(),
+            playlist_entry_duration_inputs: Vec::new(),
+            runtime_playlist_active: None,
+            runtime_playlist_index: None,
+            runtime_outputs: Default::default(),
+            profile_selected: None,
+            profile_new_name_input: String::new(),
+            profile_name_input: String::new(),
+            scene_editor: crate::domain::scene_editor::SceneEditor::new(&LaunchSettings::default()),
+            legacy_shuffle: legacy_shuffle(),
+            playlist_migration_completed: true,
+        };
+        app.entries = entries;
+        app
+    }
+
+    fn scene_entry(dir: &std::path::Path, id: &str, ty: WallpaperType) -> WallpaperEntry {
+        WallpaperEntry {
+            id: id.to_string(),
+            project_json: dir.join("project.json"),
+            title: id.to_string(),
+            ty,
+            preview: None,
+            source_file: None,
+        }
+    }
+
+    fn write_scene(dir: &std::path::Path, width: u32, height: u32) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("scene.json"),
+            format!(r#"{{"general":{{"orthogonalprojection":{{"width":{width},"height":{height}}}}}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn applying_a_portrait_scene_to_a_landscape_display_asks_for_confirmation() {
+        let dir = std::env::temp_dir().join(format!("we-gui-portrait-{}", std::process::id()));
+        write_scene(&dir, 1080, 1920);
+        let mut app = aspect_test_app(vec![scene_entry(&dir, "portrait", WallpaperType::Scene)]);
+        app.selected_id = Some("portrait".to_string());
+        app.sidebar = Some(Sidebar::Detail);
+        app.outputs = vec!["DP-3".to_string(), "HDMI-1".to_string()];
+        app.selected_outputs = app.outputs.iter().cloned().collect();
+        app.output_geometry =
+            [("DP-3".to_string(), (2560, 1440)), ("HDMI-1".to_string(), (1080, 1920))].into();
+
+        let _ = update::update(&mut app, Message::PlayPressed);
+        let warnings = app.aspect_confirm.clone().expect("confirmation dialog");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("DP-3"), "{warnings:?}");
+
+        let _ = update::update(&mut app, Message::AspectConfirmCancel);
+        assert!(app.aspect_confirm.is_none());
+
+        // Only the matching portrait display selected: no dialog.
+        app.selected_outputs = ["HDMI-1".to_string()].into();
+        app.layerd_available = false; // stop before touching a real daemon
+        let _ = update::update(&mut app, Message::PlayPressed);
+        assert!(app.aspect_confirm.is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn applying_a_landscape_scene_to_the_portrait_display_stays_silent() {
+        let dir = std::env::temp_dir().join(format!("we-gui-landscape-{}", std::process::id()));
+        write_scene(&dir, 1560, 960);
+        let mut app = aspect_test_app(vec![scene_entry(&dir, "wide", WallpaperType::Scene)]);
+        app.selected_id = Some("wide".to_string());
+        app.sidebar = Some(Sidebar::Detail);
+        app.outputs = vec!["DP-3".to_string(), "HDMI-1".to_string()];
+        app.selected_outputs = app.outputs.iter().cloned().collect();
+        app.output_geometry =
+            [("DP-3".to_string(), (2560, 1440)), ("HDMI-1".to_string(), (1080, 1920))].into();
+        app.layerd_available = false;
+        let _ = update::update(&mut app, Message::PlayPressed);
+        assert!(app.aspect_confirm.is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn applying_a_web_wallpaper_to_two_displays_warns_it_shows_on_one() {
+        let dir = std::env::temp_dir().join(format!("we-gui-web-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = aspect_test_app(vec![scene_entry(&dir, "web", WallpaperType::Web)]);
+        app.selected_id = Some("web".to_string());
+        app.sidebar = Some(Sidebar::Detail);
+        app.outputs = vec!["DP-3".to_string(), "HDMI-1".to_string()];
+        app.selected_outputs = app.outputs.iter().cloned().collect();
+        app.output_geometry =
+            [("DP-3".to_string(), (2560, 1440)), ("HDMI-1".to_string(), (1080, 1920))].into();
+
+        let _ = update::update(&mut app, Message::PlayPressed);
+        let warnings = app.aspect_confirm.clone().expect("web warning dialog");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+
+        let _ = update::update(&mut app, Message::AspectConfirmCancel);
+        app.selected_outputs = ["DP-3".to_string()].into();
+        app.layerd_available = false;
+        let _ = update::update(&mut app, Message::PlayPressed);
+        assert!(app.aspect_confirm.is_none());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -153,6 +330,8 @@ mod tests {
             theme: Theme::Dark,
             runtime_shutdown: true,
             outputs: Vec::new(),
+            output_geometry: Default::default(),
+            aspect_confirm: None,
             selected_outputs: Default::default(),
             running_source: None,
             language: Language::English,
@@ -162,6 +341,11 @@ mod tests {
             autostart_system_managed: false,
             autostart_pending: false,
             autostart_error: None,
+            wallpapers_muted: false,
+            mute_changed_at: None,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: false,
+            gui_autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -263,6 +447,8 @@ mod tests {
             theme: Theme::Dark,
             runtime_shutdown: false,
             outputs: Vec::new(),
+            output_geometry: Default::default(),
+            aspect_confirm: None,
             selected_outputs: Default::default(),
             running_source: None,
             language: Language::English,
@@ -272,6 +458,11 @@ mod tests {
             autostart_system_managed: false,
             autostart_pending: false,
             autostart_error: None,
+            wallpapers_muted: false,
+            mute_changed_at: None,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: false,
+            gui_autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),
@@ -413,6 +604,140 @@ mod tests {
         assert_eq!(lines[2], format!("run --config {}", config.display()));
         fs::remove_dir_all(temp).expect("remove test directory");
     }
+    #[cfg(unix)]
+    #[test]
+    fn tray_mute_toggles_daemon_command_and_mirrors_state() {
+        let _lock = ENV_LOCK.lock().expect("environment lock");
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
+        let temp = std::env::temp_dir().join(format!("we-gui-tray-mute-{suffix}"));
+        let command = temp.join("we-layerd");
+        let log = temp.join("commands.log");
+        fs::create_dir_all(&temp).expect("create test directory");
+        fs::write(&command, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$WE_GUI_TEST_LOG\"\nexit 0\n")
+            .expect("write fake we-layerd");
+        let mut permissions = fs::metadata(&command).expect("fake command metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&command, permissions).expect("make fake command executable");
+
+        let old_path = std::env::var_os("PATH");
+        let old_log = std::env::var_os("WE_GUI_TEST_LOG");
+        std::env::set_var("PATH", &temp);
+        std::env::set_var("WE_GUI_TEST_LOG", &log);
+
+        let mut app = property_test_app();
+        assert!(!app.wallpapers_muted);
+
+        // Toggling the tray item sends `ctl mute` and mirrors the muted state.
+        let _ = update::update(
+            &mut app,
+            Message::TrayAction(crate::platform::tray::TrayAction::MuteToggled),
+        );
+        assert!(app.wallpapers_muted);
+
+        // Toggling again unmutes.
+        let _ = update::update(
+            &mut app,
+            Message::TrayAction(crate::platform::tray::TrayAction::MuteToggled),
+        );
+        assert!(!app.wallpapers_muted);
+
+        // The commands run on worker threads, so give them a moment to land. Environment is
+        // restored only afterwards: the threads resolve `we-layerd` through PATH themselves.
+        let deadline = SystemTime::now() + std::time::Duration::from_secs(5);
+        let mut lines = Vec::new();
+        while SystemTime::now() < deadline {
+            lines =
+                fs::read_to_string(&log).unwrap_or_default().lines().map(str::to_string).collect();
+            if lines.len() >= 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        match old_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        match old_log {
+            Some(value) => std::env::set_var("WE_GUI_TEST_LOG", value),
+            None => std::env::remove_var("WE_GUI_TEST_LOG"),
+        }
+
+        assert_eq!(lines, ["ctl mute", "ctl unmute"]);
+        fs::remove_dir_all(temp).expect("remove test directory");
+    }
+
+    #[test]
+    fn idle_status_still_syncs_the_tray_mute() {
+        let mut app = property_test_app();
+        // `ctl mute` works with no wallpaper playing, so the sync must not live inside the
+        // running/paused branch; otherwise the tray tick lies about the daemon state.
+        let idle = "phase = \"idle\"\n\n[integration_runtime]\nmanual_muted = true\n";
+        let _ = update::update(
+            &mut app,
+            Message::StatusLoaded(Ok(DaemonStatus::Running(idle.to_string()))),
+        );
+        assert!(app.wallpapers_muted);
+
+        let _ = update::update(
+            &mut app,
+            Message::StatusLoaded(Ok(DaemonStatus::Running(
+                "[integration_runtime]\nmanual_muted = false\n".to_string(),
+            ))),
+        );
+        assert!(!app.wallpapers_muted);
+    }
+
+    #[test]
+    fn status_reply_does_not_flip_a_fresh_tray_mute() {
+        let mut app = property_test_app();
+        app.wallpapers_muted = true;
+        app.mute_changed_at = Some(std::time::Instant::now());
+
+        // A reply fetched before the click still says "unmuted"; it must not win while the
+        // click settles, or the tick visibly flips back for a poll interval.
+        let _ = update::update(
+            &mut app,
+            Message::StatusLoaded(Ok(DaemonStatus::Running(
+                "[integration_runtime]\nmanual_muted = false\n".to_string(),
+            ))),
+        );
+        assert!(app.wallpapers_muted);
+
+        // Once the window is over the daemon's answer wins again (a CLI `ctl unmute` here).
+        app.mute_changed_at = None;
+        let _ = update::update(
+            &mut app,
+            Message::StatusLoaded(Ok(DaemonStatus::Running(
+                "[integration_runtime]\nmanual_muted = false\n".to_string(),
+            ))),
+        );
+        assert!(!app.wallpapers_muted);
+    }
+
+    #[test]
+    fn gui_autostart_status_reply_enables_the_checkbox() {
+        let mut app = property_test_app();
+        // The checkbox starts insensitive until the status probe answers, so the reply must
+        // clear the pending flag; otherwise it stays dead for the whole session.
+        app.gui_autostart_pending = true;
+
+        let _ = update::update(&mut app, Message::GuiAutostartStatusLoaded(Ok(true)));
+        assert!(!app.gui_autostart_pending);
+        assert!(app.gui_autostart_enabled);
+
+        app.gui_autostart_pending = true;
+        let _ = update::update(&mut app, Message::GuiAutostartStatusLoaded(Err("boom".into())));
+        assert!(!app.gui_autostart_pending);
+        assert!(app.gui_autostart_error.is_some());
+
+        // A toggle is accepted once the probe has answered.
+        app.gui_autostart_pending = false;
+        app.gui_autostart_enabled = true;
+        let _ = update::update(&mut app, Message::GuiAutostartToggled(false));
+        assert!(app.gui_autostart_pending);
+    }
+
     fn property_test_app() -> App {
         let nonce =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -456,6 +781,8 @@ mod tests {
             theme: Theme::Dark,
             runtime_shutdown: true,
             outputs: Vec::new(),
+            output_geometry: Default::default(),
+            aspect_confirm: None,
             selected_outputs: Default::default(),
             running_source: None,
             language: Language::English,
@@ -465,6 +792,11 @@ mod tests {
             autostart_system_managed: false,
             autostart_pending: false,
             autostart_error: None,
+            wallpapers_muted: false,
+            mute_changed_at: None,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: false,
+            gui_autostart_error: None,
             preferences_generation: 0,
             playlist_selected: None,
             playlist_new_name_input: String::new(),

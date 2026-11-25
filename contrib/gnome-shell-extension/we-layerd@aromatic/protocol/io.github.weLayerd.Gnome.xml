@@ -10,12 +10,26 @@
       <arg type="s" name="wm_class" direction="in"/>
       <arg type="b" name="accepted" direction="out"/>
     </method>
+    <method name="RegisterOutputWindow">
+      <arg type="u" name="id" direction="in"/>
+      <arg type="u" name="pid" direction="in"/>
+      <arg type="s" name="title" direction="in"/>
+      <arg type="s" name="wm_class" direction="in"/>
+      <arg type="s" name="connector" direction="in"/>
+      <arg type="b" name="accepted" direction="out"/>
+    </method>
     <method name="UnregisterWindow">
       <arg type="u" name="xid" direction="in"/>
       <arg type="b" name="removed" direction="out"/>
     </method>
     <method name="GetWindowStates">
       <arg type="a(sbbb)" name="states" direction="out"/>
+    </method>
+    <method name="ShowBackgroundMenu">
+      <arg type="s" name="connector" direction="in"/>
+      <arg type="d" name="x" direction="in"/>
+      <arg type="d" name="y" direction="in"/>
+      <arg type="b" name="shown" direction="out"/>
     </method>
   </interface>
   <interface name="io.github.weLayerd.Gnome.VideoBridge">

@@ -176,6 +176,14 @@ pub(crate) struct OutputState {
     pub(crate) preferred_fractional_scale: u32,
     pub(crate) output_mode_width: u32,
     pub(crate) output_mode_height: u32,
+    /// wl_output modes are reported in the panel's native orientation. A 90° or
+    /// 270° output transform shows them rotated, so the render extent must swap.
+    pub(crate) output_mode_rotated: bool,
+    /// Content whose renderer stretches to the render extent (video) and is
+    /// almost always landscape. On a portrait display it renders landscape at
+    /// the display's long-axis density and the viewport crops it, instead of
+    /// being squeezed into a portrait frame.
+    pub(crate) landscape_content: bool,
     pub(crate) logical_width: u32,
     pub(crate) logical_height: u32,
     pub(crate) fallback_width: u32,
@@ -192,6 +200,8 @@ impl OutputState {
             preferred_fractional_scale: 0,
             output_mode_width: 0,
             output_mode_height: 0,
+            output_mode_rotated: false,
+            landscape_content: false,
             logical_width: 0,
             logical_height: 0,
             fallback_width: 1920,
@@ -219,11 +229,23 @@ impl OutputState {
     }
 
     pub(crate) fn recompute_geometry(&mut self) {
+        let (mut output_mode_width, output_mode_height) = if self.output_mode_rotated {
+            (self.output_mode_height, self.output_mode_width)
+        } else {
+            (self.output_mode_width, self.output_mode_height)
+        };
+        if self.landscape_content && output_mode_width > 0 && output_mode_height > output_mode_width
+        {
+            // e.g. a 1080x1920 portrait display renders 3413x1920 and the cover
+            // viewport crops the centered 1080x1920 at native density.
+            output_mode_width = ((u64::from(output_mode_height) * u64::from(output_mode_height))
+                / u64::from(output_mode_width)) as u32;
+        }
         self.geometry = compute_geometry(GeometryInput {
             logical_width: self.logical_width,
             logical_height: self.logical_height,
-            output_mode_width: self.output_mode_width,
-            output_mode_height: self.output_mode_height,
+            output_mode_width,
+            output_mode_height,
             fallback_width: self.fallback_width,
             fallback_height: self.fallback_height,
             output_scale: self.output_scale,
@@ -267,6 +289,48 @@ mod tests {
         output.recompute_geometry();
         assert_eq!(output.geometry.render_width, 2560);
         assert_eq!(output.geometry.render_height, 1440);
+    }
+
+    #[test]
+    fn rotated_output_renders_in_displayed_orientation() {
+        let mut output = OutputState::new(ScaleMode::Cover);
+        output.output_mode_width = 1920;
+        output.output_mode_height = 1080;
+        output.output_mode_rotated = true;
+        output.logical_width = 1080;
+        output.logical_height = 1920;
+        output.recompute_geometry();
+        assert_eq!((output.geometry.render_width, output.geometry.render_height), (1080, 1920));
+        assert_eq!(output.geometry.viewport_source, None);
+    }
+
+    #[test]
+    fn rotated_output_renders_landscape_video_at_native_density() {
+        let mut output = OutputState::new(ScaleMode::Cover);
+        output.output_mode_width = 1920;
+        output.output_mode_height = 1080;
+        output.output_mode_rotated = true;
+        output.landscape_content = true;
+        output.logical_width = 1080;
+        output.logical_height = 1920;
+        output.recompute_geometry();
+        assert_eq!((output.geometry.render_width, output.geometry.render_height), (3413, 1920));
+        let source = output.geometry.viewport_source.expect("cover crops the landscape render");
+        assert!((source.height - 1920.0).abs() < 1e-9);
+        assert!((source.width - 1080.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn landscape_video_on_landscape_output_is_unchanged() {
+        let mut output = OutputState::new(ScaleMode::Cover);
+        output.output_mode_width = 2560;
+        output.output_mode_height = 1440;
+        output.landscape_content = true;
+        output.logical_width = 2560;
+        output.logical_height = 1440;
+        output.recompute_geometry();
+        assert_eq!((output.geometry.render_width, output.geometry.render_height), (2560, 1440));
+        assert_eq!(output.geometry.viewport_source, None);
     }
 
     #[test]

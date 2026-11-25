@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     path::PathBuf,
     process::Child,
+    time::Instant,
 };
 
 use iced::{widget::pane_grid, window, Size, Theme};
@@ -62,6 +63,10 @@ pub(crate) struct App {
     pub theme: Theme,
     pub runtime_shutdown: bool,
     pub outputs: Vec<String>,
+    /// Rotated on-screen size per output, for the aspect-ratio warning.
+    pub output_geometry: std::collections::BTreeMap<String, (u32, u32)>,
+    /// Pending "wallpaper shape doesn't match" confirmation: one line per display.
+    pub aspect_confirm: Option<Vec<String>>,
     pub selected_outputs: BTreeSet<String>,
     pub running_source: Option<String>,
     pub language: Language,
@@ -71,6 +76,15 @@ pub(crate) struct App {
     pub autostart_system_managed: bool,
     pub autostart_pending: bool,
     pub autostart_error: Option<String>,
+    /// Whether wallpapers are silenced through the daemon's runtime mute
+    /// (tray tick or `we-layerd ctl mute`), mirrored from the status poll.
+    pub wallpapers_muted: bool,
+    /// When the tray last changed the mute. A status reply fetched before that command
+    /// describes the old state, so it must not flip the tick back while this is fresh.
+    pub mute_changed_at: Option<Instant>,
+    pub gui_autostart_enabled: bool,
+    pub gui_autostart_pending: bool,
+    pub gui_autostart_error: Option<String>,
     pub preferences_generation: u64,
     pub playlist_selected: Option<String>,
     pub playlist_new_name_input: String,
@@ -128,14 +142,16 @@ impl App {
         stopped
     }
 
-    pub(crate) fn shutdown_owned_runtime(&mut self) -> bool {
+    /// Quitting the GUI must not take the wallpaper down with it: the daemon
+    /// runs detached and only the explicit Stop action ends it. Forget the
+    /// child handle (dropping a `Child` never kills the process).
+    pub(crate) fn release_owned_runtime(&mut self) {
         if self.runtime_shutdown {
-            return true;
+            return;
         }
         self.runtime_shutdown = true;
-        let stopped = crate::services::runtime::stop_owned(&mut self.runtime_child);
-        self.clear_playback_state();
-        stopped
+        let _ = crate::services::runtime::reap(&mut self.runtime_child);
+        self.runtime_child = None;
     }
 
     pub(crate) fn clear_playback_state(&mut self) {
@@ -150,7 +166,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        let _ = self.shutdown_owned_runtime();
+        self.release_owned_runtime();
     }
 }
 
@@ -191,10 +207,15 @@ pub(crate) enum Message {
     FocusedRuleSelected(we_core::config::RuntimeRuleAction),
     MaximizedRuleSelected(we_core::config::RuntimeRuleAction),
     FullscreenRuleSelected(we_core::config::RuntimeRuleAction),
+    RulesAllOutputsToggled(bool),
+    FullscreenAllOutputsToggled(bool),
     PreferDmabufToggled(bool),
     AllowShmFallbackToggled(bool),
     AutostartStatusLoaded(Result<crate::services::autostart::AutostartStatus, String>),
     AutostartToggled(bool),
+    GuiAutostartStatusLoaded(Result<bool, String>),
+    GuiAutostartToggled(bool),
+    GuiAutostartUpdated { enabled: bool, result: Result<(), String> },
     AutostartUpdated { enabled: bool, result: Result<(), String> },
     LanguageSelected(Language),
     PreferencesSaved { generation: u64, result: Result<(), String> },
@@ -260,8 +281,12 @@ pub(crate) enum Message {
     WindowClosed(window::Id),
     TrayTick,
     ThemeTick,
+    AppearanceDetected(crate::ui::theme::palette::Appearance),
     ExitRequested,
     TrayAction(tray::TrayAction),
     OutputsLoaded(Result<Vec<String>, String>),
+    AspectConfirmApply,
+    AspectConfirmCancel,
+    OutputGeometryLoaded(Result<Vec<crate::services::runtime::OutputGeometry>, String>),
     ToggleOutput(String),
 }

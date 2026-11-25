@@ -30,11 +30,18 @@ pub(crate) struct RuleSet {
     pub(crate) focused: RuleAction,
     pub(crate) maximized: RuleAction,
     pub(crate) fullscreen: RuleAction,
+    /// Apply whatever any output triggers to every output.
+    pub(crate) all_outputs: bool,
+    /// Apply the fullscreen rule to every output when any output has a
+    /// fullscreen (or monitor-covering borderless) window, e.g. a game.
+    pub(crate) fullscreen_all_outputs: bool,
 }
 
 impl RuleSet {
     pub(crate) fn is_keep(self) -> bool {
-        self == Self::default()
+        self.focused == RuleAction::Keep
+            && self.maximized == RuleAction::Keep
+            && self.fullscreen == RuleAction::Keep
     }
 }
 
@@ -44,6 +51,8 @@ impl From<RuntimeRulesConfig> for RuleSet {
             focused: value.focused.into(),
             maximized: value.maximized.into(),
             fullscreen: value.fullscreen.into(),
+            all_outputs: value.all_outputs,
+            fullscreen_all_outputs: value.fullscreen_all_outputs,
         }
     }
 }
@@ -72,10 +81,15 @@ pub(crate) struct RuntimePolicy {
     pub(crate) mute: bool,
 }
 
+/// `fullscreen_always_covers`: on GNOME a fullscreen window keeps covering its
+/// monitor whatever has keyboard focus (e.g. a Proton game launched without
+/// taking focus from the terminal or Steam), so its fullscreen state is never
+/// stale. Only scrolling compositors such as niri need the focus heuristic.
 pub(crate) fn policies_for_outputs(
     rules: RuleSet,
     outputs: impl IntoIterator<Item = String>,
     toplevels: &[ToplevelActivity],
+    fullscreen_always_covers: bool,
 ) -> BTreeMap<String, RuntimePolicy> {
     let mut policies = outputs
         .into_iter()
@@ -83,10 +97,12 @@ pub(crate) fn policies_for_outputs(
         .collect::<BTreeMap<_, _>>();
     let outputs_with_active_non_fullscreen = toplevels
         .iter()
+        .filter(|_| !fullscreen_always_covers)
         .filter(|toplevel| toplevel.activated && !toplevel.fullscreen)
         .flat_map(|toplevel| toplevel.outputs.iter().map(String::as_str))
         .collect::<BTreeSet<_>>();
 
+    let mut fullscreen_anywhere = false;
     for toplevel in toplevels {
         for output in &toplevel.outputs {
             let Some(policy) = policies.get_mut(output) else {
@@ -103,11 +119,33 @@ pub(crate) fn policies_for_outputs(
             if toplevel.fullscreen && !outputs_with_active_non_fullscreen.contains(output.as_str())
             {
                 apply_rule_action(policy, rules.fullscreen);
+                fullscreen_anywhere = true;
             }
         }
     }
+    // Monitor-wide scopes. On GNOME the output list only names monitors that
+    // currently show a window, so a monitor with nothing on it would be missed;
+    // ALL_OUTPUTS_POLICY_KEY carries the shared policy for those.
+    let mut shared = RuntimePolicy::default();
+    if rules.fullscreen_all_outputs && fullscreen_anywhere {
+        apply_rule_action(&mut shared, rules.fullscreen);
+    }
+    if rules.all_outputs {
+        shared.pause |= policies.values().any(|policy| policy.pause);
+        shared.mute |= policies.values().any(|policy| policy.mute);
+    }
+    if shared != RuntimePolicy::default() {
+        for policy in policies.values_mut() {
+            policy.pause |= shared.pause;
+            policy.mute |= shared.mute;
+        }
+        policies.insert(ALL_OUTPUTS_POLICY_KEY.to_string(), shared);
+    }
     policies
 }
+
+/// Policy entry that applies to outputs not listed by name.
+pub(crate) const ALL_OUTPUTS_POLICY_KEY: &str = "*";
 
 fn apply_rule_action(policy: &mut RuntimePolicy, action: RuleAction) {
     match action {
@@ -493,9 +531,12 @@ mod tests {
                 focused: RuleAction::Mute,
                 maximized: RuleAction::Pause,
                 fullscreen: RuleAction::Pause,
+                all_outputs: false,
+                fullscreen_all_outputs: false,
             },
             outputs,
             &windows,
+            true,
         );
         assert_eq!(policies["DP-1"], RuntimePolicy { pause: true, mute: false });
         assert_eq!(policies["eDP-1"], RuntimePolicy { pause: false, mute: true });
@@ -510,6 +551,7 @@ mod tests {
             RuleSet { focused: RuleAction::Pause, ..RuleSet::default() },
             outputs,
             &windows,
+            true,
         );
         assert!(policies.is_empty());
     }
@@ -591,9 +633,102 @@ mod tests {
                     ..ToplevelActivity::default()
                 },
             ],
+            false,
         );
 
         assert_eq!(policies["DP-1"], RuntimePolicy::default());
+    }
+
+    #[test]
+    fn all_outputs_scope_pauses_every_monitor_when_any_has_a_maximized_window() {
+        let toplevels = [ToplevelActivity {
+            outputs: vec!["HDMI-1".to_string()],
+            maximized: true,
+            ..ToplevelActivity::default()
+        }];
+        let outputs = ["DP-3".to_string(), "HDMI-1".to_string()];
+        let per_output = policies_for_outputs(
+            RuleSet { maximized: RuleAction::Pause, ..RuleSet::default() },
+            outputs.clone(),
+            &toplevels,
+            true,
+        );
+        assert_eq!(per_output["DP-3"], RuntimePolicy::default());
+        assert_eq!(per_output["HDMI-1"], RuntimePolicy { pause: true, mute: false });
+
+        let all = policies_for_outputs(
+            RuleSet { maximized: RuleAction::Pause, all_outputs: true, ..RuleSet::default() },
+            outputs,
+            &toplevels,
+            true,
+        );
+        assert_eq!(all["DP-3"], RuntimePolicy { pause: true, mute: false });
+        assert_eq!(all["HDMI-1"], RuntimePolicy { pause: true, mute: false });
+        assert!(RuleSet { all_outputs: true, ..RuleSet::default() }.is_keep());
+    }
+
+    #[test]
+    fn fullscreen_scope_pauses_every_monitor_for_a_game_but_not_for_maximized() {
+        let rules = RuleSet {
+            maximized: RuleAction::Pause,
+            fullscreen: RuleAction::Pause,
+            fullscreen_all_outputs: true,
+            ..RuleSet::default()
+        };
+        let outputs = ["DP-3".to_string(), "HDMI-1".to_string()];
+        let game = [ToplevelActivity {
+            outputs: vec!["DP-3".to_string()],
+            activated: true,
+            fullscreen: true,
+            ..ToplevelActivity::default()
+        }];
+        let policies = policies_for_outputs(rules, outputs.clone(), &game, true);
+        assert_eq!(policies["DP-3"], RuntimePolicy { pause: true, mute: false });
+        assert_eq!(policies["HDMI-1"], RuntimePolicy { pause: true, mute: false });
+        // A monitor with no windows is not in GNOME's output list at all.
+        let only_game_output = policies_for_outputs(rules, ["DP-3".to_string()], &game, true);
+        assert_eq!(
+            only_game_output[super::ALL_OUTPUTS_POLICY_KEY],
+            RuntimePolicy { pause: true, mute: false }
+        );
+
+        let maximized = [ToplevelActivity {
+            outputs: vec!["DP-3".to_string()],
+            activated: true,
+            maximized: true,
+            ..ToplevelActivity::default()
+        }];
+        let policies = policies_for_outputs(rules, outputs, &maximized, true);
+        assert_eq!(policies["DP-3"], RuntimePolicy { pause: true, mute: false });
+        assert_eq!(policies["HDMI-1"], RuntimePolicy::default());
+        assert!(!policies.contains_key(super::ALL_OUTPUTS_POLICY_KEY));
+    }
+
+    #[test]
+    fn gnome_fullscreen_pauses_even_when_another_window_on_that_output_has_focus() {
+        // A Proton game that went fullscreen without taking focus from the
+        // terminal behind it still covers the whole monitor on GNOME.
+        let toplevels = [
+            ToplevelActivity {
+                outputs: vec!["DP-3".to_string()],
+                activated: false,
+                fullscreen: true,
+                ..ToplevelActivity::default()
+            },
+            ToplevelActivity {
+                outputs: vec!["DP-3".to_string()],
+                activated: true,
+                ..ToplevelActivity::default()
+            },
+        ];
+        let policies = policies_for_outputs(
+            RuleSet { fullscreen: RuleAction::Pause, ..RuleSet::default() },
+            ["DP-3".to_string(), "HDMI-1".to_string()],
+            &toplevels,
+            true,
+        );
+        assert_eq!(policies["DP-3"], RuntimePolicy { pause: true, mute: false });
+        assert_eq!(policies["HDMI-1"], RuntimePolicy::default());
     }
 
     #[test]
@@ -603,6 +738,8 @@ mod tests {
                 focused: RuleAction::Mute,
                 maximized: RuleAction::Mute,
                 fullscreen: RuleAction::Pause,
+                all_outputs: false,
+                fullscreen_all_outputs: false,
             },
             ["DP-1".to_string(), "HDMI-A-1".to_string()],
             &[
@@ -619,6 +756,7 @@ mod tests {
                     fullscreen: true,
                 },
             ],
+            false,
         );
 
         assert_eq!(policies["DP-1"], RuntimePolicy { pause: false, mute: true });

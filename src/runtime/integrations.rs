@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -55,6 +56,7 @@ struct IntegrationState {
     audio_source: String,
     audio_error: Option<String>,
     policy_generation: u64,
+    manual_muted: bool,
     policies: BTreeMap<String, RuntimePolicy>,
     rules_enabled: bool,
     rules_available: bool,
@@ -79,6 +81,7 @@ impl Default for IntegrationState {
             audio_source: String::new(),
             audio_error: None,
             policy_generation: 0,
+            manual_muted: false,
             policies: BTreeMap::new(),
             rules_enabled: false,
             rules_available: false,
@@ -92,6 +95,54 @@ impl Default for IntegrationState {
 #[derive(Clone, Default)]
 pub(crate) struct HostIntegrations {
     state: Arc<Mutex<IntegrationState>>,
+    /// Where the runtime mute is remembered, so a daemon restart does not silently unmute.
+    mute_state_path: Arc<Option<PathBuf>>,
+}
+
+impl HostIntegrations {
+    pub(crate) fn with_mute_state_path(mut self, path: Option<PathBuf>) -> Self {
+        self.mute_state_path = Arc::new(path);
+        self
+    }
+
+    /// Silence every output without touching the persisted config: the manual
+    /// mute folds into the runtime policy that workers already react to, so
+    /// no worker restarts and the mute survives playlist rewrites.
+    pub(crate) fn set_manual_muted(&self, muted: bool) {
+        {
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if state.manual_muted == muted {
+                return;
+            }
+            state.manual_muted = muted;
+            state.policy_generation = state.policy_generation.wrapping_add(1);
+        }
+        let Some(path) = self.mute_state_path.as_deref() else {
+            return;
+        };
+        if let Err(error) = std::fs::write(path, if muted { "muted" } else { "unmuted" }) {
+            warn!(%error, path = %path.display(), "failed to persist the runtime mute");
+        }
+    }
+
+    /// Seed the mute from the previous run. Called once at startup: the tray mute is not part of
+    /// the config, so without this a daemon restart would silently play audio again.
+    pub(crate) fn restore_manual_mute(&self) {
+        let Some(path) = self.mute_state_path.as_deref() else {
+            return;
+        };
+        if std::fs::read_to_string(path).is_ok_and(|text| text.trim() == "muted") {
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.manual_muted = true;
+            state.policy_generation = state.policy_generation.wrapping_add(1);
+        }
+    }
+
+    /// Current manual-mute state, mirrored into the status TOML for the GUI and seeded into
+    /// a new renderer session so a muted wallpaper never opens its audio device.
+    pub(crate) fn manual_muted(&self) -> bool {
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).manual_muted
+    }
 }
 
 pub(crate) struct HostIntegrationRuntime {
@@ -101,8 +152,13 @@ pub(crate) struct HostIntegrationRuntime {
 }
 
 impl HostIntegrationRuntime {
-    pub(crate) fn start(desired_cfg: Arc<Mutex<Config>>, shutdown: Arc<AtomicBool>) -> Self {
-        let shared = HostIntegrations::default();
+    pub(crate) fn start(
+        desired_cfg: Arc<Mutex<Config>>,
+        shutdown: Arc<AtomicBool>,
+        mute_state_path: Option<PathBuf>,
+    ) -> Self {
+        let shared = HostIntegrations::default().with_mute_state_path(mute_state_path);
+        shared.restore_manual_mute();
         let handles = vec![
             spawn_media_collector(shared.clone(), desired_cfg.clone(), shutdown.clone()),
             spawn_audio_collector(shared.clone(), desired_cfg.clone(), shutdown.clone()),
@@ -133,7 +189,15 @@ impl HostIntegrations {
 
     pub(crate) fn snapshot_for_output(&self, output: &str) -> OutputIntegrationSnapshot {
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut policy = state.policies.get(output).copied().unwrap_or_default();
+        let mut policy = state
+            .policies
+            .get(output)
+            .or_else(|| state.policies.get(crate::runtime::rules::ALL_OUTPUTS_POLICY_KEY))
+            .copied()
+            .unwrap_or_default();
+        if state.manual_muted {
+            policy.mute = true;
+        }
         let fps_limit = if state.power_state == PowerState::Battery {
             match state.adaptive.on_battery {
                 RuntimeRuleAction::Keep => {}
@@ -173,6 +237,7 @@ impl HostIntegrations {
             rules_enabled: bool,
             rules_available: bool,
             rules_error: &'a str,
+            manual_muted: bool,
             power_state: &'a str,
             adaptive_enabled: bool,
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,6 +258,7 @@ impl HostIntegrations {
                 rules_enabled: state.rules_enabled,
                 rules_available: state.rules_available,
                 rules_error: state.rules_error.as_deref().unwrap_or(""),
+                manual_muted: state.manual_muted,
                 power_state: state.power_state.as_str(),
                 adaptive_enabled: !state.adaptive.is_disabled(),
                 adaptive_fps_cap: if state.power_state == PowerState::Battery {
@@ -912,13 +978,19 @@ fn spawn_rule_collector(
                     }
                 }
 
+                let fullscreen_always_covers = matches!(monitor, Some(ToplevelMonitor::Gnome(_)));
                 let result = monitor.as_mut().expect("monitor").poll();
                 match result {
                     Ok((outputs, toplevels)) => {
                         shared.update_rules(
                             true,
                             true,
-                            policies_for_outputs(rules, outputs, &toplevels),
+                            policies_for_outputs(
+                                rules,
+                                outputs,
+                                &toplevels,
+                                fullscreen_always_covers,
+                            ),
                             None,
                         );
                     }
@@ -1018,6 +1090,76 @@ mod tests {
         assert!(!hdmi.policy.pause);
         assert!(hdmi.policy.mute);
         assert_eq!(dp.audio_generation, hdmi.audio_generation);
+    }
+
+    #[test]
+    fn manual_mute_folds_into_every_output_policy_and_bumps_the_generation() {
+        let host = HostIntegrations::default();
+        host.update_rules(
+            true,
+            true,
+            [
+                ("DP-1".to_string(), RuntimePolicy { pause: false, mute: false }),
+                ("HDMI-A-1".to_string(), RuntimePolicy { pause: false, mute: false }),
+            ]
+            .into_iter()
+            .collect(),
+            None,
+        );
+        let before = host.snapshot_for_output("DP-1").policy_generation;
+
+        host.set_manual_muted(true);
+        let dp = host.snapshot_for_output("DP-1");
+        let hdmi = host.snapshot_for_output("HDMI-A-1");
+        // The tray mute is global: every output silences without a rule rewrite.
+        assert!(dp.policy.mute);
+        assert!(hdmi.policy.mute);
+        assert_ne!(dp.policy_generation, before);
+        assert!(host.manual_muted());
+
+        // Idempotent: muting again must not bump the generation again.
+        host.set_manual_muted(true);
+        assert_eq!(host.snapshot_for_output("DP-1").policy_generation, dp.policy_generation);
+
+        host.set_manual_muted(false);
+        let dp = host.snapshot_for_output("DP-1");
+        assert!(!dp.policy.mute);
+        assert_ne!(dp.policy_generation, before.wrapping_add(1).wrapping_sub(1));
+    }
+
+    #[test]
+    fn runtime_mute_is_remembered_across_a_restart() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "we-layerd-runtime-mute-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let host = HostIntegrations::default().with_mute_state_path(Some(path.clone()));
+        host.set_manual_muted(true);
+        assert_eq!(std::fs::read_to_string(&path).expect("mute state file"), "muted");
+
+        // A fresh instance (the next daemon run) picks the mute back up before any worker asks.
+        let restarted = HostIntegrations::default().with_mute_state_path(Some(path.clone()));
+        restarted.restore_manual_mute();
+        assert!(restarted.manual_muted());
+        assert!(restarted.snapshot_for_output("DP-1").policy.mute);
+
+        host.set_manual_muted(false);
+        assert_eq!(std::fs::read_to_string(&path).expect("mute state file"), "unmuted");
+        let restarted = HostIntegrations::default().with_mute_state_path(Some(path.clone()));
+        restarted.restore_manual_mute();
+        assert!(!restarted.manual_muted());
+
+        // No path configured (no config file given) must not panic or write anything.
+        let detached = HostIntegrations::default();
+        detached.set_manual_muted(true);
+        assert!(detached.manual_muted());
+        detached.restore_manual_mute();
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

@@ -22,10 +22,14 @@ use crate::{
 
 use super::{App, Message};
 
-pub(crate) fn initialize() -> (App, Task<Message>) {
+pub(crate) fn initialize(open_window: bool) -> (App, Task<Message>) {
     let preferences_path = preferences::path();
     let preferences = preferences_path.as_deref().map(preferences::load).unwrap_or_default();
     let language = preferences.language;
+    // Without a tray icon a windowless launch would be an invisible process the user cannot
+    // reach or quit, so fall back to showing the window.
+    let tray = tray::TrayController::new(language).ok();
+    let open_window = open_window || tray.is_none();
     let config_path = steam::default_config_path().unwrap_or_else(|| PathBuf::from("config.toml"));
     let mut launch_settings =
         load_launch_settings(&config_path).unwrap_or_else(|_| LaunchSettings::default());
@@ -58,6 +62,8 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
         rule_focused: launch_settings.rules.focused,
         rule_maximized: launch_settings.rules.maximized,
         rule_fullscreen: launch_settings.rules.fullscreen,
+        rule_all_outputs: launch_settings.rules.all_outputs,
+        rule_fullscreen_all_outputs: launch_settings.rules.fullscreen_all_outputs,
     };
     let playlist_selected = launch_settings
         .playlists
@@ -126,11 +132,13 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             library_viewport_width: 860.0,
             library_viewport_height: 720.0,
             library_scan: Default::default(),
-            tray: tray::TrayController::new(language).ok(),
+            tray,
             main_window_id: None,
             theme: detect_system_theme(),
             runtime_shutdown: false,
             outputs: Vec::new(),
+            output_geometry: Default::default(),
+            aspect_confirm: None,
             selected_outputs: Default::default(),
             running_source: None,
             language,
@@ -140,6 +148,11 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             autostart_system_managed: false,
             autostart_pending: true,
             autostart_error: None,
+            wallpapers_muted: false,
+            mute_changed_at: None,
+            gui_autostart_enabled: false,
+            gui_autostart_pending: true,
+            gui_autostart_error: None,
             preferences_generation: 0,
             playlist_selected,
             playlist_new_name_input: String::new(),
@@ -162,22 +175,38 @@ pub(crate) fn initialize() -> (App, Task<Message>) {
             },
             playlist_migration_completed: preferences.playlist_migration_completed,
         },
-        Task::batch(vec![
-            Task::done(Message::AutoScan),
-            Task::perform(crate::services::runtime::fetch_outputs(), Message::OutputsLoaded),
-            Task::perform(
-                async { crate::services::autostart::status() },
-                Message::AutostartStatusLoaded,
-            ),
-            window::open(window::Settings::default()).1.map(Message::WindowOpened),
-        ]),
+        Task::batch({
+            let mut tasks = vec![
+                Task::done(Message::AutoScan),
+                Task::perform(crate::services::runtime::fetch_outputs(), Message::OutputsLoaded),
+                Task::perform(
+                    crate::services::runtime::fetch_output_geometry(),
+                    Message::OutputGeometryLoaded,
+                ),
+                Task::perform(
+                    async { crate::services::autostart::status() },
+                    Message::AutostartStatusLoaded,
+                ),
+                Task::perform(
+                    async { crate::services::autostart::gui_status() },
+                    Message::GuiAutostartStatusLoaded,
+                ),
+            ];
+            if open_window {
+                tasks.push(window::open(window_settings()).1.map(Message::WindowOpened));
+            }
+            tasks
+        }),
     )
 }
 
 pub(crate) fn detect_system_theme() -> Theme {
-    match dark_light::detect() {
-        dark_light::Mode::Light => Theme::Light,
-        dark_light::Mode::Dark => Theme::Dark,
-        dark_light::Mode::Default => Theme::Dark,
+    crate::ui::theme::palette::current_theme()
+}
+
+pub(crate) fn window_settings() -> window::Settings {
+    window::Settings {
+        min_size: Some(iced::Size::new(720.0, 480.0)),
+        ..window::Settings::default()
     }
 }

@@ -21,6 +21,12 @@ impl BackendKind {
             Self::Gnome => "gnome",
         }
     }
+
+    /// Both backends run one isolated renderer worker per named output: layer-shell
+    /// surfaces directly, GNOME through per-output windows pinned by the extension.
+    pub fn supports_multi_output(self) -> bool {
+        matches!(self, Self::LayerShell | Self::Gnome)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

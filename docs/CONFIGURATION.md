@@ -146,6 +146,15 @@ fullscreen = "pause"
 runtime diagnostics report media/audio renderer capability and current rule mute state. Collectors
 run outside the frame loop, and changing integration/rule settings does not recreate output workers.
 
+`we-layerd ctl mute` / `we-layerd ctl unmute` silence or restore every output at runtime. The mute
+folds into the per-output policy rail (the same one the window rules use), so it applies to scene
+and video wallpapers live, persists across playlist advances, never rewrites the config file, and
+never restarts a worker. `[integration_runtime].manual_muted` in the status output reports it; the
+tray menu tick in we-gui mirrors it.
+
+The mute is remembered in `<config>.runtime-mute` next to the config file, so a daemon restart does
+not unmute by itself. Delete that file or run `ctl unmute` to start unmuted.
+
 ### Adaptive battery policy
 
 An optional policy reduces the actual renderer tick rate when the kernel reports battery power:
@@ -198,6 +207,13 @@ not both. If `renderer.source` is empty, discovered outputs without an explicit 
 unused. If a named output disappears, only that worker is stopped; when a new named output appears,
 only the newly applicable worker is started. Invalid or failed output workers are reported through
 status without stopping healthy outputs.
+
+Scene, video, and web audio is played once, by one output only. The first output in name order whose
+wallpaper is not muted owns audio; if every output is muted, the first one still holds ownership
+so a runtime unmute needs no restart. Every other worker runs silent, so two screens never play the
+same soundtrack twice. When the owning output disappears, a surviving worker restarts to take over
+audio. A wallpaper profile's `muted` setting still applies on top of this; changing it belongs to
+the output config, so that edit restarts the affected worker like any other config change.
 
 Per-output playlists use independent playback state. The global playlist commands remain available
 for the legacy/shared playlist runtime; target a layer-shell output explicitly with:

@@ -65,6 +65,35 @@ impl Language {
         }
     }
 
+    pub(crate) fn aspect_warning(
+        self,
+        canvas: Option<(u32, u32)>,
+        output: &str,
+        display: (u32, u32),
+    ) -> String {
+        let size = canvas.map(|(w, h)| format!(" ({w}×{h})")).unwrap_or_default();
+        let (dw, dh) = display;
+        match self {
+            Self::English => format!(
+                "⚠ Portrait wallpaper{size} on landscape {output} ({dw}×{dh}): most of the picture will be cropped."
+            ),
+            Self::SimplifiedChinese => format!(
+                "⚠ 竖屏壁纸{size}用于横屏 {output}（{dw}×{dh}）：画面的大部分会被裁剪。"
+            ),
+        }
+    }
+
+    pub(crate) fn web_single_display_warning(self, displays: usize) -> String {
+        match self {
+            Self::English => format!(
+                "⚠ Web wallpapers can only run on one display at a time: of the {displays} selected displays, only one will show it."
+            ),
+            Self::SimplifiedChinese => format!(
+                "⚠ 网页壁纸同一时间只能在一个显示器上运行：所选的 {displays} 个显示器中只有一个会显示它。"
+            ),
+        }
+    }
+
     pub(crate) fn speed(self, value: f32) -> String {
         match self {
             Self::English => format!("Speed  {value:.2}×"),
@@ -303,6 +332,8 @@ pub(crate) enum Text {
     StartOnLogin,
     StartOnLoginDescription,
     StartOnLoginManagedDescription,
+    StartGuiOnLogin,
+    StartGuiOnLoginDescription,
     EnableWallpaperInput,
     WallpaperInputMode,
     WallpaperInputModeDirect,
@@ -320,6 +351,11 @@ pub(crate) enum Text {
     FocusedWindowRule,
     MaximizedWindowRule,
     FullscreenWindowRule,
+    RulesApplyToAllOutputs,
+    AspectConfirmTitle,
+    AspectConfirmApply,
+    AspectConfirmCancel,
+    FullscreenRuleAllOutputs,
     RuleKeep,
     RuleMute,
     RulePause,
@@ -377,6 +413,7 @@ pub(crate) enum Text {
     TrayStop,
     TrayPause,
     TrayResume,
+    TrayMuteWallpapers,
     TrayQuit,
 }
 

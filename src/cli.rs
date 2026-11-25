@@ -42,7 +42,11 @@ pub enum Command {
         config: Option<PathBuf>,
     },
     /// Print compositor output names as JSON
-    Outputs,
+    Outputs {
+        /// Also print each output's rotated on-screen size as JSON objects
+        #[arg(long)]
+        geometry: bool,
+    },
     /// Send control command to a running daemon
     Ctl {
         #[arg(value_enum)]
@@ -65,6 +69,8 @@ pub enum ControlAction {
     Stop,
     Pause,
     Resume,
+    Mute,
+    Unmute,
     Reload,
     Status,
 }

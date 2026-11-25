@@ -1,3 +1,4 @@
+use crate::ui::theme::colors;
 use crate::{
     app::Message,
     domain::{
@@ -21,6 +22,9 @@ pub fn build_settings_overlay<'a>(
     autostart_system_managed: bool,
     autostart_pending: bool,
     autostart_error: Option<&'a str>,
+    gui_autostart_enabled: bool,
+    gui_autostart_pending: bool,
+    gui_autostart_error: Option<&'a str>,
 ) -> Element<'a, Message> {
     let assets_path_display = format_path_for_display(&ui_settings.assets_path, 64);
     let workshop_path_display = format_path_for_display(&ui_settings.workshop_path, 64);
@@ -60,6 +64,14 @@ pub fn build_settings_overlay<'a>(
         autostart_checkbox
     } else {
         autostart_checkbox.on_toggle(Message::AutostartToggled)
+    };
+    let gui_autostart_checkbox = checkbox(gui_autostart_enabled)
+        .label(language.text(Text::StartGuiOnLogin))
+        .style(md_checkbox_style);
+    let gui_autostart_checkbox = if gui_autostart_pending {
+        gui_autostart_checkbox
+    } else {
+        gui_autostart_checkbox.on_toggle(Message::GuiAutostartToggled)
     };
 
     let mut content = column![
@@ -163,6 +175,8 @@ pub fn build_settings_overlay<'a>(
             language.text(Text::StartOnLoginDescription)
         })
         .size(12),
+        container(gui_autostart_checkbox).id("settings.gui-autostart"),
+        text(language.text(Text::StartGuiOnLoginDescription)).size(12),
         container(
             checkbox(ui_settings.interactive)
                 .label(language.text(Text::EnableWallpaperInput))
@@ -272,6 +286,20 @@ pub fn build_settings_overlay<'a>(
             .menu_style(md_menu_style),
         )
         .id("settings.rules.fullscreen"),
+        container(
+            checkbox(ui_settings.rule_fullscreen_all_outputs)
+                .label(language.text(Text::FullscreenRuleAllOutputs))
+                .on_toggle(Message::FullscreenAllOutputsToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.rules.fullscreen-all-outputs"),
+        container(
+            checkbox(ui_settings.rule_all_outputs)
+                .label(language.text(Text::RulesApplyToAllOutputs))
+                .on_toggle(Message::RulesAllOutputsToggled)
+                .style(md_checkbox_style),
+        )
+        .id("settings.rules.all-outputs"),
         section_title(language.text(Text::IntegrationRuntimeStatus)),
         integration_runtime_view(runtime_status),
         section_title(language.text(Text::RendererDiagnostics)),
@@ -285,6 +313,9 @@ pub fn build_settings_overlay<'a>(
     ]
     .spacing(10);
     if let Some(error) = autostart_error {
+        content = content.push(text(error).size(12));
+    }
+    if let Some(error) = gui_autostart_error {
         content = content.push(text(error).size(12));
     }
 
@@ -498,47 +529,30 @@ fn format_path_for_display(path: &str, limit: usize) -> String {
     format!("{head}…{tail}")
 }
 
-fn settings_overlay_style(theme: &Theme) -> container::Style {
+fn settings_overlay_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(if matches!(theme, Theme::Light) {
-            Color::from_rgb8(247, 245, 250)
-        } else {
-            Color::from_rgb8(30, 31, 34)
-        })),
+        background: Some(Background::Color(colors().window_bg)),
         border: Border { radius: 0.0.into(), width: 0.0, color: Color::TRANSPARENT },
         ..Default::default()
     }
 }
 
-fn status_box_style(theme: &Theme) -> container::Style {
-    let is_light = matches!(theme, Theme::Light);
+fn status_box_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(if is_light {
-            Color::from_rgba(0.95, 0.97, 0.99, 1.0)
-        } else {
-            Color::from_rgba(0.12, 0.14, 0.16, 1.0)
-        })),
-        border: Border {
-            radius: 16.0.into(),
-            width: 1.0,
-            color: if is_light {
-                Color::from_rgba(0.0, 0.0, 0.0, 0.06)
-            } else {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.06)
-            },
-        },
+        background: Some(Background::Color(colors().card_bg)),
+        border: Border { radius: 16.0.into(), width: 1.0, color: colors().border },
         ..Default::default()
     }
 }
 
 fn section_title<'a>(title: &'a str) -> iced::widget::Text<'a> {
-    text(title).size(16).color(Color::from_rgb8(178, 198, 255))
+    text(title).size(16).color(colors().accent)
 }
 
 fn outlined_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
     button::Style {
-        text_color: Color::from_rgb8(198, 210, 242),
-        border: Border { radius: 20.0.into(), width: 1.0, color: Color::from_rgb8(143, 147, 156) },
+        text_color: colors().accent,
+        border: Border { radius: 20.0.into(), width: 1.0, color: colors().outline },
         ..Default::default()
     }
 }
@@ -548,17 +562,17 @@ fn md_text_input_style(
     status: iced::widget::text_input::Status,
 ) -> iced::widget::text_input::Style {
     let border = if matches!(status, iced::widget::text_input::Status::Focused { .. }) {
-        Color::from_rgb8(174, 198, 255)
+        colors().accent_bg
     } else {
-        Color::from_rgb8(143, 147, 156)
+        colors().outline
     };
     iced::widget::text_input::Style {
-        background: Background::Color(Color::from_rgb8(43, 44, 48)),
+        background: Background::Color(colors().field_bg),
         border: Border { radius: 8.0.into(), width: 1.0, color: border },
-        icon: Color::from_rgb8(196, 199, 204),
-        placeholder: Color::from_rgb8(196, 199, 204),
-        value: Color::from_rgb8(230, 225, 229),
-        selection: Color::from_rgb8(78, 99, 139),
+        icon: colors().fg_dim,
+        placeholder: colors().fg_dim,
+        value: colors().fg,
+        selection: colors().selection,
     }
 }
 
@@ -574,17 +588,17 @@ fn md_checkbox_style(
     );
     iced::widget::checkbox::Style {
         background: Background::Color(if checked {
-            Color::from_rgb8(174, 198, 255)
+            colors().accent_bg
         } else {
-            Color::from_rgb8(43, 44, 48)
+            colors().field_bg
         }),
-        icon_color: Color::from_rgb8(26, 39, 64),
+        icon_color: colors().on_accent,
         border: Border {
             radius: 2.0.into(),
             width: if checked { 0.0 } else { 2.0 },
-            color: Color::from_rgb8(196, 199, 204),
+            color: colors().fg_dim,
         },
-        text_color: Some(Color::from_rgb8(230, 225, 229)),
+        text_color: Some(colors().fg),
     }
 }
 
@@ -593,17 +607,17 @@ fn md_pick_list_style(
     status: iced::widget::pick_list::Status,
 ) -> iced::widget::pick_list::Style {
     iced::widget::pick_list::Style {
-        text_color: Color::from_rgb8(230, 225, 229),
-        placeholder_color: Color::from_rgb8(196, 199, 204),
-        handle_color: Color::from_rgb8(196, 199, 204),
-        background: Background::Color(Color::from_rgb8(43, 44, 48)),
+        text_color: colors().fg,
+        placeholder_color: colors().fg_dim,
+        handle_color: colors().fg_dim,
+        background: Background::Color(colors().field_bg),
         border: Border {
             radius: 8.0.into(),
             width: 1.0,
             color: if matches!(status, iced::widget::pick_list::Status::Opened { .. }) {
-                Color::from_rgb8(174, 198, 255)
+                colors().accent_bg
             } else {
-                Color::from_rgb8(143, 147, 156)
+                colors().outline
             },
         },
     }
@@ -611,11 +625,11 @@ fn md_pick_list_style(
 
 fn md_menu_style(_theme: &Theme) -> iced::overlay::menu::Style {
     iced::overlay::menu::Style {
-        background: Background::Color(Color::from_rgb8(48, 49, 53)),
-        border: Border { radius: 8.0.into(), width: 1.0, color: Color::from_rgb8(72, 74, 80) },
-        text_color: Color::from_rgb8(230, 225, 229),
-        selected_text_color: Color::from_rgb8(26, 39, 64),
-        selected_background: Background::Color(Color::from_rgb8(174, 198, 255)),
+        background: Background::Color(colors().popover_bg),
+        border: Border { radius: 8.0.into(), width: 1.0, color: colors().border },
+        text_color: colors().fg,
+        selected_text_color: colors().on_accent,
+        selected_background: Background::Color(colors().accent_bg),
         shadow: iced::Shadow {
             color: Color::from_rgba8(0, 0, 0, 0.35),
             blur_radius: 12.0,

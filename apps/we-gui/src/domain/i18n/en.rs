@@ -134,6 +134,10 @@ pub(super) fn text(key: Text) -> &'static str {
             "Enables the systemd user service for future graphical logins and applies the saved wallpaper configuration."
         }
         Text::StartOnLoginManagedDescription => "Managed by system configuration.",
+        Text::StartGuiOnLogin => "Start the control interface on login",
+        Text::StartGuiOnLoginDescription => {
+            "Launches we-gui for future logins without opening a window (tray icon only)."
+        }
         Text::EnableWallpaperInput => "Enable wallpaper input",
         Text::WallpaperInputMode => "Wallpaper input mode",
         Text::WallpaperInputModeDirect => "Direct (default)",
@@ -159,6 +163,11 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::FocusedWindowRule => "Focused window",
         Text::MaximizedWindowRule => "Maximized window",
         Text::FullscreenWindowRule => "Fullscreen window",
+        Text::FullscreenRuleAllOutputs => "Fullscreen and borderless apps (games, movies) apply the fullscreen rule to all monitors",
+        Text::AspectConfirmTitle => "Before applying this wallpaper",
+        Text::AspectConfirmApply => "Apply anyway",
+        Text::AspectConfirmCancel => "Cancel",
+        Text::RulesApplyToAllOutputs => "Apply to all monitors (a window on any monitor pauses or mutes every monitor)",
         Text::RuleKeep => "Keep running",
         Text::RuleMute => "Mute wallpaper",
         Text::RulePause => "Pause wallpaper",
@@ -216,6 +225,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::TrayStop => "Stop",
         Text::TrayPause => "Pause",
         Text::TrayResume => "Resume",
+        Text::TrayMuteWallpapers => "Mute wallpapers",
         Text::TrayQuit => "Quit",
     }
 }

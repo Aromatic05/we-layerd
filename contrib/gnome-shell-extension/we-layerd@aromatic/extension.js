@@ -1,12 +1,14 @@
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {GnomeShellOverride} from './gnomeShellOverride.js';
 import {WindowManager} from './windowManager.js';
 
 const BUS_NAME = 'io.github.weLayerd.Gnome';
 const OBJECT_PATH = '/io/github/weLayerd/Gnome';
-const EXTENSION_RUNTIME_VERSION = 'gnome-window-bridge-v5-monitor-connectors';
+const EXTENSION_RUNTIME_VERSION = 'gnome-window-bridge-v6-output-windows';
 const PROTOCOL_XML_PATH = 'protocol/io.github.weLayerd.Gnome.xml';
 
 function logDebug(message) {
@@ -19,17 +21,51 @@ function loadProtocolXml(dir) {
     return new TextDecoder().decode(bytes);
 }
 
+// Renderer registrations outlive enable()/disable(). The extension declares
+// the unlock-dialog session mode so it normally stays enabled while locked,
+// but it can still be disabled and re-enabled (Extensions app, shell updates,
+// older shells), and the daemon registers its windows only once. The
+// module stays loaded for the life of the shell, so keeping the map here lets
+// the extension take its existing renderer windows back after unlocking
+// instead of leaving them as ordinary application windows.
+const registeredTargets = new Map();
+
 export default class WeLayerdExtension extends Extension {
     enable() {
-        logDebug('enable()');
-        this._target = null;
+        // Drop registrations whose renderer process exited while disabled.
+        for (const [id, target] of registeredTargets) {
+            if (target.pid > 0 && !GLib.file_test(`/proc/${target.pid}`, GLib.FileTest.EXISTS))
+                registeredTargets.delete(id);
+        }
+        logDebug(`enable() restoring ${registeredTargets.size} renderer registration(s)`);
+        this._targets = registeredTargets;
         this._override = new GnomeShellOverride(
             metaWindow => this._shouldHideWindow(metaWindow),
-            () => this._target !== null
+            () => this._targets.size > 0,
+            metaWindow => this._monitorForWindow(metaWindow)
         );
-        this._windowManager = new WindowManager(metaWindow => this._shouldManageWindow(metaWindow));
+        this._windowManager = new WindowManager(
+            metaWindow => this._shouldManageWindow(metaWindow),
+            metaWindow => this._placementForWindow(metaWindow)
+        );
         this._override.enable();
         this._windowManager.enable();
+        // Coming back from the lock screen with restored registrations: the
+        // desktop, overview and Blur my Shell backgrounds lost their live
+        // wallpaper when we were disabled, and the daemon will not register
+        // again to trigger a rebuild. Without this the overview backdrop shows
+        // the static GNOME background while only workspace previews (created
+        // fresh each time) show the live wallpaper.
+        if (this._targets.size > 0)
+            this._override.reloadBackgrounds();
+        // Re-pin every renderer window when monitors are added, removed,
+        // rotated, or rearranged.
+        this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
+            if (this._override?.emittingSyntheticMonitorsChanged)
+                return;
+            this._windowManager?.refreshPlacements();
+            this._override?.reloadBackgrounds();
+        });
 
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(loadProtocolXml(this.dir), this);
         this._dbusConnection = Gio.bus_get_sync(Gio.BusType.SESSION, null);
@@ -45,6 +81,10 @@ export default class WeLayerdExtension extends Extension {
 
     disable() {
         logDebug('disable()');
+        if (this._monitorsChangedId) {
+            Main.layoutManager.disconnect(this._monitorsChangedId);
+            this._monitorsChangedId = 0;
+        }
         this._windowManager?.disable();
         this._windowManager = null;
         this._override?.disable();
@@ -60,34 +100,49 @@ export default class WeLayerdExtension extends Extension {
         }
         this._dbusConnection = null;
 
-        this._target = null;
+        // Keep registeredTargets: see the comment above the class.
+        this._targets = null;
     }
 
     Ping() {
-        return `${EXTENSION_RUNTIME_VERSION};metadata=4`;
+        return `${EXTENSION_RUNTIME_VERSION};metadata=5`;
     }
 
+    // Legacy single-window registration. The window is cloned into whichever
+    // monitor Mutter reports for it and is not pinned to a monitor.
     RegisterWindow(xid, pid, title, wmClass) {
         logDebug(`RegisterWindow(xid=0x${xid.toString(16)}, pid=${pid}, title=${title ?? ''}, wmClass=${wmClass ?? ''})`);
-        this._target = {
-            xid,
-            pid,
-            title: title ?? '',
-            wmClass: wmClass ?? '',
-        };
+        return this._registerTarget(xid, pid, title, wmClass, '');
+    }
+
+    // One renderer window per output: the window is pinned to the monitor
+    // driving `connector` and cloned into that monitor's background only.
+    RegisterOutputWindow(id, pid, title, wmClass, connector) {
+        logDebug(`RegisterOutputWindow(id=${id}, pid=${pid}, title=${title ?? ''}, wmClass=${wmClass ?? ''}, connector=${connector ?? ''})`);
+        return this._registerTarget(id, pid, title, wmClass, connector);
+    }
+
+    UnregisterWindow(xid) {
+        logDebug(`UnregisterWindow(xid=0x${xid.toString(16)})`);
+        if (!this._targets?.delete(xid))
+            return false;
 
         this._windowManager?.refreshMatches();
         this._override?.reloadBackgrounds();
         return true;
     }
 
-    UnregisterWindow(xid) {
-        logDebug(`UnregisterWindow(xid=0x${xid.toString(16)})`);
-        if (!this._target || this._target.xid !== xid)
-            return false;
+    _registerTarget(id, pid, title, wmClass, connector) {
+        this._targets.set(id, {
+            xid: id,
+            pid,
+            title: title ?? '',
+            wmClass: wmClass ?? '',
+            connector: connector ?? '',
+        });
 
-        this._target = null;
         this._windowManager?.refreshMatches();
+        this._windowManager?.refreshPlacements();
         this._override?.reloadBackgrounds();
         return true;
     }
@@ -105,7 +160,11 @@ export default class WeLayerdExtension extends Extension {
     // which lacks the wlr foreign-toplevel protocol.
     GetWindowStates() {
         const states = [];
-        if (!this._target)
+        if (!this._targets?.size)
+            return states;
+        // Apps are hidden behind the lock screen, which shows the live
+        // wallpaper: no window should pause or mute it while locked.
+        if (Main.sessionMode?.isLocked)
             return states;
 
         const focusWindow = global.display.get_focus_window();
@@ -121,6 +180,36 @@ export default class WeLayerdExtension extends Extension {
                 logicalMonitors[index];
             return logical?.get_monitors?.()?.[0]?.get_connector?.() ?? '';
         };
+        // Borderless "fullscreen" games never set the fullscreen state; they
+        // size an undecorated window to the whole monitor. Proton/Wine games
+        // are X11 clients, so only X11 windows count. A maximized window on a
+        // monitor without the top bar also covers the whole monitor, so
+        // maximized windows are excluded.
+        const coversMonitor = win => {
+            const frame = win.get_frame_rect?.();
+            const monitor = global.display.get_monitor_geometry?.(win.get_monitor());
+            if (!frame || !monitor || monitor.width <= 0 || monitor.height <= 0)
+                return false;
+            return frame.x <= monitor.x && frame.y <= monitor.y &&
+                frame.x + frame.width >= monitor.x + monitor.width &&
+                frame.y + frame.height >= monitor.y + monitor.height;
+        };
+        const isX11 = win =>
+            Meta.WindowClientType && win.get_client_type?.() === Meta.WindowClientType.X11;
+        // Tiling extensions (e.g. Tiling Shell full-size tiles) fill the work
+        // area with move_resize_frame instead of maximizing, so treat a frame
+        // that fills the work area, allowing small gaps, as maximized too.
+        const MAXIMIZE_GAP_TOLERANCE = 32;
+        const fillsWorkArea = win => {
+            const frame = win.get_frame_rect?.();
+            const area = workspace.get_work_area_for_monitor?.(win.get_monitor());
+            if (!frame || !area || area.width <= 0 || area.height <= 0)
+                return false;
+            return frame.x <= area.x + MAXIMIZE_GAP_TOLERANCE &&
+                frame.y <= area.y + MAXIMIZE_GAP_TOLERANCE &&
+                frame.x + frame.width >= area.x + area.width - MAXIMIZE_GAP_TOLERANCE &&
+                frame.y + frame.height >= area.y + area.height - MAXIMIZE_GAP_TOLERANCE;
+        };
 
         for (const win of global.display.list_all_windows()) {
             if (!win || this._matches(win))
@@ -131,14 +220,37 @@ export default class WeLayerdExtension extends Extension {
             if (!win.located_on_workspace(workspace) || !win.showing_on_its_workspace?.())
                 continue;
 
+            const maximizedFlag = Boolean(win.maximized_horizontally && win.maximized_vertically);
+            const fullscreen = Boolean(win.is_fullscreen?.() ?? win.fullscreen) ||
+                (isX11(win) && !maximizedFlag && coversMonitor(win));
             states.push([
                 connectorFor(win.get_monitor()),
                 win === focusWindow,
-                Boolean(win.maximized_horizontally && win.maximized_vertically),
-                Boolean(win.is_fullscreen?.() ?? win.fullscreen),
+                !fullscreen && (maximizedFlag || fillsWorkArea(win)),
+                fullscreen,
             ]);
         }
         return states;
+    }
+
+    // The renderer window covers the desktop, so GNOME's background actor never
+    // receives the right-click that opens its menu. The daemon forwards the
+    // click with the monitor-local logical position; open that monitor's own
+    // background menu ("Change Background…", "Display Settings", "Settings").
+    ShowBackgroundMenu(connector, x, y) {
+        const index = this._monitorIndexForConnector(connector);
+        if (index < 0)
+            return false;
+        const actor = Main.layoutManager._bgManagers?.[index]?.backgroundActor;
+        const menu = actor?._backgroundMenu;
+        const rect = global.display.get_monitor_geometry(index);
+        if (!menu || !rect)
+            return false;
+        if (menu.isOpen)
+            menu.close();
+        Main.layoutManager.setDummyCursorGeometry(rect.x + x, rect.y + y, 0, 0);
+        menu.open();
+        return true;
     }
 
     _shouldManageWindow(metaWindow) {
@@ -150,26 +262,78 @@ export default class WeLayerdExtension extends Extension {
     }
 
     _matches(metaWindow) {
-        if (!metaWindow || !this._target)
-            return false;
+        return this._targetFor(metaWindow) !== null;
+    }
 
+    _targetFor(metaWindow) {
+        if (!metaWindow || !this._targets)
+            return null;
+        for (const target of this._targets.values()) {
+            if (this._matchesTarget(metaWindow, target))
+                return target;
+        }
+        return null;
+    }
+
+    // Logical monitor index the window renders for: its registered connector
+    // when known, otherwise wherever Mutter placed it (legacy registration).
+    _monitorForWindow(metaWindow) {
+        const target = this._targetFor(metaWindow);
+        if (!target)
+            return -1;
+        if (target.connector) {
+            const index = this._monitorIndexForConnector(target.connector);
+            if (index >= 0)
+                return index;
+        }
+        return metaWindow.get_monitor?.() ?? -1;
+    }
+
+    // Exact monitor rectangle a registered output window must occupy, or null
+    // when the window has no connector or its monitor is not present.
+    _placementForWindow(metaWindow) {
+        const target = this._targetFor(metaWindow);
+        if (!target?.connector)
+            return null;
+        const index = this._monitorIndexForConnector(target.connector);
+        if (index < 0)
+            return null;
+        const rect = global.display.get_monitor_geometry(index);
+        return {monitor: index, x: rect.x, y: rect.y, width: rect.width, height: rect.height};
+    }
+
+    _monitorIndexForConnector(connector) {
+        const monitorManager = global.backend?.get_monitor_manager?.() ?? null;
+        const direct = monitorManager?.get_monitor_for_connector?.(connector);
+        if (typeof direct === 'number' && direct >= 0)
+            return direct;
+
+        for (const logical of monitorManager?.get_logical_monitors?.() ?? []) {
+            const connectors = (logical.get_monitors?.() ?? []).map(monitor => monitor.get_connector?.());
+            if (connectors.includes(connector))
+                return logical.get_number?.() ?? -1;
+        }
+        return -1;
+    }
+
+    _matchesTarget(metaWindow, target) {
         const pid = metaWindow.get_pid?.() ?? 0;
         const title = metaWindow.get_title?.() ?? '';
         const wmClass = metaWindow.get_wm_class?.() ?? '';
 
-        if (this._target.pid > 0 && pid !== this._target.pid)
+        if (target.pid > 0 && pid !== target.pid)
             return false;
-        if (this._target.title && title !== this._target.title)
+        if (target.title && title !== target.title)
             return false;
-        if (this._target.wmClass && wmClass !== this._target.wmClass)
+        if (target.wmClass && wmClass !== target.wmClass)
             return false;
 
-        if (this._target.pid > 0 || this._target.title || this._target.wmClass)
+        if (target.pid > 0 || target.title || target.wmClass)
             return true;
 
         if (metaWindow.get_description) {
             const description = metaWindow.get_description() ?? '';
-            if (description.includes(`0x${this._target.xid.toString(16)}`))
+            if (description.includes(`0x${target.xid.toString(16)}`))
                 return true;
         }
 

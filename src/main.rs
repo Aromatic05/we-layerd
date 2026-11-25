@@ -26,10 +26,17 @@ fn main() -> Result<()> {
             println!("{}", cfg.to_toml_pretty()?);
             Ok(())
         }
-        Command::Outputs => {
+        Command::Outputs { geometry: false } => {
             println!(
                 "{}",
                 serde_json::to_string(&backend::wayland_common::outputs::list_output_names()?)?
+            );
+            Ok(())
+        }
+        Command::Outputs { geometry: true } => {
+            println!(
+                "{}",
+                serde_json::to_string(&backend::wayland_common::outputs::list_output_geometry()?)?
             );
             Ok(())
         }
@@ -37,6 +44,8 @@ fn main() -> Result<()> {
             ControlAction::Stop => ipc::send_command(ControlCommand::Stop),
             ControlAction::Pause => ipc::send_command(ControlCommand::Pause),
             ControlAction::Resume => ipc::send_command(ControlCommand::Resume),
+            ControlAction::Mute => ipc::send_command(ControlCommand::Mute),
+            ControlAction::Unmute => ipc::send_command(ControlCommand::Unmute),
             ControlAction::Reload => ipc::send_command(ControlCommand::Reload),
             ControlAction::Status => {
                 println!("{}", ipc::request_running_config()?);

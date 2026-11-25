@@ -134,6 +134,8 @@ pub(super) fn text(key: Text) -> &'static str {
             "为后续图形会话启用 systemd 用户服务，并自动应用已保存的壁纸配置。"
         }
         Text::StartOnLoginManagedDescription => "由系统配置管理。",
+        Text::StartGuiOnLogin => "登录时自动启动控制界面",
+        Text::StartGuiOnLoginDescription => "在后续登录时启动 we-gui（不打开窗口，常驻托盘）。",
         Text::EnableWallpaperInput => "启用壁纸输入",
         Text::WallpaperInputMode => "壁纸输入模式",
         Text::WallpaperInputModeDirect => "直接输入（默认）",
@@ -157,6 +159,11 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::FocusedWindowRule => "窗口获得焦点时",
         Text::MaximizedWindowRule => "窗口最大化时",
         Text::FullscreenWindowRule => "窗口全屏时",
+        Text::FullscreenRuleAllOutputs => "全屏和无边框应用（游戏、电影）对所有显示器应用全屏规则",
+        Text::AspectConfirmTitle => "应用此壁纸之前",
+        Text::AspectConfirmApply => "仍然应用",
+        Text::AspectConfirmCancel => "取消",
+        Text::RulesApplyToAllOutputs => "应用到所有显示器（任一显示器上的窗口会暂停或静音所有显示器）",
         Text::RuleKeep => "保持运行",
         Text::RuleMute => "静音壁纸",
         Text::RulePause => "暂停壁纸",
@@ -214,6 +221,7 @@ pub(super) fn text(key: Text) -> &'static str {
         Text::TrayStop => "停止",
         Text::TrayPause => "暂停",
         Text::TrayResume => "继续",
+        Text::TrayMuteWallpapers => "静音壁纸",
         Text::TrayQuit => "退出",
     }
 }
