@@ -136,7 +136,7 @@ fn gui_executable() -> Result<PathBuf, String> {
 
 fn render_gui_unit(executable: &Path) -> String {
     format!(
-        "{MANAGED_UNIT_MARKER}\n[Unit]\nDescription=we-gui wallpaper picker (tray)\nPartOf=graphical-session.target\nAfter=graphical-session-pre.target\n\n[Service]\nType=simple\nExecStart={} --tray\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=graphical-session.target\n",
+        "{MANAGED_UNIT_MARKER}\n[Unit]\nDescription=we-gui wallpaper picker (tray)\nPartOf=graphical-session.target\nAfter=graphical-session-pre.target\n\n[Service]\nType=simple\nKillMode=process\nExecStart={} --tray\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=graphical-session.target\n",
         unit_quote(executable),
     )
 }
@@ -338,6 +338,7 @@ mod tests {
         let unit = super::render_gui_unit(Path::new("/home/test/.local/bin/we-gui"));
         assert!(unit.starts_with(MANAGED_UNIT_MARKER));
         assert!(unit.contains("ExecStart=\"/home/test/.local/bin/we-gui\" --tray"));
+        assert!(unit.contains("KillMode=process"));
         assert!(!unit.contains("ConditionPathExists"));
         assert!(unit.contains("PartOf=graphical-session.target"));
         assert!(unit.contains("WantedBy=graphical-session.target"));
